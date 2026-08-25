@@ -194,9 +194,22 @@ def read_dram_rails(reader_factory=None, controllers=None, addresses=None):
             from rochviewer.memory.ddr5_telemetry import default_smbus_backend
 
             backend = default_smbus_backend()
-            if backend is None:
+            if backend is None and reader_factory is None:
                 return {}
-            default_factory, offsets, _hubs, pmics = backend
+            if backend is None:
+                # A caller that supplied a reader supplied the transport.
+                # Only the addresses are missing, and those are JEDEC's --
+                # PMICs answer at 0x48-0x4F behind any host controller.
+                # Bailing here regardless discarded the caller's reader,
+                # which is the same mistake read_identity used to make.
+                from rochviewer.intel.intel_pch_smbus import (
+                    CONTROLLER_OFFSETS as offsets,
+                    PMIC_ADDRESSES as pmics,
+                )
+
+                default_factory = None
+            else:
+                default_factory, offsets, _hubs, pmics = backend
             reader_factory = reader_factory or default_factory
             controllers = offsets if controllers is None else controllers
             addresses = pmics if addresses is None else addresses
@@ -311,9 +324,19 @@ def read_dimm_temperatures(reader_factory=None, controllers=None,
             from rochviewer.memory.ddr5_telemetry import default_smbus_backend
 
             backend = default_smbus_backend()
-            if backend is None:
+            if backend is None and reader_factory is None:
                 return {}
-            default_factory, offsets, hubs, _pmics = backend
+            if backend is None:
+                # See read_dram_rails: hubs answer at 0x50-0x57 on any host
+                # controller, so a supplied reader is enough.
+                from rochviewer.intel.intel_pch_smbus import (
+                    CONTROLLER_OFFSETS as offsets,
+                    SPD_HUB_ADDRESSES as hubs,
+                )
+
+                default_factory = None
+            else:
+                default_factory, offsets, hubs, _pmics = backend
             reader_factory = reader_factory or default_factory
             controllers = offsets if controllers is None else controllers
             addresses = hubs if addresses is None else addresses
