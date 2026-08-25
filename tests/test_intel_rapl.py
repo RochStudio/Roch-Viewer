@@ -18,8 +18,8 @@
 
 import unittest
 
-import intel_rapl
-from intel_rapl import (
+from rochviewer.intel import intel_rapl
+from rochviewer.intel.intel_rapl import (
     ENERGY_STATUS,
     MCHBAR,
     RAPL_POWER_UNIT,

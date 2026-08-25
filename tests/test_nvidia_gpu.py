@@ -26,7 +26,7 @@ import contextlib
 import unittest
 from unittest import mock
 
-import nvidia_gpu
+from rochviewer.gpu import nvidia_gpu
 
 BENCH_CARD = 0x2786          # AD104, the RTX 4070 on the bench
 OTHER_CARD = 0x2C05          # GB203, an RTX 5070 Ti: not in the table

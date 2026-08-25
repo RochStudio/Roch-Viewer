@@ -18,9 +18,9 @@
 
 import unittest
 
-import intel_pch_smbus
-from pci_mcfg import McfgAllocation, ecam_address
-from intel_pch_smbus import (
+from rochviewer.intel import intel_pch_smbus
+from rochviewer.hardware.pci_mcfg import McfgAllocation, ecam_address
+from rochviewer.intel.intel_pch_smbus import (
     ALLOWED_ADDRESSES,
     CONTROL_START,
     PROTOCOL_WORD_DATA,

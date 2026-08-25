@@ -237,7 +237,7 @@ def pmic_address_for_hub(hub_address, hub_addresses=None, pmic_addresses=None):
     the other slot positions: hubs 0x50 and 0x52 with PMICs 0x48 and 0x4A.
     """
     if hub_addresses is None or pmic_addresses is None:
-        from intel_pch_smbus import PMIC_ADDRESSES, SPD_HUB_ADDRESSES
+        from rochviewer.intel.intel_pch_smbus import PMIC_ADDRESSES, SPD_HUB_ADDRESSES
 
         hub_addresses = SPD_HUB_ADDRESSES if hub_addresses is None else hub_addresses
         pmic_addresses = PMIC_ADDRESSES if pmic_addresses is None else pmic_addresses
@@ -272,7 +272,7 @@ def default_smbus_backend():
     if _BACKEND:
         return _BACKEND[0]
 
-    from platform_profiles import (
+    from rochviewer.platform_profiles import (
         LGA1700_DDR4, LGA1700_DDR5, LGA1851, detect_current_platform,
     )
 
@@ -284,11 +284,11 @@ def default_smbus_backend():
     # nothing has resolved it yet.
     import sys
 
-    profile = getattr(sys.modules.get("timings"), "ACTIVE_PLATFORM", None)
+    profile = getattr(sys.modules.get("rochviewer.timings"), "ACTIVE_PLATFORM", None)
     if profile is None:
         profile = detect_current_platform()
     if profile in (LGA1700_DDR4, LGA1700_DDR5, LGA1851):
-        from intel_pch_smbus import (
+        from rochviewer.intel.intel_pch_smbus import (
             CONTROLLER_OFFSETS, PMIC_ADDRESSES, SPD_HUB_ADDRESSES,
             PchSmbusReader,
         )
@@ -315,7 +315,7 @@ def read_dimm_telemetry(reader_factory=None, sleep=None, controllers=None,
     :func:`default_smbus_backend`. A caller may pass its own instead, which is
     what the tests do.
     """
-    from ddr5_pmic import read_dimm_temperatures, spd_hub_channel
+    from rochviewer.memory.ddr5_pmic import read_dimm_temperatures, spd_hub_channel
 
     try:
         if reader_factory is None or controllers is None or addresses is None:
@@ -375,7 +375,7 @@ def read_pmic_telemetry(reader, address, controller=0x00, sleep=None):
     anything that did not convert simply absent. Never raises for a bus that
     will not answer: a DIMM that is not there is not an error.
     """
-    from ddr5_pmic import CONFIRMED_PMIC_RAILS, decode_rails
+    from rochviewer.memory.ddr5_pmic import CONFIRMED_PMIC_RAILS, decode_rails
 
     measured = {}
     for name, channel in (

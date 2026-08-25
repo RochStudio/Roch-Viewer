@@ -27,7 +27,7 @@ import sys
 import unittest
 from unittest import mock
 
-import driver_path
+from rochviewer.hardware import driver_path
 
 
 class SearchOrderTest(unittest.TestCase):

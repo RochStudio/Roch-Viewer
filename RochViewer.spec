@@ -19,53 +19,53 @@ datas += [
 ]
 
 hiddenimports = [
-    'version',
+    'rochviewer.version',
     'customtkinter',
     'wmi',
     'win32com',
     'win32com.client',
     'pythoncom',
     'pywintypes',
-    'platform_profiles',
-    'timings',
-    'intel_timings',
+    'rochviewer.platform_profiles',
+    'rochviewer.timings',
+    'rochviewer.intel.intel_timings',
     # Imported lazily by intel_timings so the tables are built before a
     # sensor is read, which also hides these from the dependency scan.
-    'intel_board_sensors',
-    'intel_pch_smbus',
-    'intel_rapl',
-    'ddr4_tsod',
-    'ddr5_pmic',
-    'ddr5_spd',
+    'rochviewer.intel.intel_board_sensors',
+    'rochviewer.intel.intel_pch_smbus',
+    'rochviewer.intel.intel_rapl',
+    'rochviewer.memory.ddr4_tsod',
+    'rochviewer.memory.ddr5_pmic',
+    'rochviewer.memory.ddr5_spd',
     # Imported inside the Telemetry button handler, so the dependency scan
     # never sees either one.
-    'ddr5_telemetry',
-    'dimm_telemetry_window',
-    'superio_lpc',
+    'rochviewer.memory.ddr5_telemetry',
+    'rochviewer.ui.dimm_telemetry_window',
+    'rochviewer.sensors.superio_lpc',
     # Imported inside the row getters that use them: the identity readings on
     # System Info, and the performance counters behind the Clocks section.
-    'system_identity',
-    'cpu_clocks',
-    'unsupported_profile',
-    'display_values',
-    'dimm_inventory',
-    'dram_ic',
-    'lazy_read',
-    'lowlevel_io',
-    'pci_mcfg',
-    'voltage_rails',
+    'rochviewer.system_identity',
+    'rochviewer.sensors.cpu_clocks',
+    'rochviewer.unsupported_profile',
+    'rochviewer.ui.display_values',
+    'rochviewer.memory.dimm_inventory',
+    'rochviewer.memory.dram_ic',
+    'rochviewer.ui.lazy_read',
+    'rochviewer.hardware.lowlevel_io',
+    'rochviewer.hardware.pci_mcfg',
+    'rochviewer.sensors.voltage_rails',
     # The card's own readings, its power limit and the error counter.
     #
     # Belt and braces, not a fix: PyInstaller scans bytecode and finds a
     # plain import inside a function body perfectly well. The entries here
     # cost nothing and say what the build is expected to carry, which
     # test_packaging then holds it to.
-    'nvidia_gpu',
-    'whea_errors',
+    'rochviewer.gpu.nvidia_gpu',
+    'rochviewer.sensors.whea_errors',
 ]
 
 a = Analysis(
-    ['main.py'],
+    ['run_viewer.py'],
     pathex=[],
     binaries=[],
     datas=datas,

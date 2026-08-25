@@ -18,8 +18,8 @@
 
 import unittest
 
-import asus_ec
-from asus_ec import (
+from rochviewer.sensors import asus_ec
+from rochviewer.sensors.asus_ec import (
     COMMAND_READ,
     CONFIRMED_EC_TEMPERATURES,
     EC_COMMAND_PORT,

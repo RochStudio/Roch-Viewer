@@ -53,8 +53,8 @@ from __future__ import annotations
 
 import threading
 
-from lowlevel_io import InpOutByteIO, NamedMutex
-from superio_lpc import (
+from rochviewer.hardware.lowlevel_io import InpOutByteIO, NamedMutex
+from rochviewer.sensors.superio_lpc import (
     CONFIG_PORTS,
     ISA_MUTEX_NAME,
     LDN_EC_SPACE,

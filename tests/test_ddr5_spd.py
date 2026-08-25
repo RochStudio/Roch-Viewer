@@ -16,7 +16,7 @@
 
 import unittest
 
-from ddr5_spd import (
+from rochviewer.memory.ddr5_spd import (
     EM_DASH,
     SPD_DRAM_MFG_ID,
     SPD_DRAM_STEPPING,

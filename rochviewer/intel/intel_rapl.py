@@ -116,7 +116,7 @@ def validate_power(watts):
 
 
 def _default_read_dword():
-    from read import read_physical_memory_int
+    from rochviewer.hardware.read import read_physical_memory_int
 
     def read_dword(address):
         value = read_physical_memory_int(address, 4)

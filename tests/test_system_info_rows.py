@@ -20,7 +20,7 @@ import contextlib
 import unittest
 from unittest import mock
 
-from display_values import resolve_display_value
+from rochviewer.ui.display_values import resolve_display_value
 from tests.intel_stub import install, restore
 
 intel_timings = None
@@ -110,7 +110,7 @@ class PresenceTest(unittest.TestCase):
             raise AssertionError("re-probed the platform over WMI")
 
         module.detect_current_platform = refuse
-        timings = sys.modules.get("timings")
+        timings = sys.modules.get("rochviewer.timings")
         if getattr(timings, "ACTIVE_PLATFORM", None) is None:
             self.skipTest("no resolved platform to reuse")
         module.get_platform_name()
@@ -334,7 +334,7 @@ class ValueTest(unittest.TestCase):
         self.assertEqual(value_of("Platform"), "LGA1700 (DDR4)")
 
     def test_every_supported_intel_profile_has_a_label(self):
-        from platform_profiles import LGA1700_DDR4, LGA1700_DDR5, LGA1851
+        from rochviewer.platform_profiles import LGA1700_DDR4, LGA1700_DDR5, LGA1851
 
         for profile in (LGA1700_DDR4, LGA1700_DDR5, LGA1851):
             with self.subTest(profile=profile):
@@ -401,7 +401,7 @@ class UnavailableValueTest(unittest.TestCase):
         self.assertIsNone(intel_timings._dimm_field("not a field"))
 
     def test_no_modules_reports_no_value(self):
-        import dimm_inventory
+        from rochviewer.memory import dimm_inventory
 
         original = dimm_inventory.read_modules
         dimm_inventory.read_modules = lambda *a, **k: []
@@ -412,7 +412,7 @@ class UnavailableValueTest(unittest.TestCase):
                 self.assertIsNone(intel_timings._dimm_field(field))
 
     def test_an_unlisted_kit_reports_no_die_rather_than_a_guess(self):
-        import dimm_inventory
+        from rochviewer.memory import dimm_inventory
 
         original = dimm_inventory.read_modules
         dimm_inventory.read_modules = lambda *a, **k: [{
@@ -426,7 +426,7 @@ class UnavailableValueTest(unittest.TestCase):
         self.assertEqual(intel_timings._dimm_field("size"), "16 GB")
 
     def test_a_mixed_kit_shows_both_values_rather_than_hiding_one(self):
-        import dimm_inventory
+        from rochviewer.memory import dimm_inventory
 
         original = dimm_inventory.read_modules
         dimm_inventory.read_modules = lambda *a, **k: [
@@ -477,7 +477,7 @@ class LpcioNameTest(unittest.TestCase):
         intel_timings.get_lpcio_name.cache_clear()
         self.addCleanup(intel_timings.get_lpcio_name.cache_clear)
         return mock.patch(
-            "intel_board_sensors.board_sensor_profile",
+            "rochviewer.intel.intel_board_sensors.board_sensor_profile",
             return_value={"reader": reader()},
         )
 
@@ -500,7 +500,7 @@ class LpcioNameTest(unittest.TestCase):
     def test_no_chip_reports_nothing(self):
         intel_timings.get_lpcio_name.cache_clear()
         self.addCleanup(intel_timings.get_lpcio_name.cache_clear)
-        with mock.patch("intel_board_sensors.board_sensor_profile",
+        with mock.patch("rochviewer.intel.intel_board_sensors.board_sensor_profile",
                         return_value=None):
             self.assertIsNone(intel_timings.get_lpcio_name())
 

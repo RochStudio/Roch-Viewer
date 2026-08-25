@@ -25,7 +25,7 @@ WMI by passing a stand-in connection.
 
 import re
 
-from dram_ic import identify_dram_ic
+from rochviewer.memory.dram_ic import identify_dram_ic
 
 EM_DASH = "—"
 

@@ -67,7 +67,7 @@ WAIT_FAILED = 0xFFFFFFFF
 
 DEFAULT_MUTEX_NAME = "Global\\Access_PCI"
 
-from driver_path import find_driver
+from rochviewer.hardware.driver_path import find_driver
 
 _DLL_PATH = find_driver()
 
@@ -132,7 +132,7 @@ class InpOutPortIO:
         # path frozen at import time cannot notice it arriving.
         dll_path = dll_path or find_driver()
         if not dll_path or not os.path.exists(dll_path):
-            from driver_path import missing_message
+            from rochviewer.hardware.driver_path import missing_message
 
             raise FileNotFoundError(missing_message())
         self._dll = ctypes.WinDLL(dll_path)

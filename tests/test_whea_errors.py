@@ -17,7 +17,7 @@
 import unittest
 from unittest import mock
 
-import whea_errors
+from rochviewer.sensors import whea_errors
 
 
 class QueryTest(unittest.TestCase):

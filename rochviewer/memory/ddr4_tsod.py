@@ -116,7 +116,7 @@ def _get_reader(reader_factory):
     if reader_factory is not None:
         return reader_factory()
     if _reader is None:
-        from intel_pch_smbus import PchSmbusReader
+        from rochviewer.intel.intel_pch_smbus import PchSmbusReader
 
         _reader = PchSmbusReader()
     return _reader

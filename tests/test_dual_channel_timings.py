@@ -31,7 +31,7 @@ DDR5, the RTL latencies on DDR4.
 import unittest
 from unittest import mock
 
-from platform_profiles import LGA1700_DDR4, LGA1700_DDR5, LGA1851
+from rochviewer.platform_profiles import LGA1700_DDR4, LGA1700_DDR5, LGA1851
 from tests.intel_stub import MCHBAR, MCHBAR2, MC_WINDOW, READS, install, restore
 
 intel_timings = None
@@ -252,7 +252,7 @@ class SectionLayoutTest(unittest.TestCase):
         })
 
     def test_refresh_sits_above_tertiary_in_the_same_column(self):
-        from main import TIMINGS_SECTION_ORDER
+        from rochviewer.ui.main import TIMINGS_SECTION_ORDER
 
         columns = intel_timings.TIMINGS_TAB_COLUMNS
         self.assertEqual(columns["Refresh timings"], columns["Tertiary"])
@@ -262,7 +262,7 @@ class SectionLayoutTest(unittest.TestCase):
     def test_no_section_is_ordered_twice(self):
         # A category listed twice sorts by its first appearance and reads as
         # if the second placement were doing something.
-        from main import TIMINGS_SECTION_ORDER
+        from rochviewer.ui.main import TIMINGS_SECTION_ORDER
 
         self.assertEqual(len(TIMINGS_SECTION_ORDER),
                          len(set(TIMINGS_SECTION_ORDER)))
@@ -618,7 +618,7 @@ class InstalledTableTest(unittest.TestCase):
     def test_unnamed_slots_fall_back_to_the_controller(self):
         # A board whose firmware does not name its sockets still gets a usable
         # header, rather than a slot number invented for it.
-        import dimm_inventory
+        from rochviewer.memory import dimm_inventory
 
         original = dimm_inventory.read_modules
         dimm_inventory.read_modules = lambda *a, **k: [{"slot": None}]

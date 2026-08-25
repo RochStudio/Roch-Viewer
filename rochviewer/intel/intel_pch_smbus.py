@@ -188,7 +188,7 @@ class SmbusUnavailable(RuntimeError):
 
 def _default_read_dword():
     """Physical dword reader built on the bundled InpOut mapping."""
-    from read import read_physical_memory_int
+    from rochviewer.hardware.read import read_physical_memory_int
 
     def read_dword(address):
         value = read_physical_memory_int(address, 4)
@@ -201,14 +201,14 @@ def _default_read_dword():
 
 def default_ecam_allocation():
     """Return the firmware's ECAM allocation covering the SMBus controller."""
-    from pci_mcfg import get_mcfg_table, parse_mcfg, select_allocation
+    from rochviewer.hardware.pci_mcfg import get_mcfg_table, parse_mcfg, select_allocation
 
     return select_allocation(parse_mcfg(get_mcfg_table()), 0, SMBUS_BUS)
 
 
 def _config_dword(read_dword, allocation, function, offset):
     """Read one dword from the SMBus function's PCI configuration space."""
-    from pci_mcfg import ecam_address
+    from rochviewer.hardware.pci_mcfg import ecam_address
 
     address = ecam_address(
         allocation, SMBUS_BUS, SMBUS_DEVICE, function, offset
@@ -228,7 +228,7 @@ def find_smbus_base(read_dword=None, mutex=None, allocation=None):
     if allocation is None:
         allocation = default_ecam_allocation()
     if mutex is None:
-        from lowlevel_io import NamedMutex
+        from rochviewer.hardware.lowlevel_io import NamedMutex
 
         mutex = NamedMutex(PCI_MUTEX_NAME)
 
@@ -293,12 +293,12 @@ class PchSmbusReader:
             # project's platform-neutral port-I/O primitives, but they live in
             # a module whose name is AMD's, and the Intel path should not pull
             # that in just by being imported.
-            from lowlevel_io import InpOutByteIO
+            from rochviewer.hardware.lowlevel_io import InpOutByteIO
 
             io = InpOutByteIO()
         self._io = io
         if mutex is None:
-            from lowlevel_io import NamedMutex
+            from rochviewer.hardware.lowlevel_io import NamedMutex
 
             mutex = NamedMutex(SMBUS_MUTEX_NAME)
         self._mutex = mutex

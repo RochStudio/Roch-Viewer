@@ -199,9 +199,9 @@ def pci_config_dword(device, function, offset, bus=0):
     table of what the identifiers mean.
     """
     try:
-        from pci_mcfg import ecam_address
-        from intel_pch_smbus import default_ecam_allocation
-        from read import read_physical_memory_int
+        from rochviewer.hardware.pci_mcfg import ecam_address
+        from rochviewer.intel.intel_pch_smbus import default_ecam_allocation
+        from rochviewer.hardware.read import read_physical_memory_int
 
         allocation = default_ecam_allocation()
         if allocation is None:
@@ -381,7 +381,7 @@ def lpcio_name():
     from the chip name, which carries no vendor of its own.
     """
     try:
-        from intel_board_sensors import board_sensor_profile
+        from rochviewer.intel.intel_board_sensors import board_sensor_profile
 
         profile = board_sensor_profile()
     except Exception:
@@ -390,5 +390,10 @@ def lpcio_name():
     name = getattr(reader, "chip_name", None)
     if not name:
         return None
-    vendor = LPCIO_VENDORS.get(type(reader).__module__)
+    # The last component, not the whole dotted path: __module__ became
+    # "rochviewer.sensors.superio_lpc" when the modules moved into folders,
+    # and a lookup on the full name silently stopped matching -- the row kept
+    # naming the chip and quietly dropped the vendor in front of it.
+    module = type(reader).__module__.rsplit(".", 1)[-1]
+    vendor = LPCIO_VENDORS.get(module)
     return "%s %s" % (vendor, name) if vendor else name

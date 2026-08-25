@@ -16,7 +16,7 @@
 
 import unittest
 
-from platform_profiles import (
+from rochviewer.platform_profiles import (
     AM5,
     LGA1700_DDR4,
     LGA1700_DDR5,

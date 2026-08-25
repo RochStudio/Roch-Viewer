@@ -18,8 +18,8 @@ import inspect
 import unittest
 from unittest import mock
 
-import dimm_telemetry_window as w
-from display_values import WINDOWED_TABS, select_tab_names
+from rochviewer.ui import dimm_telemetry_window as w
+from rochviewer.ui.display_values import WINDOWED_TABS, select_tab_names
 
 
 class ParseReadingTest(unittest.TestCase):

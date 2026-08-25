@@ -31,7 +31,7 @@ Timing Configurator and MemTweakIt.
 - **The inpoutx64 driver**, which is not distributed here. Download
   `inpoutx64.dll` and `inpoutx64.sys` from Highresolution Enterprises
   (www.highrez.co.uk) and put both beside `RochViewer.exe`, or beside
-  `main.py` to run from source. See `THIRD_PARTY_NOTICES.txt` for why they are
+  `run_viewer.py` to run from source. See `THIRD_PARTY_NOTICES.txt` for why they are
   not bundled.
 
 Windows security software may warn about that driver. It is a well-known
@@ -130,7 +130,7 @@ rather than by convention:
 1. Install 64-bit Python 3.13 with Tcl/Tk.
 2. `py -V:3.13 -m pip install -r requirements.txt`
 3. Put `inpoutx64.dll` and `inpoutx64.sys` in the project directory.
-4. Run from source with `py -V:3.13 main.py`, or build with
+4. Run from source with `py -V:3.13 run_viewer.py`, or build with
    `py -V:3.13 -m PyInstaller --clean -y RochViewer.spec` and run
    `dist\RochViewer.exe`.
 5. Accept the administrator prompt.

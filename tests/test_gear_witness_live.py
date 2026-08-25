@@ -37,7 +37,7 @@ two constants fails there.
 
 import unittest
 
-from platform_profiles import LGA1700_DDR5, LGA1851
+from rochviewer.platform_profiles import LGA1700_DDR5, LGA1851
 
 DDR5_PLATFORMS = (LGA1700_DDR5, LGA1851)
 
@@ -50,7 +50,7 @@ def real_intel_timings():
     collection should not pay that or fail on it.
     """
     try:
-        import intel_timings
+        from rochviewer.intel import intel_timings
     except Exception:
         return None
     # Another module may still have a stub installed. The fixture reports

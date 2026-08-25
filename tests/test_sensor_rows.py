@@ -19,7 +19,7 @@
 import unittest
 from unittest import mock
 
-from platform_profiles import LGA1700_DDR4, LGA1700_DDR5, LGA1851
+from rochviewer.platform_profiles import LGA1700_DDR4, LGA1700_DDR5, LGA1851
 from tests.intel_stub import install, restore
 
 intel_timings = None
@@ -50,7 +50,7 @@ class SensorGroupTest(unittest.TestCase):
     def test_every_category_has_a_place_in_the_window(self):
         # main orders the window by SENSOR_GROUP_ORDER, and a category absent
         # from it sorts to the end with no heading of its own.
-        from main import SENSOR_GROUP_ORDER
+        from rochviewer.ui.main import SENSOR_GROUP_ORDER
 
         for _name, category, _getter, _column in intel_timings.SENSOR_ROWS:
             with self.subTest(category=category):
@@ -75,14 +75,15 @@ class SensorGroupTest(unittest.TestCase):
         import inspect
 
         source = inspect.getsource(intel_timings._whea_errors)
-        self.assertIn("from whea_errors import error_text", source)
+        self.assertIn("import error_text", source)
+        self.assertIn("whea_errors", source)
         names = [name for name, _c, _g, _col in intel_timings.ERROR_SENSOR_ROWS]
         self.assertEqual(names, ["WHEA Errors"])
 
     def test_the_clocks_lead_the_window(self):
         # What the silicon is running at, then what that costs it in heat and
         # power, then the rails feeding it.
-        from main import SENSOR_GROUP_ORDER
+        from rochviewer.ui.main import SENSOR_GROUP_ORDER
 
         self.assertEqual(SENSOR_GROUP_ORDER[0], "Clocks")
 
@@ -111,7 +112,7 @@ class SensorGroupTest(unittest.TestCase):
     def test_the_group_name_matches_the_windows_ordering(self):
         # An unlisted category sorts to the end, so a typo here would put the
         # whole section below Voltages rather than above it.
-        from main import SENSOR_GROUP_ORDER
+        from rochviewer.ui.main import SENSOR_GROUP_ORDER
 
         self.assertIn("Thermal & Power", SENSOR_GROUP_ORDER)
 
@@ -309,7 +310,7 @@ class BoardAbsentRowTest(unittest.TestCase):
         # Both reasons apply at once: a row can be absent from the silicon
         # and unwired on the board, and dropping one list when the other
         # applies would put a blank row back.
-        from platform_profiles import LGA1700_DDR4, LGA1700_DDR5, LGA1851
+        from rochviewer.platform_profiles import LGA1700_DDR4, LGA1700_DDR5, LGA1851
 
         for platform, arrow_lake in ((LGA1700_DDR5, False),
                                      (LGA1700_DDR4, False),

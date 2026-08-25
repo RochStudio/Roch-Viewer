@@ -16,7 +16,7 @@
 
 import unittest
 
-from dimm_inventory import (
+from rochviewer.memory.dimm_inventory import (
     EM_DASH,
     board_slot_count,
     channel_of,

@@ -18,8 +18,8 @@
 
 import unittest
 
-import ddr4_tsod
-from ddr4_tsod import (
+from rochviewer.memory import ddr4_tsod
+from rochviewer.memory.ddr4_tsod import (
     AMBIENT_TEMPERATURE_REGISTER,
     channel_for_address,
     decode_temperature,

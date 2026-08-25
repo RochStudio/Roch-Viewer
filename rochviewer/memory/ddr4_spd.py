@@ -49,7 +49,7 @@ here, and it is a reading rather than a failure to read -- the part number two
 registers along comes back perfectly from the same transaction.
 """
 
-from ddr5_spd import EM_DASH, decode_jep106_id, decode_manufacture_date
+from rochviewer.memory.ddr5_spd import EM_DASH, decode_jep106_id, decode_manufacture_date
 
 # Register offsets within the upper window, i.e. SPD byte minus 256.
 SPD_WINDOW_BASE = 0x100
@@ -171,7 +171,7 @@ def read_identity(reader_factory=None, refresh=False):
 
     modules = []
     try:
-        from ddr5_telemetry import default_smbus_backend
+        from rochviewer.memory.ddr5_telemetry import default_smbus_backend
 
         backend = default_smbus_backend()
         if backend is None:

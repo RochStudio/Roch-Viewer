@@ -19,7 +19,7 @@
 import unittest
 from unittest import mock
 
-from platform_profiles import AM5, LGA1700_DDR4, LGA1700_DDR5, LGA1851
+from rochviewer.platform_profiles import AM5, LGA1700_DDR4, LGA1700_DDR5, LGA1851
 from tests.intel_stub import install, restore
 
 intel_timings = None

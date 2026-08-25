@@ -193,7 +193,7 @@ def panel_identity(entry, module):
     is who made the chips on it. They are rarely the same company -- G.Skill
     sells a module carrying SK hynix silicon.
     """
-    from dimm_inventory import split_ic
+    from rochviewer.memory.dimm_inventory import split_ic
 
     module = module or {}
     capacity = module.get("capacity_gb")

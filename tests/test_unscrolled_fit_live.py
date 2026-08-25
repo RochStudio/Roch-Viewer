@@ -33,7 +33,7 @@ def build():
     try:
         import customtkinter as ctk
 
-        import main
+        from rochviewer.ui import main
     except Exception:
         return None
     try:

@@ -19,9 +19,9 @@
 import inspect
 import unittest
 
-import main
+from rochviewer.ui import main
 
-from display_values import select_tab_names
+from rochviewer.ui.display_values import select_tab_names
 from tests.intel_stub import install, restore
 
 intel_timings = None

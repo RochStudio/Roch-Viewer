@@ -39,6 +39,23 @@ with the driver present, everything runs.
 You need `inpoutx64.dll` and `inpoutx64.sys` — see "Prerequisites" in the
 README. They are not distributed with this project.
 
+## Layout
+
+Modules are grouped by what they talk to, under `rochviewer/`:
+
+| folder | what is in it |
+| --- | --- |
+| `hardware` | the driver, port and physical-memory access, PCIe config space |
+| `intel` | MCHBAR timings, the PCH SMBus, board sensors, RAPL power |
+| `memory` | SPD identity, the DIMM thermal sensors and PMICs, the inventory |
+| `sensors` | Super I/O chips, the EC, CPU clocks, rails, Windows error log |
+| `gpu` | the graphics card |
+| `ui` | the window, the searchable list, the telemetry pop-out |
+
+The dispatcher and the platform profile sit at the package root, because they
+decide which of the rest is allowed to run at all. `run_viewer.py` at the
+repository root is the entry point, and the one PyInstaller is pointed at.
+
 ## Scope
 
 This repository covers Intel LGA1700 and LGA1851. It does not cover AMD, and

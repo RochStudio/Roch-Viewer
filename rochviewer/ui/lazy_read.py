@@ -22,6 +22,6 @@ only if a selected timing row actually asks for an Intel MCHBAR read.
 
 
 def read_timing(*args, **kwargs):
-    from read import read_timing as implementation
+    from rochviewer.hardware.read import read_timing as implementation
 
     return implementation(*args, **kwargs)

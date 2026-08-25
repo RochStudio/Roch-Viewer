@@ -27,7 +27,7 @@ import os
 import re
 import unittest
 
-import version
+from rochviewer import version
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

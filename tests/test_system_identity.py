@@ -17,7 +17,7 @@
 import unittest
 from unittest import mock
 
-import system_identity as identity
+from rochviewer import system_identity as identity
 
 
 class MicrocodeTest(unittest.TestCase):
@@ -70,7 +70,7 @@ class LpcioTest(unittest.TestCase):
     def _name(self, profile):
         with mock.patch.dict(
             "sys.modules",
-            {"intel_board_sensors": mock.Mock(
+            {"rochviewer.intel.intel_board_sensors": mock.Mock(
                 board_sensor_profile=lambda: profile)},
         ):
             return identity.lpcio_name()

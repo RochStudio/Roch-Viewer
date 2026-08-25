@@ -18,8 +18,8 @@
 
 import unittest
 
-import cpu_clocks
-from cpu_clocks import (
+from rochviewer.sensors import cpu_clocks
+from rochviewer.sensors.cpu_clocks import (
     MAX_NOMINAL_MHZ,
     MAX_PERFORMANCE_PERCENT,
     MIN_SAMPLE_INTERVAL_S,

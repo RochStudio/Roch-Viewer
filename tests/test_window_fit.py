@@ -27,7 +27,7 @@ import types
 import inspect
 import unittest
 
-from main import TimingGUI
+from rochviewer.ui.main import TimingGUI
 
 
 def icon_widths():

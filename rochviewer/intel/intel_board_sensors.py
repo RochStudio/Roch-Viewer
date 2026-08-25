@@ -318,7 +318,7 @@ def validate_temperature(key, celsius):
 def _nct679x_profile():
     """Return the NCT679x reader and maps, or None when no such chip is here."""
     try:
-        from nct679x import Nct679xReader
+        from rochviewer.sensors.nct679x import Nct679xReader
     except Exception:
         return None
     reader = _detected_reader(Nct679xReader)
@@ -336,7 +336,7 @@ def _nct679x_profile():
 def _nct668x_profile():
     """Return the NCT668x reader and maps, or None when no such chip is here."""
     try:
-        from superio_lpc import SuperIoReader
+        from rochviewer.sensors.superio_lpc import SuperIoReader
     except Exception:
         return None
     reader = _detected_reader(SuperIoReader)
@@ -399,7 +399,7 @@ ITE_TEMPERATURES = {
 def _ite_profile():
     """Return the ITE reader and maps, or None when no ITE chip is here."""
     try:
-        from ite_superio import IteSuperIoReader
+        from rochviewer.sensors.ite_superio import IteSuperIoReader
     except Exception:
         return None
     try:
@@ -432,20 +432,20 @@ def _nct668x_temperature(reader, address):
 
 
 def _nct668x_rail(reader, spec):
-    from superio_lpc import decode_sensor_volts
+    from rochviewer.sensors.superio_lpc import decode_sensor_volts
 
     address, step = spec
     return decode_sensor_volts(reader.read_word(address), step)
 
 
 def _nct679x_temperature(reader, address):
-    from nct679x import decode_temperature as decode
+    from rochviewer.sensors.nct679x import decode_temperature as decode
 
     return decode(reader.read_byte(address))
 
 
 def _nct679x_rail(reader, spec):
-    from nct679x import decode_volts
+    from rochviewer.sensors.nct679x import decode_volts
 
     address, multiplier = spec
     return decode_volts(reader.read_byte(address), multiplier)
@@ -493,7 +493,7 @@ def read_board_temperatures(reader_factory=None, sensors=None):
     if not sensors:
         return {}
     try:
-        from superio_lpc import SuperIoReader
+        from rochviewer.sensors.superio_lpc import SuperIoReader
     except Exception:
         return {}
     reader = _detected_reader(
@@ -562,7 +562,7 @@ def read_board_rails(reader_factory=None, sensors=None):
         return {}
 
     try:
-        from superio_lpc import SuperIoReader
+        from rochviewer.sensors.superio_lpc import SuperIoReader
     except Exception:
         return {}
 

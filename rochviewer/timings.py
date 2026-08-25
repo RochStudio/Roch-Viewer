@@ -14,18 +14,29 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import importlib
-import sys
-import unittest
+"""Platform timing-backend dispatcher.
+
+Only the selected platform module is imported.  This is the safety boundary
+that prevents Intel MCHBAR installers/readers from running on AMD hardware.
+"""
+
+from rochviewer.platform_profiles import (
+    LGA1700_DDR4,
+    LGA1700_DDR5,
+    LGA1851,
+    detect_current_platform,
+)
 
 
-class LazyReadImportTest(unittest.TestCase):
-    def test_import_does_not_load_hardware_driver_module(self):
-        sys.modules.pop("rochviewer.hardware.read", None)
-        sys.modules.pop("rochviewer.ui.lazy_read", None)
-        importlib.import_module("rochviewer.ui.lazy_read")
-        self.assertNotIn("rochviewer.hardware.read", sys.modules)
+def load_timing_backend(profile):
+    if profile in (LGA1700_DDR4, LGA1700_DDR5, LGA1851):
+        from rochviewer.intel.intel_timings import TIMINGS, apply_formula
+
+        return TIMINGS, apply_formula
+    from rochviewer.unsupported_profile import TIMINGS, apply_formula
+
+    return TIMINGS, apply_formula
 
 
-if __name__ == "__main__":
-    unittest.main()
+ACTIVE_PLATFORM = detect_current_platform()
+TIMINGS, apply_formula = load_timing_backend(ACTIVE_PLATFORM)

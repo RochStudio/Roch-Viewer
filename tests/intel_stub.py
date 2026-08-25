@@ -43,7 +43,7 @@ FIELD_READS = []
 # needs a specific decode. Signature: (address, bit_start, bit_length).
 response = None
 
-from platform_profiles import LGA1700_DDR4
+from rochviewer.platform_profiles import LGA1700_DDR4
 
 _SAVED_MODULES = {}
 # [(timings module, the ACTIVE_PLATFORM it had)] so restore puts it back.
@@ -135,15 +135,27 @@ class FakeWMI:
         return lambda *args, **kwargs: []
 
 
+# The modules this stub stands in for, by their real dotted names.
+#
+# Named here rather than spelled out at each use: sys.modules is keyed by the
+# full dotted path, so a bare "read" would install a fake nothing imports and
+# leave the real module in place -- the stub would appear to work and change
+# nothing, which is the worst way for a fixture to fail.
+READ = "rochviewer.hardware.read"
+TIMINGS_MODULE = "rochviewer.intel.intel_timings"
+INVENTORY = "rochviewer.memory.dimm_inventory"
+DISPATCHER = "rochviewer.timings"
+
+
 def install():
     """Stub the hardware modules and return a freshly imported intel_timings."""
-    for name in ("read", "wmi", "intel_timings", "dimm_inventory"):
+    for name in (READ, "wmi", TIMINGS_MODULE, INVENTORY):
         _SAVED_MODULES[name] = sys.modules.get(name)
 
-    read_stub = types.ModuleType("read")
+    read_stub = types.ModuleType(READ)
     read_stub.read_timing = read_timing
     read_stub.read_physical_memory_int = lambda phys_addr, size=4: 0
-    sys.modules["read"] = read_stub
+    sys.modules[READ] = read_stub
 
     wmi_stub = types.ModuleType("wmi")
     wmi_stub.WMI = lambda *args, **kwargs: FakeWMI()
@@ -153,7 +165,7 @@ def install():
     # re-probing WMI, so leaving that global alone would have the backend
     # describing the real host while every other reading came from the fake
     # WMI above. Stub it to match what this stub describes.
-    timings = sys.modules.get("timings")
+    timings = sys.modules.get(DISPATCHER)
     if timings is not None:
         _SAVED_ACTIVE_PLATFORM.append(
             (timings, getattr(timings, "ACTIVE_PLATFORM", None))
@@ -162,9 +174,9 @@ def install():
 
     # dimm_inventory caches its decode process-wide, so a real reading taken by
     # an earlier test module would otherwise leak into these rows.
-    sys.modules.pop("dimm_inventory", None)
-    sys.modules.pop("intel_timings", None)
-    return importlib.import_module("intel_timings")
+    sys.modules.pop(INVENTORY, None)
+    sys.modules.pop(TIMINGS_MODULE, None)
+    return importlib.import_module(TIMINGS_MODULE)
 
 
 def restore():
@@ -172,7 +184,7 @@ def restore():
     while _SAVED_ACTIVE_PLATFORM:
         timings, platform = _SAVED_ACTIVE_PLATFORM.pop()
         timings.ACTIVE_PLATFORM = platform
-    sys.modules.pop("intel_timings", None)
+    sys.modules.pop(TIMINGS_MODULE, None)
     for name, module in _SAVED_MODULES.items():
         if module is None:
             sys.modules.pop(name, None)

@@ -32,7 +32,7 @@ from __future__ import annotations
 
 # Believable ranges live with the rail definitions, so the transport and the
 # view can never disagree about what counts as a plausible reading.
-from voltage_rails import RAILS_BY_KEY, validate_voltage
+from rochviewer.sensors.voltage_rails import RAILS_BY_KEY, validate_voltage
 
 # VID (voltage-ID) registers — the configured rail setting.
 # Register numbers confirmed on MSI B850MPOWER + G.Skill F5-6000J2636G16G by
@@ -178,9 +178,9 @@ def read_dram_rails(reader_factory=None, controllers=None, addresses=None):
         return {}
     try:
         if reader_factory is None:
-            from intel_pch_smbus import PchSmbusReader as reader_factory
+            from rochviewer.intel.intel_pch_smbus import PchSmbusReader as reader_factory
         if controllers is None or addresses is None:
-            from intel_pch_smbus import CONTROLLER_OFFSETS, PMIC_ADDRESSES
+            from rochviewer.intel.intel_pch_smbus import CONTROLLER_OFFSETS, PMIC_ADDRESSES
 
             controllers = CONTROLLER_OFFSETS if controllers is None else controllers
             addresses = PMIC_ADDRESSES if addresses is None else addresses
@@ -290,9 +290,9 @@ def read_dimm_temperatures(reader_factory=None, controllers=None,
     temperatures = {}
     try:
         if reader_factory is None:
-            from intel_pch_smbus import PchSmbusReader as reader_factory
+            from rochviewer.intel.intel_pch_smbus import PchSmbusReader as reader_factory
         if controllers is None or addresses is None:
-            from intel_pch_smbus import CONTROLLER_OFFSETS, SPD_HUB_ADDRESSES
+            from rochviewer.intel.intel_pch_smbus import CONTROLLER_OFFSETS, SPD_HUB_ADDRESSES
 
             controllers = CONTROLLER_OFFSETS if controllers is None else controllers
             addresses = SPD_HUB_ADDRESSES if addresses is None else addresses

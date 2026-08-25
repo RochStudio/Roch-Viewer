@@ -14,29 +14,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Platform timing-backend dispatcher.
+"""Start the viewer.
 
-Only the selected platform module is imported.  This is the safety boundary
-that prevents Intel MCHBAR installers/readers from running on AMD hardware.
+A launcher at the root rather than an entry point inside the package: the
+window lives in rochviewer.ui.main, and running a module from inside a package
+directly makes its own imports ambiguous. This is also what PyInstaller is
+pointed at, so the built EXE and `py run_viewer.py` take the same path in.
 """
 
-from platform_profiles import (
-    LGA1700_DDR4,
-    LGA1700_DDR5,
-    LGA1851,
-    detect_current_platform,
-)
+from rochviewer.ui.main import run
 
-
-def load_timing_backend(profile):
-    if profile in (LGA1700_DDR4, LGA1700_DDR5, LGA1851):
-        from intel_timings import TIMINGS, apply_formula
-
-        return TIMINGS, apply_formula
-    from unsupported_profile import TIMINGS, apply_formula
-
-    return TIMINGS, apply_formula
-
-
-ACTIVE_PLATFORM = detect_current_platform()
-TIMINGS, apply_formula = load_timing_backend(ACTIVE_PLATFORM)
+if __name__ == "__main__":
+    run()

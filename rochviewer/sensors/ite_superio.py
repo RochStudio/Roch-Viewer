@@ -36,7 +36,7 @@ from __future__ import annotations
 import ctypes
 import threading
 
-from read import inpout
+from rochviewer.hardware.read import inpout
 
 # The mutex mainstream monitoring tools take before driving LPC, so a
 # concurrent HWiNFO poll cannot land between our index write and data read.

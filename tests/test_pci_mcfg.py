@@ -17,7 +17,7 @@
 import struct
 import unittest
 
-import pci_mcfg as mcfg
+from rochviewer.hardware import pci_mcfg as mcfg
 
 
 def _table(base=0xE0000000, segment=0, start=0, end=0xFF):

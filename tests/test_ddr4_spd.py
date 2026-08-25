@@ -18,7 +18,7 @@
 
 import unittest
 
-from ddr4_spd import (
+from rochviewer.memory.ddr4_spd import (
     EM_DASH,
     SPD_DEVICE_TYPE,
     SPD_DEVICE_TYPE_DDR4,

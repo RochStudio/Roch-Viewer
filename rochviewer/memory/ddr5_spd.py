@@ -96,7 +96,7 @@ def installed_generation():
     detection, so naming it at the top would be a cycle.
     """
     try:
-        from intel_timings import detect_ddr_generation
+        from rochviewer.intel.intel_timings import detect_ddr_generation
 
         return detect_ddr_generation()
     except Exception:
@@ -239,7 +239,7 @@ def read_identity(reader_factory=None, refresh=False, generation=None):
 
     modules = []
     try:
-        from ddr5_telemetry import default_smbus_backend
+        from rochviewer.memory.ddr5_telemetry import default_smbus_backend
 
         backend = default_smbus_backend()
         if backend is None:

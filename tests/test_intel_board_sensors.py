@@ -18,8 +18,8 @@
 
 import unittest
 
-import intel_board_sensors
-from intel_board_sensors import (
+from rochviewer.intel import intel_board_sensors
+from rochviewer.intel.intel_board_sensors import (
     CONFIRMED_RAILS,
     CONFIRMED_TEMPERATURES,
     INTEL_RAILS,

@@ -85,12 +85,12 @@ class AcpiEcReader:
     def __init__(self, io=None, mutex=None, monotonic=time.monotonic,
                  sleep=time.sleep, timeout=STATUS_TIMEOUT_S):
         if io is None:
-            from lowlevel_io import InpOutByteIO
+            from rochviewer.hardware.lowlevel_io import InpOutByteIO
 
             io = InpOutByteIO()
         self._io = io
         if mutex is None:
-            from lowlevel_io import NamedMutex
+            from rochviewer.hardware.lowlevel_io import NamedMutex
 
             mutex = NamedMutex(EC_MUTEX_NAME)
         self._mutex = mutex

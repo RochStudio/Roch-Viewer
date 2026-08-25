@@ -18,7 +18,7 @@ import types
 import unittest
 from unittest import mock
 
-from main import (
+from rochviewer.ui.main import (
     AM5_SUMMARY_TIMING_PRIORITY,
     SHADED_TABS,
     SUMMARY_COLUMN_TAIL,
@@ -528,22 +528,22 @@ class HalfIsUsedTest(unittest.TestCase):
         )
 
     def test_a_half_with_sections_is_used(self):
-        from main import half_is_used
+        from rochviewer.ui.main import half_is_used
 
         self.assertTrue(half_is_used(self._half()))
 
     def test_a_managed_but_empty_half_is_not(self):
-        from main import half_is_used
+        from rochviewer.ui.main import half_is_used
 
         self.assertFalse(half_is_used(self._half(children=())))
 
     def test_an_unmanaged_half_is_not(self):
-        from main import half_is_used
+        from rochviewer.ui.main import half_is_used
 
         self.assertFalse(half_is_used(self._half(managed="")))
 
     def test_a_missing_half_is_not(self):
-        from main import half_is_used
+        from rochviewer.ui.main import half_is_used
 
         self.assertFalse(half_is_used(None))
 
@@ -551,12 +551,12 @@ class HalfIsUsedTest(unittest.TestCase):
         # The placeholder a platform-only tab leaves behind answers neither
         # call, and a tab that cannot be measured should keep its width
         # rather than take the layout down.
-        from main import half_is_used
+        from rochviewer.ui.main import half_is_used
 
         self.assertFalse(half_is_used(object()))
 
     def test_a_half_that_raises_is_not(self):
-        from main import half_is_used
+        from rochviewer.ui.main import half_is_used
 
         def boom():
             raise RuntimeError("destroyed")
@@ -575,20 +575,20 @@ class GridPadxTest(unittest.TestCase):
     """
 
     def test_a_pair_is_summed(self):
-        from main import _grid_padx
+        from rochviewer.ui.main import _grid_padx
 
         self.assertEqual(_grid_padx({"padx": (0, 8)}), 8)
         self.assertEqual(_grid_padx({"padx": (4, 4)}), 8)
 
     def test_a_single_value_counts_for_both_sides(self):
-        from main import _grid_padx
+        from rochviewer.ui.main import _grid_padx
 
         self.assertEqual(_grid_padx({"padx": 4}), 8)
 
     def test_a_missing_or_unreadable_pad_is_zero(self):
         # grid_info comes back from Tk as strings on some builds, and a row
         # that cannot be measured must not take the whole strip down.
-        from main import _grid_padx
+        from rochviewer.ui.main import _grid_padx
 
         self.assertEqual(_grid_padx({}), 0)
         self.assertEqual(_grid_padx({"padx": "6"}), 12)
@@ -676,13 +676,13 @@ class TimingsSectionOrderTest(unittest.TestCase):
         self.assertIn("Skew", SHADED_TABS)
 
     def test_the_dense_dual_channel_tabs_are_continuous(self):
-        from main import CONTINUOUS_SECTION_TABS
+        from rochviewer.ui.main import CONTINUOUS_SECTION_TABS
 
         self.assertEqual(CONTINUOUS_SECTION_TABS,
                          frozenset({"Timings", "Skew", "Misc"}))
 
     def test_the_signal_tail_follows_the_last_vref_level(self):
-        from main import (SUMMARY_SIGNAL_TAIL_ANCHOR, SUMMARY_SIGNAL_TAIL_ROWS,
+        from rochviewer.ui.main import (SUMMARY_SIGNAL_TAIL_ANCHOR, SUMMARY_SIGNAL_TAIL_ROWS,
                           insert_summary_rows_after)
 
         placed = insert_summary_rows_after(
@@ -698,8 +698,8 @@ class TimingsSectionOrderTest(unittest.TestCase):
         # summary_vref_row_names reads the Skew tab's VREF rows so the two
         # displays cannot drift; a tail row appearing in there would mean it
         # had been added to the wrong place.
-        import main
-        from main import SUMMARY_SIGNAL_TAIL_ROWS, summary_vref_row_names
+        from rochviewer.ui import main
+        from rochviewer.ui.main import SUMMARY_SIGNAL_TAIL_ROWS, summary_vref_row_names
 
         vref = summary_vref_row_names(main.TIMINGS)
         for name in SUMMARY_SIGNAL_TAIL_ROWS:
@@ -707,8 +707,8 @@ class TimingsSectionOrderTest(unittest.TestCase):
                 self.assertNotIn(name, vref)
 
     def test_the_signal_tail_names_rows_that_exist(self):
-        import main
-        from main import SUMMARY_SIGNAL_TAIL_ROWS
+        from rochviewer.ui import main
+        from rochviewer.ui.main import SUMMARY_SIGNAL_TAIL_ROWS
 
         present = {timing.get("name") for timing in main.TIMINGS}
         if "DLL BWSEL" not in present:
@@ -721,7 +721,7 @@ class TimingsSectionOrderTest(unittest.TestCase):
         # Two paths render Summary RTL and only one is live on a given board.
         # Adding the rows to the other one is a change nobody sees, which is
         # exactly what happened first: this pins them to the path that runs.
-        from main import (SUMMARY_DFE_BIAS_ROWS, SUMMARY_RTL_ROWS,
+        from rochviewer.ui.main import (SUMMARY_DFE_BIAS_ROWS, SUMMARY_RTL_ROWS,
                           insert_summary_rtl_after)
 
         placed = insert_summary_rtl_after(["tWRWR_dd", "tRDPRE"], "tWRWR_dd")
@@ -734,7 +734,7 @@ class TimingsSectionOrderTest(unittest.TestCase):
     def test_a_dfe_entry_pairs_one_row_rather_than_two(self):
         # The RTL form names two rows; a DFE row already carries both
         # channels, so it names one and the pair comes from its own sides.
-        from main import SUMMARY_DFE_BIAS_ROWS, SUMMARY_RTL_ROWS, is_summary_pair
+        from rochviewer.ui.main import SUMMARY_DFE_BIAS_ROWS, SUMMARY_RTL_ROWS, is_summary_pair
 
         for entry in SUMMARY_DFE_BIAS_ROWS:
             with self.subTest(entry=entry):
@@ -746,8 +746,8 @@ class TimingsSectionOrderTest(unittest.TestCase):
                 self.assertEqual(len(entry), 3)
 
     def test_the_dfe_rows_name_rows_that_exist(self):
-        import main
-        from main import SUMMARY_DFE_BIAS_ROWS
+        from rochviewer.ui import main
+        from rochviewer.ui.main import SUMMARY_DFE_BIAS_ROWS
 
         present = {timing.get("name") for timing in main.TIMINGS}
         if not any(name.startswith("DFE Tap") for name in present):
@@ -759,7 +759,7 @@ class TimingsSectionOrderTest(unittest.TestCase):
     def test_summary_leaves_the_whole_ccd_group_to_the_timings_tab(self):
         # All four come off one mode-register nibble. Listing part of the
         # group would read as a deliberate selection rather than what it is.
-        from main import SUMMARY_EXCLUDED_TIMING_NAMES
+        from rochviewer.ui.main import SUMMARY_EXCLUDED_TIMING_NAMES
 
         for name in ("tCCD_L", "tCCD_L_WR", "tCCD_L_WR2"):
             with self.subTest(name=name):
@@ -773,8 +773,8 @@ class TimingsSectionOrderTest(unittest.TestCase):
         # On Timings each sits directly under the row it refers to and the
         # pairing is the point; on the Summary the referent is already there
         # and these only lengthen the column.
-        import intel_timings
-        from main import (SUMMARY_EXCLUDED_TIMING_NAMES,
+        from rochviewer.intel import intel_timings
+        from rochviewer.ui.main import (SUMMARY_EXCLUDED_TIMING_NAMES,
                           intel_summary_timing_columns)
 
         primary, tertiary = intel_summary_timing_columns(intel_timings.TIMINGS)
@@ -788,8 +788,8 @@ class TimingsSectionOrderTest(unittest.TestCase):
                 self.assertIn(referent, listed)
 
     def test_the_refresh_cycle_rows_follow_the_write_recovery(self):
-        import intel_timings
-        from main import intel_summary_timing_columns
+        from rochviewer.intel import intel_timings
+        from rochviewer.ui.main import intel_summary_timing_columns
 
         primary, _tertiary = intel_summary_timing_columns(intel_timings.TIMINGS)
         names = {row.get("name") for row in intel_timings.TIMINGS}
@@ -809,8 +809,8 @@ class TimingsSectionOrderTest(unittest.TestCase):
         # Both spellings are offered and the one that does not exist here
         # resolves to nothing, so the column never carries a name with no row
         # behind it -- which would show as a gap rather than as a reading.
-        import intel_timings
-        from main import intel_summary_timing_columns
+        from rochviewer.intel import intel_timings
+        from rochviewer.ui.main import intel_summary_timing_columns
 
         primary, tertiary = intel_summary_timing_columns(intel_timings.TIMINGS)
         listed = [n for n in primary + tertiary if isinstance(n, str)]
@@ -826,8 +826,8 @@ class TimingsSectionOrderTest(unittest.TestCase):
     def test_every_excluded_name_is_a_row_that_exists(self):
         # An excluded name with no row behind it excludes nothing, and reads
         # like the row was dealt with when it was never there.
-        import intel_timings
-        from main import SUMMARY_EXCLUDED_TIMING_NAMES
+        from rochviewer.intel import intel_timings
+        from rochviewer.ui.main import SUMMARY_EXCLUDED_TIMING_NAMES
 
         names = {row.get("name") for row in intel_timings.TIMINGS}
         for name in SUMMARY_EXCLUDED_TIMING_NAMES:
@@ -839,8 +839,8 @@ class TimingsSectionOrderTest(unittest.TestCase):
         # Tertiary row did nothing and the row stayed on the Summary with no
         # sign of why. tREFI is the exception and is meant to be: the Tertiary
         # column pins it at its head deliberately.
-        import intel_timings
-        from main import (
+        from rochviewer.intel import intel_timings
+        from rochviewer.ui.main import (
             SUMMARY_EXCLUDED_TIMING_NAMES, intel_summary_timing_columns,
         )
 
@@ -854,13 +854,13 @@ class TimingsSectionOrderTest(unittest.TestCase):
 
     def test_a_tertiary_row_can_be_kept_off_the_summary(self):
         # The case that failed: a Tertiary name in the exclusion list.
-        import intel_timings
-        from main import intel_summary_timing_columns
+        from rochviewer.intel import intel_timings
+        from rochviewer.ui.main import intel_summary_timing_columns
 
         rows = [t for t in intel_timings.TIMINGS
                 if t.get("Category") == "Tertiary" and t.get("name")]
         self.assertTrue(rows, "no Tertiary rows to check against")
-        with mock.patch("main.SUMMARY_EXCLUDED_TIMING_NAMES",
+        with mock.patch("rochviewer.ui.main.SUMMARY_EXCLUDED_TIMING_NAMES",
                         (rows[0]["name"],)):
             _primary, tertiary = intel_summary_timing_columns(
                 intel_timings.TIMINGS
@@ -871,9 +871,9 @@ class TimingsSectionOrderTest(unittest.TestCase):
         # The exclusion once read "tCCDL" and "tCCDL WR", which nothing has
         # ever been called, so it matched nothing and the rows showed anyway.
         # A name here that no row carries is silently doing nothing.
-        import intel_timings
-        import main
-        from main import SUMMARY_EXCLUDED_TIMING_NAMES
+        from rochviewer.intel import intel_timings
+        from rochviewer.ui import main
+        from rochviewer.ui.main import SUMMARY_EXCLUDED_TIMING_NAMES
 
         # Both tables: the list is shared, and the two platforms spell the
         # command-rate row differently -- AM5 shortens it to CR. Checking
@@ -887,21 +887,21 @@ class TimingsSectionOrderTest(unittest.TestCase):
     def test_a_continuous_tab_is_never_also_padded(self):
         # It already lines its columns up by construction, so padding would
         # add blank rows to a layout that does not need them.
-        from main import CONTINUOUS_SECTION_TABS, PAIRED_SECTION_TABS
+        from rochviewer.ui.main import CONTINUOUS_SECTION_TABS, PAIRED_SECTION_TABS
 
         self.assertFalse(CONTINUOUS_SECTION_TABS & PAIRED_SECTION_TABS)
 
     def test_padding_is_only_ever_asked_of_a_shaded_tab(self):
         # The spacers carry band colours, so padding an unshaded tab would
         # add rows that shade nothing.
-        from main import PAIRED_SECTION_TABS
+        from rochviewer.ui.main import PAIRED_SECTION_TABS
 
         self.assertTrue(PAIRED_SECTION_TABS <= SHADED_TABS)
 
     def test_a_continuous_tab_is_shaded(self):
         # The section headings take their colour from the band sequence, so a
         # continuous tab that was not shaded would band nothing.
-        from main import CONTINUOUS_SECTION_TABS
+        from rochviewer.ui.main import CONTINUOUS_SECTION_TABS
 
         self.assertTrue(CONTINUOUS_SECTION_TABS <= SHADED_TABS)
 

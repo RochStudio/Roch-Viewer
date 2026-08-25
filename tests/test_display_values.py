@@ -16,7 +16,7 @@
 
 import unittest
 
-from display_values import resolve_display_value, select_tab_names
+from rochviewer.ui.display_values import resolve_display_value, select_tab_names
 
 
 class DisplayValueTest(unittest.TestCase):

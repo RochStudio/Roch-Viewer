@@ -16,7 +16,7 @@
 
 import unittest
 
-import ddr5_telemetry as t
+from rochviewer.memory import ddr5_telemetry as t
 
 
 class AdcDecodeTest(unittest.TestCase):
@@ -224,7 +224,7 @@ class BackendCacheTest(unittest.TestCase):
         # detect_current_platform opens a WMI connection and runs three
         # queries -- about a second on the bench, against a one-second poll.
         calls = []
-        import platform_profiles
+        from rochviewer import platform_profiles
 
         original = platform_profiles.detect_current_platform
 
@@ -238,9 +238,9 @@ class BackendCacheTest(unittest.TestCase):
         )
         import sys
 
-        saved = sys.modules.pop("timings", None)
+        saved = sys.modules.pop("rochviewer.timings", None)
         if saved is not None:
-            self.addCleanup(sys.modules.__setitem__, "timings", saved)
+            self.addCleanup(sys.modules.__setitem__, "rochviewer.timings", saved)
 
         for _ in range(5):
             t.default_smbus_backend()
@@ -248,7 +248,7 @@ class BackendCacheTest(unittest.TestCase):
 
     def test_an_unsupported_machine_is_cached_too(self):
         # Otherwise the one case with nothing to show pays the most for it.
-        import platform_profiles
+        from rochviewer import platform_profiles
         import sys
 
         original = platform_profiles.detect_current_platform
@@ -258,9 +258,9 @@ class BackendCacheTest(unittest.TestCase):
         self.addCleanup(
             setattr, platform_profiles, "detect_current_platform", original
         )
-        saved = sys.modules.pop("timings", None)
+        saved = sys.modules.pop("rochviewer.timings", None)
         if saved is not None:
-            self.addCleanup(sys.modules.__setitem__, "timings", saved)
+            self.addCleanup(sys.modules.__setitem__, "rochviewer.timings", saved)
 
         self.assertIsNone(t.default_smbus_backend())
         self.assertEqual(len(t._BACKEND), 1)

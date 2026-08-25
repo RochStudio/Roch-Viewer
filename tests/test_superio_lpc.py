@@ -20,8 +20,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import superio_lpc
-from superio_lpc import (
+from rochviewer.sensors import superio_lpc
+from rochviewer.sensors.superio_lpc import (
     CONFIRMED_SENSORS,
     CONFIG_PORTS,
     EC_DATA_OFFSET,

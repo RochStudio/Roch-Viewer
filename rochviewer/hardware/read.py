@@ -19,7 +19,7 @@ import os
 from ctypes import wintypes
 
 
-from driver_path import find_driver, missing_message
+from rochviewer.hardware.driver_path import find_driver, missing_message
 
 DLL_PATH = find_driver()
 DYNAMIC_KEYS = (

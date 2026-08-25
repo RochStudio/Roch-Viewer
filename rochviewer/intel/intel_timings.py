@@ -21,12 +21,12 @@ import sys
 import re
 from functools import lru_cache, partial, wraps
 from pathlib import Path
-from read import read_timing, read_physical_memory_int
-from display_values import is_dual_timing
+from rochviewer.hardware.read import read_timing, read_physical_memory_int
+from rochviewer.ui.display_values import is_dual_timing
 # Classification only: this module performs no privileged access and is the
 # same one that selected this backend, so the Platform row cannot disagree
 # with the code that is running.
-from platform_profiles import (
+from rochviewer.platform_profiles import (
     LGA1700_DDR4,
     LGA1700_DDR5,
     LGA1851,
@@ -53,7 +53,7 @@ def active_platform():
     """
     import sys
 
-    profile = getattr(sys.modules.get("timings"), "ACTIVE_PLATFORM", None)
+    profile = getattr(sys.modules.get("rochviewer.timings"), "ACTIVE_PLATFORM", None)
     return profile or detect_current_platform()
 
 
@@ -216,15 +216,15 @@ def _swallowing(function):
 
 @lru_cache(maxsize=None)
 def _ecam_allocation():
-    from intel_pch_smbus import default_ecam_allocation
+    from rochviewer.intel.intel_pch_smbus import default_ecam_allocation
 
     return default_ecam_allocation()
 
 
 def _pci_config_dword(device, function, offset):
     """Read one dword from a PCI function's configuration space."""
-    from pci_mcfg import ecam_address
-    from read import read_physical_memory_int
+    from rochviewer.hardware.pci_mcfg import ecam_address
+    from rochviewer.hardware.read import read_physical_memory_int
 
     allocation = _ecam_allocation()
     if allocation is None:
@@ -246,7 +246,7 @@ def _cpu_family_model():
     # From system_identity, not from the probe that first defined it: that
     # module is a write-capable research tool and importing it here shipped
     # it inside the release EXE.
-    from system_identity import decode_wmi_processor_id
+    from rochviewer.system_identity import decode_wmi_processor_id
 
     for cpu in _wmi_static("Win32_Processor"):
         return decode_wmi_processor_id(getattr(cpu, "ProcessorId", None))
@@ -345,7 +345,7 @@ def get_lpcio_name():
     The vendor comes from the reader that answered rather than from the chip
     name, which carries no vendor of its own.
     """
-    from intel_board_sensors import board_sensor_profile
+    from rochviewer.intel.intel_board_sensors import board_sensor_profile
 
     profile = board_sensor_profile()
     reader = profile.get("reader") if profile else None
@@ -639,7 +639,7 @@ def detect_dual_channel_memory():
     not the reading.
     """
     try:
-        from dimm_inventory import read_modules
+        from rochviewer.memory.dimm_inventory import read_modules
 
         channels = {
             module.get("channel") for module in read_modules()
@@ -816,7 +816,7 @@ def _gpu_field(field):
     and cached, so the card module needs no connection of its own.
     """
     try:
-        from nvidia_gpu import read_gpu
+        from rochviewer.gpu.nvidia_gpu import read_gpu
 
         return read_gpu(pnp_device_ids=[
             getattr(adapter, "PNPDeviceID", "")
@@ -5108,7 +5108,7 @@ DUAL_CHANNEL_TAB = "Timings"
 # always really is.
 def _channel_labels():
     try:
-        from dimm_inventory import read_modules, slots_by_channel
+        from rochviewer.memory.dimm_inventory import read_modules, slots_by_channel
 
         channels = slots_by_channel(read_modules())
     except Exception:
@@ -5262,7 +5262,7 @@ SENSOR_TAB = "Sensors"
 def _board_rail(key):
     """Read one Super I/O rail, importing that path only when it is used."""
     try:
-        from intel_board_sensors import rail_text
+        from rochviewer.intel.intel_board_sensors import rail_text
 
         return rail_text(key)
     except Exception:
@@ -5286,7 +5286,7 @@ def _dimm_temperature(channel):
     if celsius is not None:
         return f"{celsius:.1f} °C"
     try:
-        from ddr4_tsod import temperature_text
+        from rochviewer.memory.ddr4_tsod import temperature_text
 
         return temperature_text(channel)
     except Exception:
@@ -5296,8 +5296,8 @@ def _dimm_temperature(channel):
 def _ddr5_dimm_temperature(channel):
     """Read one channel's SPD5 hub sensor, or None when there is no hub."""
     try:
-        from ddr5_pmic import read_dimm_temperatures
-        from intel_pch_smbus import (
+        from rochviewer.memory.ddr5_pmic import read_dimm_temperatures
+        from rochviewer.intel.intel_pch_smbus import (
             CONTROLLER_OFFSETS, SPD_HUB_ADDRESSES, PchSmbusReader,
         )
 
@@ -5317,7 +5317,7 @@ def _board_temperature(key):
     the sensor.
     """
     try:
-        from intel_board_sensors import temperature_text
+        from rochviewer.intel.intel_board_sensors import temperature_text
 
         text = temperature_text(key)
         if text:
@@ -5335,7 +5335,7 @@ def _ec_temperature(key):
     to a plausible temperature rather than an error.
     """
     try:
-        from asus_ec import is_asus_board, temperature_text
+        from rochviewer.sensors.asus_ec import is_asus_board, temperature_text
 
         if not is_asus_board(get_motherboard_display()):
             return None
@@ -5347,7 +5347,7 @@ def _ec_temperature(key):
 def _package_power(domain):
     """Read one RAPL domain, importing that path only when it is used."""
     try:
-        from intel_rapl import power_text
+        from rochviewer.intel.intel_rapl import power_text
 
         return power_text(domain)
     except Exception:
@@ -5372,8 +5372,8 @@ def _dram_rail(key):
     if detect_ddr_generation() == "DDR4":
         return None
     try:
-        from ddr5_pmic import read_dram_rails
-        from intel_pch_smbus import (
+        from rochviewer.memory.ddr5_pmic import read_dram_rails
+        from rochviewer.intel.intel_pch_smbus import (
             CONTROLLER_OFFSETS, PMIC_ADDRESSES, PchSmbusReader,
         )
 
@@ -5395,7 +5395,7 @@ def _dram_rail(key):
 def _core_clock(key):
     """One core clock from the performance counters, or None."""
     try:
-        from cpu_clocks import clock_text
+        from rochviewer.sensors.cpu_clocks import clock_text
 
         return clock_text(key)
     except Exception:
@@ -5418,7 +5418,7 @@ def _per_core_clock_rows(category, column):
     children, and the parent row stands alone exactly as it did before.
     """
     try:
-        from cpu_clocks import core_clock_text, core_labels
+        from rochviewer.sensors.cpu_clocks import core_clock_text, core_labels
 
         labels = core_labels()
     except Exception:
@@ -5459,7 +5459,7 @@ GRAPHICS_SENSOR_CACHE = {}
 def _graphics_sensors(refresh=False):
     if refresh or not GRAPHICS_SENSOR_CACHE:
         try:
-            from nvidia_gpu import read_gpu_sensors
+            from rochviewer.gpu.nvidia_gpu import read_gpu_sensors
 
             readings = read_gpu_sensors()
             GRAPHICS_SENSOR_CACHE.clear()
@@ -5554,7 +5554,7 @@ def get_core_max_temp():
 def _whea_errors():
     """How many hardware errors Windows has logged since this boot."""
     try:
-        from whea_errors import error_text
+        from rochviewer.sensors.whea_errors import error_text
 
         return error_text()
     except Exception:
@@ -6280,7 +6280,7 @@ def get_platform_name():
 
 def _ic_lookup(module, field):
     """The DRAM maker or die inferred from the module's part number."""
-    from dimm_inventory import split_ic
+    from rochviewer.memory.dimm_inventory import split_ic
 
     return split_ic(module["ic"])[0 if field == "dram_manufacturer" else 1]
 
@@ -6329,14 +6329,14 @@ def _spd_identity(field):
     the DDR5 one reaches its block through a page-select write that a DDR4
     module would take as a write to its own SPD array. See ddr4_spd.
     """
-    from dimm_inventory import EM_DASH, shared_value
+    from rochviewer.memory.dimm_inventory import EM_DASH, shared_value
 
     if detect_ddr_generation() == "DDR4":
         if field not in DDR4_SPD_FIELDS:
             return None
-        from ddr4_spd import read_identity
+        from rochviewer.memory.ddr4_spd import read_identity
     else:
-        from ddr5_spd import read_identity
+        from rochviewer.memory.ddr5_spd import read_identity
 
     modules = read_identity()
     if not modules:
@@ -6364,7 +6364,7 @@ def _dimm_field(field):
     value instead of hiding the mismatch.
     """
     try:
-        from dimm_inventory import (
+        from rochviewer.memory.dimm_inventory import (
             EM_DASH, rank_numeric, read_modules, shared_value,
         )
 

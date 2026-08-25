@@ -18,7 +18,7 @@
 
 import unittest
 
-from display_values import is_dual_timing, resolve_display_value
+from rochviewer.ui.display_values import is_dual_timing, resolve_display_value
 from tests import intel_stub
 from tests.intel_stub import FIELD_READS, MCHBAR, MCHBAR2, install, restore
 

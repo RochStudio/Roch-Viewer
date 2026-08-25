@@ -33,12 +33,12 @@ import os
 import unittest
 from unittest import mock
 
-import intel_timings
-import nvidia_gpu
-import timings
+from rochviewer.intel import intel_timings
+from rochviewer.gpu import nvidia_gpu
+from rochviewer import timings
 
 SOURCE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                      "intel_timings.py")
+                      "rochviewer", "intel", "intel_timings.py")
 
 # Rows defined in the table literal carry Tab "Main" and are moved onto System
 # Info by a later pass; see _install_system_info_order.
@@ -144,7 +144,7 @@ class FollowsTheHardwareTest(unittest.TestCase):
             "serial_number": "0000ABCD", "module_manufacturer": "G.Skill",
         }
         with self._generation("DDR5"), \
-                mock.patch("ddr5_spd.read_identity", return_value=[other]):
+                mock.patch("rochviewer.memory.ddr5_spd.read_identity", return_value=[other]):
             self.assertEqual(_row_value("Part Number"), "F5-6000J3038F16G")
             self.assertEqual(_row_value("DRAM Die"), "B-die")
             self.assertEqual(_row_value("Manufactured"), "31 / 2023")
@@ -156,8 +156,8 @@ class FollowsTheHardwareTest(unittest.TestCase):
         # page-select is a write, and on DDR4 that lands on the SPD array.
         module = {"serial_number": "0000ABCD", "manufacture_date": "31 / 2023"}
         with self._generation("DDR4"), \
-                mock.patch("ddr4_spd.read_identity", return_value=[module]), \
-                mock.patch("ddr5_spd.read_identity",
+                mock.patch("rochviewer.memory.ddr4_spd.read_identity", return_value=[module]), \
+                mock.patch("rochviewer.memory.ddr5_spd.read_identity",
                            side_effect=AssertionError) as ddr5:
             self.assertEqual(_row_value("Serial Number"), "0000ABCD")
             self.assertEqual(_row_value("Manufactured"), "31 / 2023")
@@ -170,7 +170,7 @@ class FollowsTheHardwareTest(unittest.TestCase):
         module = {"dram_die": "0x00", "dram_manufacturer": "0x0000",
                   "part_number": "NOT-THE-REAL-SKU"}
         with self._generation("DDR4"), \
-                mock.patch("ddr4_spd.read_identity", return_value=[module]):
+                mock.patch("rochviewer.memory.ddr4_spd.read_identity", return_value=[module]):
             self.assertNotEqual(_row_value("DRAM Die"), "0x00")
             self.assertNotEqual(_row_value("Part Number"), "NOT-THE-REAL-SKU")
 

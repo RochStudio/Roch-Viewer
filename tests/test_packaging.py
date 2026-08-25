@@ -54,13 +54,32 @@ DYNAMIC_HELPERS = ("_import_call", "_offsets_gate")
 # logger is run from source against hardware and has no business in the EXE.
 BENCH_SUFFIXES = ("_probe", "_logger")
 
-ENTRY_POINTS = frozenset({"main", "am5_probe"})
+# The one module PyInstaller is pointed at. Excluded from the
+# "must be named in the spec" rule for the obvious reason, and
+# added back where the question is what a module imports.
+ENTRY_POINT = "rochviewer.ui.main"
+ENTRY_POINTS = frozenset({ENTRY_POINT})
+
+
+PACKAGE = os.path.join(ROOT, "rochviewer")
 
 
 def local_modules():
-    """Every module in the project root, by import name."""
-    return {name[:-3] for name in os.listdir(ROOT)
-            if name.endswith(".py") and not name.startswith("_")}
+    """Every module in the package, by dotted import name.
+
+    Walked rather than listed: the modules moved into folders by what they
+    talk to, and a check that only looked in one directory would quietly
+    stop covering most of them.
+    """
+    found = set()
+    for folder, _dirs, files in os.walk(PACKAGE):
+        if "__pycache__" in folder:
+            continue
+        relative = os.path.relpath(folder, ROOT).replace(os.sep, ".")
+        for name in files:
+            if name.endswith(".py") and not name.startswith("_"):
+                found.add("%s.%s" % (relative, name[:-3]))
+    return found
 
 
 def shipped_modules():
@@ -70,14 +89,15 @@ def shipped_modules():
 
 
 def _parse(name):
-    with io.open(os.path.join(ROOT, name + ".py"), encoding="utf-8") as handle:
+    path = os.path.join(ROOT, name.replace(".", os.sep) + ".py")
+    with io.open(path, encoding="utf-8") as handle:
         return ast.parse(handle.read())
 
 
 def dynamically_imported():
     """Modules named as string arguments to the import-by-variable helpers."""
     found = set()
-    for name in sorted(shipped_modules() | {"main"}):
+    for name in sorted(shipped_modules() | {ENTRY_POINT}):
         for node in ast.walk(_parse(name)):
             if not isinstance(node, ast.Call):
                 continue
@@ -93,7 +113,7 @@ def dynamically_imported():
 def dynamic_call_sites():
     """Every ``__import__`` call, so a new one cannot appear unnoticed."""
     sites = []
-    for name in sorted(shipped_modules() | {"main"}):
+    for name in sorted(shipped_modules() | {ENTRY_POINT}):
         for node in ast.walk(_parse(name)):
             if isinstance(node, ast.Call) and \
                     getattr(node.func, "id", None) == "__import__":

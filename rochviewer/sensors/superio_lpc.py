@@ -46,11 +46,11 @@ from __future__ import annotations
 
 import threading
 
-from lowlevel_io import InpOutByteIO, NamedMutex
+from rochviewer.hardware.lowlevel_io import InpOutByteIO, NamedMutex
 
 # Believable ranges live with the rail definitions, so the transport and the
 # view can never disagree about what counts as a plausible reading.
-from voltage_rails import RAILS_BY_KEY, validate_voltage
+from rochviewer.sensors.voltage_rails import RAILS_BY_KEY, validate_voltage
 
 # The mutex mainstream monitoring tools take before driving LPC.
 ISA_MUTEX_NAME = "Global\\Access_ISABUS.HTP.Method"

@@ -15,11 +15,11 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import customtkinter as ctk
-from lazy_read import read_timing
-from timings import TIMINGS, apply_formula
-from dimm_inventory import channel_of, read_modules
-from version import APP_NAME, __version__
-from display_values import (
+from rochviewer.ui.lazy_read import read_timing
+from rochviewer.timings import TIMINGS, apply_formula
+from rochviewer.memory.dimm_inventory import channel_of, read_modules
+from rochviewer.version import APP_NAME, __version__
+from rochviewer.ui.display_values import (
     WINDOWED_TABS,
     is_dual_timing,
     resolve_display_value,
@@ -152,7 +152,7 @@ def channel_slot_labels(modules=None):
     right, so that channel keeps its generic label.
     """
     try:
-        from dimm_inventory import read_modules, slots_by_channel
+        from rochviewer.memory.dimm_inventory import read_modules, slots_by_channel
 
         grouped = slots_by_channel(read_modules() if modules is None else modules)
     except Exception:
@@ -401,7 +401,7 @@ def summary_voltage_names(timings):
     can never change which rows are selected.  See
     voltage_rails.SUMMARY_HIDDEN_RAILS for the rails held back.
     """
-    from voltage_rails import SUMMARY_HIDDEN_RAILS
+    from rochviewer.sensors.voltage_rails import SUMMARY_HIDDEN_RAILS
 
     return [
         timing.get("name") for timing in timings
@@ -1177,13 +1177,13 @@ class TimingGUI:
         which firmware often leaves as "Unknown" -- it reads G.Skill off the
         DIMM here while WMI has nothing.
         """
-        from dimm_inventory import rank_numeric, read_modules
+        from rochviewer.memory.dimm_inventory import rank_numeric, read_modules
 
         modules = []
         try:
             spd_by_part = {}
             try:
-                from ddr5_spd import read_identity
+                from rochviewer.memory.ddr5_spd import read_identity
 
                 for entry in read_identity() or []:
                     part = (entry.get("part_number") or "").strip()
@@ -1285,7 +1285,7 @@ class TimingGUI:
             existing.focus()
             return
         try:
-            from advanced_window import AdvancedWindow
+            from rochviewer.ui.advanced_window import AdvancedWindow
         except Exception as exc:
             print(f"Advanced window unavailable: {exc}")
             return
@@ -1319,8 +1319,8 @@ class TimingGUI:
             existing.focus()
             return
         try:
-            from ddr5_telemetry import read_dimm_telemetry
-            from dimm_telemetry_window import DimmTelemetryWindow
+            from rochviewer.memory.ddr5_telemetry import read_dimm_telemetry
+            from rochviewer.ui.dimm_telemetry_window import DimmTelemetryWindow
         except Exception as exc:
             print(f"DIMM telemetry unavailable: {exc}")
             return
@@ -3879,11 +3879,22 @@ def run_as_admin():
     )
     sys.exit(0)
 
-if __name__ == "__main__":
+def run():
+    """Open the window, elevating first if this process is not elevated.
+
+    A function rather than a body under __main__, because the module now
+    lives inside a package: run_viewer.py at the root imports this and calls
+    it, and PyInstaller is pointed at that launcher, so the built EXE and
+    running from source take exactly the same path in.
+    """
     if not is_admin():
         print("Admin privileges required. Relaunching with UAC prompt...")
         run_as_admin()
     root = ctk.CTk()
-    app = TimingGUI(root)
+    TimingGUI(root)
     root.mainloop()
+
+
+if __name__ == "__main__":
+    run()
 

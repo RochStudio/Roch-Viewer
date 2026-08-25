@@ -15,7 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import unittest
-from dram_ic import identify_dram_ic
+from rochviewer.memory.dram_ic import identify_dram_ic
 
 class DramIcTest(unittest.TestCase):
     def test_gskill_f5_6000_user_kit_is_hynix_a_die(self):

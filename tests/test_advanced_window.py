@@ -19,10 +19,10 @@
 import types
 import unittest
 
-from advanced_window import (
+from rochviewer.ui.advanced_window import (
     ROW_HEIGHT, VALUE_WRAP, AdvancedWindow, measuring_font_size,
 )
-from main import TimingGUI
+from rochviewer.ui.main import TimingGUI
 
 
 def build_entries(timings):
@@ -31,7 +31,7 @@ def build_entries(timings):
         ADVANCED_TABS=TimingGUI.ADVANCED_TABS,
         _read_compact_value=lambda timing: f"<{timing.get('name')}>",
     )
-    import main
+    from rochviewer.ui import main
     saved = main.TIMINGS
     main.TIMINGS = timings
     try:
@@ -101,7 +101,7 @@ class EntryListTest(unittest.TestCase):
                          ["<tCL>", "<tRCD>"])
 
     def test_the_real_table_produces_rows(self):
-        import main
+        from rochviewer.ui import main
         entries = build_entries(main.TIMINGS)
         self.assertTrue(entries)
         self.assertTrue(all(name.strip() for _, _, name, _ in entries))
