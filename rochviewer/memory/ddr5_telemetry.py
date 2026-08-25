@@ -1,6 +1,13 @@
 # Roch Viewer -- a read-only memory-controller and timing viewer.
 # Copyright (C) 2026 Roch Studio
 #
+# This file follows ZenStates-Core and ZenTimings by irusanov
+# (https://github.com/irusanov), both GPL-3.0. Register numbers, bit fields
+# and the bounds applied to decoded values were taken from or checked against
+# that work, and the comments below say where. Copyright in those parts
+# remains with their authors; this file is distributed under the same licence
+# they are, which is what makes that use permitted.
+#
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -273,7 +280,8 @@ def default_smbus_backend():
         return _BACKEND[0]
 
     from rochviewer.platform_profiles import (
-        LGA1700_DDR4, LGA1700_DDR5, LGA1851, detect_current_platform,
+        AM5, LGA1700_DDR4, LGA1700_DDR5, LGA1851,
+        detect_current_platform,
     )
 
     # timings resolves the platform at import and the app imports it at
@@ -287,7 +295,15 @@ def default_smbus_backend():
     profile = getattr(sys.modules.get("rochviewer.timings"), "ACTIVE_PLATFORM", None)
     if profile is None:
         profile = detect_current_platform()
-    if profile in (LGA1700_DDR4, LGA1700_DDR5, LGA1851):
+    if profile == AM5:
+        from rochviewer.amd.fch_smbus import (
+            CONTROLLER_OFFSETS, PMIC_ADDRESSES, SPD_HUB_ADDRESSES,
+            FchSmbusReader,
+        )
+
+        backend = (FchSmbusReader, CONTROLLER_OFFSETS, SPD_HUB_ADDRESSES,
+                   PMIC_ADDRESSES)
+    elif profile in (LGA1700_DDR4, LGA1700_DDR5, LGA1851):
         from rochviewer.intel.intel_pch_smbus import (
             CONTROLLER_OFFSETS, PMIC_ADDRESSES, SPD_HUB_ADDRESSES,
             PchSmbusReader,

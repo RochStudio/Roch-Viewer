@@ -8,13 +8,17 @@ Roch Viewer began as a private tool validated on one bench and covering both
 Intel and AMD desktop platforms. This is the Intel half, published on its own:
 LGA1700 with DDR5 or DDR4, and LGA1851.
 
-The AMD backend is not here and is not planned for this repository. Its
-electrical-value feature was built with GPL-3.0 reference implementations
-consulted as behavioural references, and formal clean-room provenance for it
-could not be demonstrated, so it stays out rather than shipping under a
-licence it may not be entitled to. The write-capable SMU diagnostics that went
-with it are out for the same reason and one more: they were bench instruments,
-gated to one exact CPU, and nothing in a viewer needs them.
+The AMD backend is here too, following ZenStates-Core and ZenTimings by
+irusanov. That was the reason this could not ship before: those are GPL-3.0,
+this was not, and clean-room provenance could not be demonstrated for a
+proprietary release. Under GPL-3.0 the question changes -- building on GPL-3.0
+work under GPL-3.0 is what the licence is for -- and what it asks in return is
+attribution, which the files that follow that work now carry.
+
+What is still absent are the write-capable SMU diagnostics that went with it.
+They issue fixed command tuples to the AMD SMU mailbox, were gated to one
+exact CPU, and are bench instruments; no licence question arises, a viewer
+simply has no use for them.
 
 ### What it reads
 

@@ -132,29 +132,18 @@ def spec_hidden_imports():
 
 
 class DynamicImportTest(unittest.TestCase):
-    def test_nothing_imports_by_variable(self):
-        # The check below is vacuous while this holds, and that is the point.
-        # Import-by-variable is the one thing PyInstaller cannot follow: it
-        # scans bytecode, so a plain import inside a function body is found,
-        # but __import__(name) with a variable is not, and the module goes
-        # missing from the build with nothing to say so.
+    def test_the_helpers_still_have_call_sites(self):
+        # Without this the check below passes vacuously, which is the failure
+        # mode the first version of this file had.
         #
-        # The helpers that did this belonged to the AMD profile and are not
-        # in this tree. If the pattern comes back, this fails and
-        # test_every_dynamically_imported_module_is_named starts doing work.
-        self.assertEqual(
-            dynamically_imported(), set(),
-            "something imports by variable again; PyInstaller cannot see "
-            "those, so every one has to be named in the spec by hand")
-
-    def test_no_import_call_takes_a_variable(self):
-        # The same rule at the __import__ call itself, which is what a future
-        # helper would be built on.
-        for module, line, literal in dynamic_call_sites():
-            with self.subTest(module=module, line=line):
-                self.assertTrue(
-                    literal,
-                    "%s:%d calls __import__ with a variable" % (module, line))
+        # This assertion has been inverted twice: it was removed when the AMD
+        # profile left the tree and nothing imported by variable any more,
+        # and restored when the profile came back. Both directions were
+        # right at the time, which is the argument for asserting the state
+        # rather than assuming it.
+        self.assertTrue(dynamically_imported(),
+                        "no module is reached by import-by-variable any more; "
+                        "either the helpers went away or this check is dead")
 
     def test_every_dynamically_imported_module_is_named(self):
         missing = sorted(name for name in dynamically_imported()

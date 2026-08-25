@@ -21,6 +21,7 @@ that prevents Intel MCHBAR installers/readers from running on AMD hardware.
 """
 
 from rochviewer.platform_profiles import (
+    AM5,
     LGA1700_DDR4,
     LGA1700_DDR5,
     LGA1851,
@@ -29,6 +30,10 @@ from rochviewer.platform_profiles import (
 
 
 def load_timing_backend(profile):
+    if profile == AM5:
+        from rochviewer.amd.profile import TIMINGS, apply_formula
+
+        return TIMINGS, apply_formula
     if profile in (LGA1700_DDR4, LGA1700_DDR5, LGA1851):
         from rochviewer.intel.intel_timings import TIMINGS, apply_formula
 

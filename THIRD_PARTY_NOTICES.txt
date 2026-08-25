@@ -16,6 +16,39 @@ this project is GPL-3.0; shipping them alongside it would make the combined
 work something neither licence covers. Obtain them from the vendor and place
 them beside the executable yourself -- see "Prerequisites" in README.md.
 
+ZenStates-Core and ZenTimings  (followed, not bundled)
+-------------------------------------------------------
+Copyright (c) irusanov -- https://github.com/irusanov
+GPL-3.0.
+
+The AMD backend follows that work. Register numbers, bit fields and the bounds
+applied to decoded values were taken from or checked against ZenStates-Core and
+ZenTimings; the modules that do so carry a notice saying which, and the
+comments beside the definitions say what came from where.
+
+No source file from either project is included here. This project is
+distributed under GPL-3.0, the same licence they use, which is what makes
+building on them permitted -- and it is why the licence is GPL-3.0 rather than
+something more permissive. Copyright in the parts that derive from that work
+remains with its authors.
+
+The files concerned:
+
+  rochviewer/amd/agesa.py           rochviewer/amd/apob.py
+  rochviewer/amd/fch_smbus.py       rochviewer/amd/power_metrics.py
+  rochviewer/amd/profile.py         rochviewer/amd/smu_clocks.py
+  rochviewer/amd/smu_power.py       rochviewer/amd/smu_voltages.py
+  rochviewer/amd/timings.py         rochviewer/memory/ddr5_pmic.py
+  rochviewer/memory/ddr5_telemetry.py
+
+Three other files mention those projects without following them, and carry the
+plain notice instead: ddr5_spd.py checks JESD400-5 offsets against them,
+dimm_inventory.py borrows a label format, and ui/main.py a visual convention.
+
+The MIT-licensed gnr-smu research project by Zorko was consulted for
+independent Granite Ridge RSMU mailbox-address provenance. No gnr-smu source
+is bundled, and the diagnostics that used it are not in this repository.
+
 Reference tools
 ---------------
 CPU-Z, HWiNFO, VoidTimings, ASRock Timing Configurator and MemTweakIt were

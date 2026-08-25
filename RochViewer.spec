@@ -61,6 +61,23 @@ hiddenimports = [
     # cost nothing and say what the build is expected to carry, which
     # test_packaging then holds it to.
     'rochviewer.gpu.nvidia_gpu',
+    # The AMD backend. Parts of it are reached by importlib with a name built
+    # at runtime, which PyInstaller cannot follow, so those are named here by
+    # hand -- test_packaging holds this list to that.
+    'rochviewer.amd.profile',
+    'rochviewer.amd.timings',
+    'rochviewer.amd.power_metrics',
+    'rochviewer.amd.apob',
+    'rochviewer.amd.agesa',
+    'rochviewer.amd.smn',
+    'rochviewer.amd.smn_mcfg',
+    'rochviewer.amd.fch_smbus',
+    'rochviewer.amd.smu_clocks',
+    'rochviewer.amd.smu_power',
+    'rochviewer.amd.smu_voltages',
+    'rochviewer.amd.adl',
+    'rochviewer.amd.adlx',
+    'rochviewer.gpu.radeon',
     'rochviewer.sensors.whea_errors',
 ]
 

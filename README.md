@@ -1,7 +1,7 @@
 # Roch Viewer 1.0.0
 
-Roch Viewer is a Windows memory-controller and timing viewer for Intel desktop
-platforms. It reads the memory controller, the modules, the board and the CPU
+Roch Viewer is a Windows memory-controller and timing viewer for Intel and AMD
+desktop platforms. It reads the memory controller, the modules, the board and the CPU
 directly, and shows what they actually report — the timings the controller was
 programmed with, the training results it settled on, and the sensors that move
 while the machine runs.
@@ -15,14 +15,27 @@ value it was told to expect.
 | --- | --- | --- |
 | LGA1700 (Z690/Z790) | DDR5 and DDR4 | Intel MCHBAR |
 | LGA1851 (Z890) | DDR5 | Intel MCHBAR |
+| AM5 / Granite Ridge | DDR5 | AMD UMC, SMU and APOB |
 
 The platform is resolved before any privileged read, and an unrecognised
 machine gets a backend that reads nothing and says so, rather than pointing
 MCHBAR offsets at silicon they were not written for.
 
-Validated on an ASUS ROG MAXIMUS Z790 APEX with an i9-14900KS at DDR5-8000
-Gear 2. Readings are cross-checked against CPU-Z, HWiNFO, VoidTimings, ASRock
-Timing Configurator and MemTweakIt.
+The Intel side is validated on an ASUS ROG MAXIMUS Z790 APEX with an
+i9-14900KS at DDR5-8000 Gear 2, cross-checked against CPU-Z, HWiNFO,
+VoidTimings, ASRock Timing Configurator and MemTweakIt.
+
+The AMD side was developed and validated on an MSI B850MPOWER with a Ryzen
+9850X3D, against same-boot ZenTimings, and has not been re-run since it was
+brought into this repository. Treat its readings as needing confirmation
+against a second tool on your own board. Its electrical values -- RTT, ODT and
+the drive strengths -- come from a reverse-engineered APOB parser whose
+channel attribution is verified only for the two-record geometry observed on
+that bench.
+
+The AMD backend follows ZenStates-Core and ZenTimings by irusanov, both
+GPL-3.0, which is why this project is GPL-3.0 too. See
+`THIRD_PARTY_NOTICES.txt`.
 
 ## Prerequisites
 

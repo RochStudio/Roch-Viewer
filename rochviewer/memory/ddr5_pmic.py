@@ -1,6 +1,13 @@
 # Roch Viewer -- a read-only memory-controller and timing viewer.
 # Copyright (C) 2026 Roch Studio
 #
+# This file follows ZenStates-Core and ZenTimings by irusanov
+# (https://github.com/irusanov), both GPL-3.0. Register numbers, bit fields
+# and the bounds applied to decoded values were taken from or checked against
+# that work, and the comments below say where. Copyright in those parts
+# remains with their authors; this file is distributed under the same licence
+# they are, which is what makes that use permitted.
+#
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -177,13 +184,22 @@ def read_dram_rails(reader_factory=None, controllers=None, addresses=None):
     if not CONFIRMED_PMIC_RAILS:
         return {}
     try:
-        if reader_factory is None:
-            from rochviewer.intel.intel_pch_smbus import PchSmbusReader as reader_factory
-        if controllers is None or addresses is None:
-            from rochviewer.intel.intel_pch_smbus import CONTROLLER_OFFSETS, PMIC_ADDRESSES
+        # The host controller differs per platform and the PMIC does not, so
+        # the transport comes from the dispatcher rather than being named
+        # here. It used to be hardcoded -- to the AMD one while this was an
+        # AM5 tool, to the Intel one while the tree was Intel-only -- and
+        # either way it was right by accident, because every caller in the
+        # app passes a factory in.
+        if reader_factory is None or controllers is None or addresses is None:
+            from rochviewer.memory.ddr5_telemetry import default_smbus_backend
 
-            controllers = CONTROLLER_OFFSETS if controllers is None else controllers
-            addresses = PMIC_ADDRESSES if addresses is None else addresses
+            backend = default_smbus_backend()
+            if backend is None:
+                return {}
+            default_factory, offsets, _hubs, pmics = backend
+            reader_factory = reader_factory or default_factory
+            controllers = offsets if controllers is None else controllers
+            addresses = pmics if addresses is None else addresses
 
         cached = _PMIC_LOCATION
         if cached["reader"] is not None:
@@ -283,19 +299,24 @@ def read_dimm_temperatures(reader_factory=None, controllers=None,
     a module cannot be swapped while the machine is running and repeating it
     on every refresh would double the bus traffic behind these two rows.
 
-    As with :func:`read_dram_rails`, the bus is the caller's choice: an Intel
-    caller passes ``intel_pch_smbus``'s reader and address lists, and the
-    JESD300-5 decode below is unchanged.
+    As with :func:`read_dram_rails`, the bus is the caller's choice and the
+    dispatcher's default: the host controller differs per platform, and the
+    JESD300-5 decode below does not.
     """
     temperatures = {}
     try:
-        if reader_factory is None:
-            from rochviewer.intel.intel_pch_smbus import PchSmbusReader as reader_factory
-        if controllers is None or addresses is None:
-            from rochviewer.intel.intel_pch_smbus import CONTROLLER_OFFSETS, SPD_HUB_ADDRESSES
+        # Same as read_dram_rails: the dispatcher names the transport, since
+        # the host controller is the platform's and the hub is not.
+        if reader_factory is None or controllers is None or addresses is None:
+            from rochviewer.memory.ddr5_telemetry import default_smbus_backend
 
-            controllers = CONTROLLER_OFFSETS if controllers is None else controllers
-            addresses = SPD_HUB_ADDRESSES if addresses is None else addresses
+            backend = default_smbus_backend()
+            if backend is None:
+                return {}
+            default_factory, offsets, hubs, _pmics = backend
+            reader_factory = reader_factory or default_factory
+            controllers = offsets if controllers is None else controllers
+            addresses = hubs if addresses is None else addresses
 
         cached = _SPD_LOCATIONS
         known = bool(cached["reader"] is not None and cached["locations"])
