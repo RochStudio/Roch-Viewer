@@ -15,6 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import customtkinter as ctk
+from rochviewer.paths import module_chain
 from rochviewer.ui.asset_path import find_icon
 from rochviewer.ui.lazy_read import read_timing
 from rochviewer.timings import TIMINGS, apply_formula
@@ -3863,11 +3864,37 @@ def is_admin():
     except Exception:
         return False
 
+LAUNCHER_NAME = "run_viewer.py"
+
+
+def launcher_path():
+    """The script to hand back to a fresh interpreter.
+
+    Not this module. It lives in a package and its imports are absolute, so
+    running it as a script exits with ModuleNotFoundError before it draws
+    anything -- which, from an elevation prompt, looks like the UAC dialog
+    doing nothing at all. run_viewer.py at the project root is the one entry
+    point that works, and it is what PyInstaller is pointed at too.
+    """
+    for directory in module_chain(__file__):
+        candidate = os.path.join(directory, LAUNCHER_NAME)
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
 def run_as_admin():
-    """Relaunch the script with administrative privileges."""
+    """Relaunch with administrative privileges."""
     parameters = None
     if not getattr(sys, "frozen", False):
-        parameters = f'"{os.path.abspath(__file__)}"'
+        launcher = launcher_path()
+        if launcher is None:
+            print(
+                "Cannot elevate: %s was not found next to the package. Run it "
+                "yourself from an Administrator prompt." % LAUNCHER_NAME
+            )
+            sys.exit(1)
+        parameters = f'"{launcher}"'
     ctypes.windll.shell32.ShellExecuteW(
         None, "runas", sys.executable, parameters, None, 1
     )

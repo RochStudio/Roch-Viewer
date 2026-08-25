@@ -26,31 +26,27 @@ still looked correct.
 """
 
 import os
-import sys
+
+from rochviewer.paths import (
+    bundle_directory,
+    dedupe,
+    frozen_directory,
+    module_chain,
+)
 
 ICON_NAME = "icon.ico"
 
 
 def search_directories():
-    """Every directory an asset might be in, nearest first."""
-    directories = []
-    if getattr(sys, "frozen", False):
-        directories.append(os.path.dirname(os.path.abspath(sys.executable)))
-    unpacked = getattr(sys, "_MEIPASS", None)
-    if unpacked:
-        directories.append(unpacked)
-    here = os.path.dirname(os.path.realpath(__file__))
-    # This module's directory, then its package, then the project root: the
-    # asset lives at the root today, and walking up means moving it into the
-    # package later needs no change here.
-    directories.extend((here, os.path.dirname(here),
-                        os.path.dirname(os.path.dirname(here))))
-    seen, ordered = set(), []
-    for directory in directories:
-        if directory and directory not in seen:
-            seen.add(directory)
-            ordered.append(directory)
-    return ordered
+    """Every directory an asset might be in, nearest first.
+
+    The bundle is searched before the module chain here, unlike the driver:
+    an asset is something the project ships, so a bundled copy is the right
+    one, where the driver is something the user supplies.
+    """
+    return dedupe(
+        [frozen_directory(), bundle_directory()] + module_chain(__file__)
+    )
 
 
 def find_asset(name):

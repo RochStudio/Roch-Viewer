@@ -61,10 +61,6 @@ WAIT_FAILED = 0xFFFFFFFF
 
 DEFAULT_MUTEX_NAME = "Global\\Access_PCI"
 
-_DLL_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)),
-                         "inpoutx64.dll")
-
-
 def _config_address(reg):
     """CF8 value selecting bus 0, device 0, function 0, register ``reg``."""
     return PCI_CONFIG_ENABLE | (reg & 0xFC)

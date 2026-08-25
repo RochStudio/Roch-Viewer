@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Where to find the low-level access driver.
+r"""Where to find the low-level access driver.
 
 The driver is not distributed with this project -- see THIRD_PARTY_NOTICES --
 so it is wherever the person running the tool put it. That is a different
@@ -33,27 +33,29 @@ driver keeps working.
 """
 
 import os
-import sys
+
+from rochviewer.paths import (
+    bundle_directory,
+    dedupe,
+    frozen_directory,
+    module_chain,
+)
 
 DLL_NAME = "inpoutx64.dll"
 
 
 def search_directories():
     """Every directory the driver might be in, nearest first."""
-    directories = []
-    if getattr(sys, "frozen", False):
-        # The executable's own directory: what the user sees.
-        directories.append(os.path.dirname(os.path.abspath(sys.executable)))
-    directories.append(os.path.dirname(os.path.realpath(__file__)))
-    unpacked = getattr(sys, "_MEIPASS", None)
-    if unpacked:
-        directories.append(unpacked)
-    seen, ordered = set(), []
-    for directory in directories:
-        if directory and directory not in seen:
-            seen.add(directory)
-            ordered.append(directory)
-    return ordered
+    # The module's directory alone is what this used to be, and after the
+    # move into packages that was rochviewer/hardware -- while the README
+    # says to put the driver beside run_viewer.py, at the project root.
+    # Nothing raised: find_driver returned None and every register-backed
+    # reading quietly became N/A.
+    return dedupe(
+        [frozen_directory()]
+        + module_chain(__file__)
+        + [bundle_directory()]
+    )
 
 
 def find_driver(name=DLL_NAME):
