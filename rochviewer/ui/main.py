@@ -15,6 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import customtkinter as ctk
+from rochviewer.ui.asset_path import find_icon
 from rochviewer.ui.lazy_read import read_timing
 from rochviewer.timings import TIMINGS, apply_formula
 from rochviewer.memory.dimm_inventory import channel_of, read_modules
@@ -918,15 +919,8 @@ class TimingGUI:
         ))
 
     def icon_path(self):
-        """Return the app icon, or None when it is not beside the module.
-
-        A frozen build unpacks icon.ico next to the module, so one path covers
-        running from source and from the EXE.
-        """
-        path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "icon.ico"
-        )
-        return path if os.path.exists(path) else None
+        """Return the app icon, or None when it is nowhere it is looked for."""
+        return find_icon()
 
     # The title bar's logo. icon.ico stores every size as a PNG and Tk 8.6
     # reads PNG directly, so the entry nearest the size wanted is handed over
