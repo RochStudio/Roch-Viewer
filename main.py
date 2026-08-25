@@ -528,13 +528,11 @@ SUMMARY_EXCLUDED_TIMING_NAMES = (
     # and it landed in the Tertiary column between tRDRD_sg and tRDRD_dg where
     # it broke up the group. Still on the Timings tab.
     "Allow 2cyc B2B LPDDR",
-    # Each of these restates or adjusts the row above it on the Timings tab,
-    # which is where the pairing is the point. On the Summary they only
-    # lengthen the column: tWR_MR and tRTP_MR are the mode register's copy of
-    # a tWR and tRTP already listed, and DEC_TCWL is an adjustment to a tCWL
-    # already listed. All three stay on Timings, directly under what they
-    # restate.
-    "tWR_MR", "tRTP_MR", "DEC_TCWL",
+    # Both restate the row above them on the Timings tab, which is where the
+    # pairing is the point. On the Summary the row they restate is already
+    # listed, so these only lengthen the column. They stay on Timings,
+    # directly under what they restate.
+    "tWR_MR", "tRTP_MR",
 )
 
 

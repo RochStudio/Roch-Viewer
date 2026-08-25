@@ -769,7 +769,7 @@ class TimingsSectionOrderTest(unittest.TestCase):
         self.assertNotIn("tCCD", SUMMARY_EXCLUDED_TIMING_NAMES)
 
     def test_summary_drops_the_rows_that_restate_a_row_it_already_lists(self):
-        # tWR_MR restates tWR, tRTP_MR restates tRTP, DEC_TCWL adjusts tCWL.
+        # tWR_MR restates tWR and tRTP_MR restates tRTP.
         # On Timings each sits directly under the row it refers to and the
         # pairing is the point; on the Summary the referent is already there
         # and these only lengthen the column.
@@ -779,8 +779,7 @@ class TimingsSectionOrderTest(unittest.TestCase):
 
         primary, tertiary = intel_summary_timing_columns(intel_timings.TIMINGS)
         listed = [n for n in primary + tertiary if isinstance(n, str)]
-        for name, referent in (("tWR_MR", "tWR"), ("tRTP_MR", "tRTP"),
-                               ("DEC_TCWL", "tCWL")):
+        for name, referent in (("tWR_MR", "tWR"), ("tRTP_MR", "tRTP")):
             with self.subTest(name=name):
                 self.assertIn(name, SUMMARY_EXCLUDED_TIMING_NAMES)
                 self.assertNotIn(name, listed)

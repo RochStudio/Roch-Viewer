@@ -2062,10 +2062,6 @@ TIMINGS = [
         "read_type": "standard"
     },
     {"name": "tCWL", "address": MCHBAR + 0xE070, "Category": "Secondary", "Tab": "Timings", "parameters": {"bit_start": 24, "bit_length": 7}, "Column": "Left", "read_type": "standard"},
-    # DEC_TCWL, the trained write-leveling decrement applied to tCWL, which is
-    # why it sits directly under it. See DEC_TCWL_OFFSET for where the
-    # register came from and what about it is not yet confirmed.
-    {"name": "DEC_TCWL", "address": MCHBAR + 0xE478, "Category": "Secondary", "Tab": "Timings", "parameters": {"bit_start": 0, "bit_length": 4}, "Column": "Left", "read_type": "standard"},
     {"name": "tCCDL", "Category": "Secondary", "Tab": "Timings", "Column": "Left", "read_type": "dynamic", "dynamic_params": {"offset_start": 0xE600, "value_to_find": 0x00, "offset_base": 0xE200, "bit_start_dynamic": 0, "bit_length_dynamic": 4, "mchbar": 0xFEDC0000, "command": 0, "offset2": 0,}, "Formula": tCCD_L_FORMULA},
     {"name": "tCCDL WR", "Category": "Secondary", "Tab": "Timings", "Column": "Left", "read_type": "dynamic", "dynamic_params": {"offset_start": 0xE600, "value_to_find": 0x00, "offset_base": 0xE200, "bit_start_dynamic": 0, "bit_length_dynamic": 4, "mchbar": 0xFEDC0000, "command": 0, "offset2": 0,}, "Formula": tCCD_L_WR_FORMULA},
     {"name": "tRDRD_sg", "address": MCHBAR + 0xE00C, "Category": "Tertiary", "Tab": "Timings", "parameters": {"bit_start": 0, "bit_length": 7}, "Column": "Right", "read_type": "standard"},
@@ -4762,38 +4758,6 @@ ARROW_LAKE_POWER_DOWN = {
 }
 ARROW_LAKE_POWER_DOWN_UNKNOWN = ("tWRPDEN", "tPRPDEN")
 
-# --- DEC_TCWL.
-#
-# The write-leveling decrement applied to tCWL, per channel. Two things are
-# established and one is not, and the row is written to survive the third
-# turning out otherwise.
-#
-# Established: the register. The reference tool reads exactly three registers
-# this project does not, and this is one of them. The code around that read
-# emits exactly three field descriptors, and the group it draws holds exactly
-# three fields -- DEC_TCWL, ADD_TCWL and ADD_1QCLK_DELAY. Three against three
-# is not a coincidence the way a single matching value would be.
-#
-# Established: the value. Channel A reads 3 and channel B reads 4 on the
-# LGA1700 DDR5 bench, and the reference tool shows 4 -- the channel-B figure,
-# since it draws one value where this shows both. A trained per-channel
-# adjustment differing by one across a matched kit is what that should look
-# like.
-#
-# Not established: the field width. The other two fields in the register read
-# zero, so the whole register is this value and any width from 3 bits up
-# reads the same. Four is taken from the control's own bound of 15. If a
-# future BIOS drives DEC_TCWL past 15 this truncates, which is the one way
-# the row can be wrong -- and the neighbouring fields going non-zero would
-# show it, since the register would stop equalling the reading.
-#
-# Not carried to Arrow Lake: that platform moved several registers in this
-# block, so the same offset there would read a plausible number meaning
-# something else. It reports N/A until someone establishes it there.
-DEC_TCWL_OFFSET = 0xE478
-DEC_TCWL_ROW = "DEC_TCWL"
-
-
 def _install_arrow_lake_power_down_rows():
     if not is_arrow_lake_platform():
         return
@@ -4810,7 +4774,7 @@ def _install_arrow_lake_power_down_rows():
             timing["read_type"] = "standard"
             timing.pop("value", None)
             timing.pop("Formula", None)
-        elif name in ARROW_LAKE_POWER_DOWN_UNKNOWN or name == DEC_TCWL_ROW:
+        elif name in ARROW_LAKE_POWER_DOWN_UNKNOWN:
             timing["value"] = "N/A"
             timing["read_type"] = "standard"
             timing.pop("address", None)
