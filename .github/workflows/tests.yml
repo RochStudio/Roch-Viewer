@@ -1,0 +1,55 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # Windows because the project is: it reads MCHBAR, the PCH SMBus and the
+    # Super I/O through a Windows driver, and half the identity comes from
+    # WMI. There is nothing here that would run on another OS.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: py -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Run the tests
+        # No driver on a runner, and no memory controller worth reading. That
+        # is deliberate rather than tolerated: the readers return nothing
+        # without hardware and the tests that need it skip themselves, so
+        # what runs here is the decoding, the table construction and the
+        # layout -- the parts a change can break without a bench to notice.
+        #
+        # It used to be impossible to run any of it here: read.py exited at
+        # import when the driver was missing, which took the whole suite with
+        # it. See the note there.
+        run: py -m unittest discover -s tests -t . -v
+
+      - name: Check the build still packages
+        # A missing hidden import does not fail a test; it fails the first
+        # time someone runs the EXE. Building here catches that, and the
+        # artifact is a convenience rather than a release -- it still needs
+        # the driver alongside it, which this workflow deliberately does not
+        # supply.
+        run: |
+          py -m pip install --disable-pip-version-check pyinstaller
+          py -m PyInstaller --clean -y RochViewer.spec
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RochViewer-unsigned-no-driver
+          path: dist/RochViewer.exe
+          if-no-files-found: error

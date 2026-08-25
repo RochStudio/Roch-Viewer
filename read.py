@@ -33,28 +33,53 @@ DYNAMIC_KEYS = (
     "offset2",
 )
 
+# The driver's absence is a condition, not a crash.
+#
+# This used to raise SystemExit here, which made the module unimportable
+# without the driver present -- and since everything imports it, the whole
+# program and the whole test suite went with it. That is wrong twice over:
+# a machine with no driver should get a viewer that says so rather than a
+# process that dies before drawing a window, and the tests that never touch
+# hardware should run anywhere, which is the only way continuous integration
+# can run them at all.
+#
+# So the failure moves to the first read. DRIVER_ERROR carries why, for
+# anything that wants to explain itself; every reader here already returns
+# None when a read does not work, and every caller already handles None.
+inpout = None
+DRIVER_ERROR = None
+
 if DLL_PATH is None:
-    raise SystemExit("Error: " + missing_message())
+    DRIVER_ERROR = missing_message()
+else:
+    try:
+        inpout = ctypes.WinDLL(DLL_PATH)
+    except OSError as exc:
+        DRIVER_ERROR = (
+            "Found %s but could not load it. It may be the wrong architecture, "
+            "or the process may not be running as administrator (%s)."
+            % (DLL_PATH, exc)
+        )
 
-try:
-    inpout = ctypes.WinDLL(DLL_PATH)
-except OSError as exc:
-    raise SystemExit(
-        "Error loading inpoutx64.dll. Ensure it is compatible and the app "
-        "has administrator privileges."
-    ) from exc
+if inpout is not None:
+    inpout.MapPhysToLin.argtypes = [
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.HANDLE),
+    ]
+    inpout.MapPhysToLin.restype = wintypes.LPVOID
+    inpout.UnmapPhysicalMemory.argtypes = [wintypes.HANDLE, wintypes.LPVOID]
+    inpout.UnmapPhysicalMemory.restype = wintypes.BOOL
 
-inpout.MapPhysToLin.argtypes = [
-    wintypes.LPVOID,
-    wintypes.DWORD,
-    ctypes.POINTER(wintypes.HANDLE),
-]
-inpout.MapPhysToLin.restype = wintypes.LPVOID
-inpout.UnmapPhysicalMemory.argtypes = [wintypes.HANDLE, wintypes.LPVOID]
-inpout.UnmapPhysicalMemory.restype = wintypes.BOOL
+
+def driver_available():
+    """True when a read has any chance of working."""
+    return inpout is not None
 
 
 def map_physical_address(phys_addr, size):
+    if inpout is None:
+        return None, None
     handle = wintypes.HANDLE()
     virt_addr = inpout.MapPhysToLin(phys_addr, size, ctypes.byref(handle))
     if not virt_addr:
@@ -71,6 +96,12 @@ def unmap_physical_memory(handle, virt_addr):
 
 
 def read_physical_memory(phys_addr, size=4):
+    # Quietly, when there is no driver at all. The rows already show nothing
+    # for a reading that did not work, and a machine without the driver would
+    # otherwise print this same line for every register on every refresh --
+    # thousands a minute saying one thing.
+    if inpout is None:
+        return None
     try:
         virt_addr, handle = map_physical_address(phys_addr, size)
         try:
