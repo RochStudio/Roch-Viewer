@@ -242,9 +242,23 @@ def read_identity(reader_factory=None, refresh=False, generation=None):
         from rochviewer.memory.ddr5_telemetry import default_smbus_backend
 
         backend = default_smbus_backend()
-        if backend is None:
+        if backend is None and reader_factory is None:
             return []
-        default_factory, CONTROLLER_OFFSETS, SPD_HUB_ADDRESSES, _pmics = backend
+        if backend is None:
+            # A caller that supplied a reader has supplied the transport; all
+            # that is missing is where to point it, and that is JEDEC's, not
+            # the platform's -- SPD hubs answer at 0x50-0x57 behind any host
+            # controller. Without this an injected reader was discarded on a
+            # machine with no recognised backend, which is exactly where a
+            # test runs and exactly where the injection exists for.
+            from rochviewer.intel.intel_pch_smbus import (
+                CONTROLLER_OFFSETS, SPD_HUB_ADDRESSES,
+            )
+
+            default_factory = None
+        else:
+            (default_factory, CONTROLLER_OFFSETS, SPD_HUB_ADDRESSES,
+             _pmics) = backend
         reader_factory = reader_factory or default_factory
 
         reader = reader_factory()

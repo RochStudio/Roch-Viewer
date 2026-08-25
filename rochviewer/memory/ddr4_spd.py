@@ -174,9 +174,20 @@ def read_identity(reader_factory=None, refresh=False):
         from rochviewer.memory.ddr5_telemetry import default_smbus_backend
 
         backend = default_smbus_backend()
-        if backend is None:
+        if backend is None and reader_factory is None:
             return []
-        default_factory, controllers, hub_addresses, _pmics = backend
+        if backend is None:
+            # See the note in ddr5_spd.read_identity: a caller that supplied
+            # a reader supplied the transport, and the addresses are JEDEC's
+            # rather than the platform's.
+            from rochviewer.intel.intel_pch_smbus import (
+                CONTROLLER_OFFSETS as controllers,
+                SPD_HUB_ADDRESSES as hub_addresses,
+            )
+
+            default_factory = None
+        else:
+            default_factory, controllers, hub_addresses, _pmics = backend
         reader = (reader_factory or default_factory)()
         if reader.is_driver_open():
             for controller in controllers:
