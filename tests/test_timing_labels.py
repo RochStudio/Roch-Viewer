@@ -79,7 +79,16 @@ class Ddr5LabelTest(unittest.TestCase):
         # lost either would render blank under its new name.
         by_name = {t.get("name"): t for t in intel_timings.TIMINGS}
         if "tRFC2" not in by_name:
-            self.skipTest("not a DDR5 platform")
+            # The Intel table is what is being read, so the question is
+            # whether *it* was built for an Intel DDR5 platform -- not what
+            # memory is in the machine. Said the short way, this printed
+            # "not a DDR5 platform" on an AM5 bench with DDR5 in both slots,
+            # which reads as the tool failing to see the memory.
+            self.skipTest(
+                "the Intel table here is not an Intel DDR5 one (platform: "
+                "%s), so there is no tRFC2 row to check"
+                % intel_timings.active_platform()
+            )
         trfc2 = by_name["tRFC2"]
         self.assertIsNotNone(trfc2.get("address"))
         self.assertIsNotNone(trfc2.get("address_a"))

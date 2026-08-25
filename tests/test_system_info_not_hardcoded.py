@@ -35,7 +35,6 @@ from unittest import mock
 
 from rochviewer.intel import intel_timings
 from rochviewer.gpu import nvidia_gpu
-from rochviewer import timings
 
 SOURCE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                       "rochviewer", "intel", "intel_timings.py")
@@ -97,7 +96,23 @@ class RowMissing(Exception):
 
 
 def _row_value(name):
-    for row in timings.TIMINGS:
+    """One System Info row from the Intel table, whatever platform this is.
+
+    The Intel table, not the active one. These tests patch Intel readers and
+    then require the row to follow -- which says something about the Intel
+    row wiring, not about the machine they run on. Reading the active table
+    tied them to the dispatcher instead: on an AM5 bench it is filled from
+    the AMD profile, so the stubs reached nothing and the assertions compared
+    AMD rows against Intel expectations. Five of them failed there while
+    every value they printed was correct for that machine -- the CPU really
+    is Granite Ridge, the modules really are F5-6000J2636G16G.
+
+    Read this way they run and pass on any platform, which is better than
+    skipping: the wiring is checked on every bench rather than only on the
+    author's. It survived CI because CI has no hardware, so the rows were
+    absent and _require skipped on a missing row.
+    """
+    for row in intel_timings.TIMINGS:
         if row.get("Tab") == intel_timings.SYSTEM_INFO_TAB and row["name"] == name:
             return row["value"]() if callable(row["value"]) else row["value"]
     raise RowMissing(name)
