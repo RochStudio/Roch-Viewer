@@ -1,26 +1,5 @@
 # Changelog
 
-## Unreleased
-
-### Fixed
-
-- **The driver, the icon and the elevation relaunch were all being looked for
-  in the wrong place.** Each was written as "beside my own module", which was
-  the project root until the modules moved into packages. None of them raised
-  after that move:
-  - the driver was never found from source, so every register-backed reading
-    was N/A while the window still opened and looked healthy;
-  - the icon fell back to Tk's default in the taskbar, while the EXE's own
-    file icon -- baked in at build time -- stayed correct, hiding it from the
-    obvious way of checking;
-  - elevation relaunched a module that cannot run as a script, so the UAC
-    prompt appeared and nothing followed.
-
-  Assets and the driver are now looked for by walking up from the module to
-  the project root, and elevation relaunches `run_viewer.py`. A dead copy of
-  the driver path in the AMD SMN transport, left over from the flat layout,
-  was removed.
-
 ## 1.0.0
 
 First public release.
@@ -28,6 +7,16 @@ First public release.
 Roch Viewer began as a private tool validated on one bench and covering both
 Intel and AMD desktop platforms. This is the Intel half, published on its own:
 LGA1700 with DDR5 or DDR4, and LGA1851.
+
+Fixed before release, but after this repository was first pushed: the driver,
+the icon and the elevation relaunch were each looked for "beside my own
+module", which was the project root until the modules moved into packages.
+None of them raised afterwards. The driver was never found when running from
+source, so every register-backed reading was N/A while the window opened and
+looked healthy; the icon fell back to Tk's default in the taskbar, while the
+EXE's own file icon stayed correct; and elevation relaunched a module that
+cannot run as a script, so the UAC prompt appeared and nothing followed. If
+you cloned this repository before 2026-08-25, pull again.
 
 The AMD backend is here too, following ZenStates-Core and ZenTimings by
 irusanov. That was the reason this could not ship before: those are GPL-3.0,
