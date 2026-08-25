@@ -187,6 +187,43 @@ INVENTORY = "rochviewer.memory.dimm_inventory"
 DISPATCHER = "rochviewer.timings"
 
 
+INTEL_PACKAGE = "rochviewer.intel"
+TIMINGS_ATTRIBUTE = "intel_timings"
+
+
+def _forget_platform(module):
+    """Drop a module's cached answer for which platform this is.
+
+    active_platform is lru_cached -- it opens a WMI connection, so asking
+    once is the point. A module that resolved the question while a stub was
+    up keeps that answer afterwards, and the stub says DDR4.
+    """
+    cache_clear = getattr(getattr(module, "active_platform", None),
+                          "cache_clear", None)
+    if cache_clear is not None:
+        cache_clear()
+
+
+def _point_package_at(module):
+    """Make rochviewer.intel.intel_timings resolve to ``module``.
+
+    sys.modules is not the only place that name lives: the parent package
+    holds it as an attribute, and ``from rochviewer.intel import
+    intel_timings`` reads the attribute without consulting sys.modules once
+    the package is imported. Popping only sys.modules left the stub reachable
+    under its real name -- which is how a live hardware test could pass on
+    its own and skip in the full suite, reporting the bench as DDR4.
+    """
+    package = sys.modules.get(INTEL_PACKAGE)
+    if package is None:
+        return
+    if module is None:
+        if hasattr(package, TIMINGS_ATTRIBUTE):
+            delattr(package, TIMINGS_ATTRIBUTE)
+    else:
+        setattr(package, TIMINGS_ATTRIBUTE, module)
+
+
 def install(platform=LGA1700_DDR4):
     """Stub the hardware modules and return a freshly imported intel_timings.
 
@@ -223,8 +260,10 @@ def install(platform=LGA1700_DDR4):
     # dimm_inventory caches its decode process-wide, so a real reading taken by
     # an earlier test module would otherwise leak into these rows.
     sys.modules.pop(INVENTORY, None)
-    sys.modules.pop(TIMINGS_MODULE, None)
-    return importlib.import_module(TIMINGS_MODULE)
+    _forget_platform(sys.modules.pop(TIMINGS_MODULE, None))
+    stub = importlib.import_module(TIMINGS_MODULE)
+    _point_package_at(stub)
+    return stub
 
 
 def restore():
@@ -232,10 +271,16 @@ def restore():
     while _SAVED_ACTIVE_PLATFORM:
         timings, platform = _SAVED_ACTIVE_PLATFORM.pop()
         timings.ACTIVE_PLATFORM = platform
-    sys.modules.pop(TIMINGS_MODULE, None)
+    _forget_platform(sys.modules.pop(TIMINGS_MODULE, None))
     for name, module in _SAVED_MODULES.items():
         if module is None:
             sys.modules.pop(name, None)
         else:
             sys.modules[name] = module
+    # The stub is out of sys.modules; take it off the package too, or the
+    # next "from rochviewer.intel import intel_timings" finds it there and
+    # every later module reads the fixture instead of the machine.
+    restored = _SAVED_MODULES.get(TIMINGS_MODULE)
+    _forget_platform(restored)
+    _point_package_at(restored)
     _SAVED_MODULES.clear()
