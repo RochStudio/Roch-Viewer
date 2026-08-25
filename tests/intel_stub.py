@@ -43,7 +43,14 @@ FIELD_READS = []
 # needs a specific decode. Signature: (address, bit_start, bit_length).
 response = None
 
-from rochviewer.platform_profiles import LGA1700_DDR4
+from rochviewer.platform_profiles import (
+    LGA1700_DDR4,
+    LGA1700_DDR5,
+    LGA1851,
+)
+
+# The Intel platforms whose tables carry DDR5 row names.
+DDR5_PLATFORMS = (LGA1700_DDR5, LGA1851)
 
 _SAVED_MODULES = {}
 # [(timings module, the ACTIVE_PLATFORM it had)] so restore puts it back.
@@ -64,33 +71,66 @@ def read_timing(address=None, bit_start=None, bit_length=None,
     return None if address is None else 5
 
 
+# What each platform's fixture says it is. Kept together because a stub that
+# claims one generation in ACTIVE_PLATFORM and another in SMBIOSMemoryType is
+# the failure this module's own comment warns about: every reading agrees
+# except the one that decides how the table is built.
+DDR4_MEMORY = {
+    "smbios_type": 26,
+    "part_number": "F4-3600C14-16GVKA",
+    "speed": 3600,
+    "board": "PRO Z790-P WIFI DDR4 (MS-7E06)",
+}
+DDR5_MEMORY = {
+    "smbios_type": 34,
+    "part_number": "F5-8000J3848H16G",
+    "speed": 8000,
+    "board": "PRO Z790-P WIFI (MS-7E06)",
+}
+
+
+def memory_facts(platform):
+    """The fixture's memory description for a platform."""
+    return DDR5_MEMORY if platform in DDR5_PLATFORMS else DDR4_MEMORY
+
+
 class _FakeMemoryModule:
-    def __init__(self, tag, device_locator):
+    def __init__(self, tag, device_locator, facts=None):
+        facts = facts or DDR4_MEMORY
         self.Tag = tag
         # The board's own socket name, which is what slot labels come from.
         # The reference target reports its two modules as records 1 and 3 while
         # naming them DIMMA2 and DIMMB2, so the stub says the same.
         self.DeviceLocator = device_locator
         self.BankLabel = "BANK 0"
-        self.PartNumber = "F4-3600C14-16GVKA"
+        self.PartNumber = facts["part_number"]
         self.Manufacturer = "G Skill Intl"
         self.Capacity = str(16 * 1024 ** 3)
         self.Attributes = 2          # dual rank
-        self.Speed = 3600
-        self.ConfiguredClockSpeed = 3600
-        self.SMBIOSMemoryType = 26   # DDR4
+        self.Speed = facts["speed"]
+        self.ConfiguredClockSpeed = facts["speed"]
+        self.SMBIOSMemoryType = facts["smbios_type"]
 
 
 class FakeWMI:
-    """A populated dual-channel DDR4 Z790 board, matching the beta's target."""
+    """A populated dual-channel Z790 board, matching the beta's target.
+
+    DDR4 by default, which is what every caller wanted until the DDR5 row
+    names needed a table built for them.
+    """
+
+    def __init__(self, platform=LGA1700_DDR4):
+        self.facts = memory_facts(platform)
 
     def Win32_PhysicalMemoryArray(self):
         return [types.SimpleNamespace(MemoryDevices=4)]
 
     def Win32_PhysicalMemory(self):
         return [
-            _FakeMemoryModule("Physical Memory 1", "Controller0-DIMMA2"),
-            _FakeMemoryModule("Physical Memory 3", "Controller1-DIMMB2"),
+            _FakeMemoryModule("Physical Memory 1", "Controller0-DIMMA2",
+                              self.facts),
+            _FakeMemoryModule("Physical Memory 3", "Controller1-DIMMB2",
+                              self.facts),
         ]
 
     def Win32_Processor(self):
@@ -103,7 +143,7 @@ class FakeWMI:
 
     def Win32_BaseBoard(self):
         return [types.SimpleNamespace(
-            Product="PRO Z790-P WIFI DDR4 (MS-7E06)",
+            Product=self.facts["board"],
             Manufacturer="Micro-Star International Co., Ltd.",
             Version="1.0",
         )]
@@ -147,8 +187,16 @@ INVENTORY = "rochviewer.memory.dimm_inventory"
 DISPATCHER = "rochviewer.timings"
 
 
-def install():
-    """Stub the hardware modules and return a freshly imported intel_timings."""
+def install(platform=LGA1700_DDR4):
+    """Stub the hardware modules and return a freshly imported intel_timings.
+
+    ``platform`` decides which generation the whole fixture describes -- the
+    dispatcher global, the SMBIOS memory type, the part numbers and the board
+    name together. It defaulted to DDR4 with no way to ask for anything else,
+    which left the DDR5 row-name tests reading a DDR4 table: one skipped on
+    every machine, and the other only ever took its DDR4 branch. The rename
+    they exist to guard was unguarded.
+    """
     for name in (READ, "wmi", TIMINGS_MODULE, INVENTORY):
         _SAVED_MODULES[name] = sys.modules.get(name)
 
@@ -158,7 +206,7 @@ def install():
     sys.modules[READ] = read_stub
 
     wmi_stub = types.ModuleType("wmi")
-    wmi_stub.WMI = lambda *args, **kwargs: FakeWMI()
+    wmi_stub.WMI = lambda *args, **kwargs: FakeWMI(platform)
     sys.modules["wmi"] = wmi_stub
 
     # active_platform() prefers whatever timings has already resolved over
@@ -170,7 +218,7 @@ def install():
         _SAVED_ACTIVE_PLATFORM.append(
             (timings, getattr(timings, "ACTIVE_PLATFORM", None))
         )
-        timings.ACTIVE_PLATFORM = LGA1700_DDR4
+        timings.ACTIVE_PLATFORM = platform
 
     # dimm_inventory caches its decode process-wide, so a real reading taken by
     # an earlier test module would otherwise leak into these rows.

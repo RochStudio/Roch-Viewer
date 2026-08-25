@@ -16,6 +16,7 @@
 
 """Cover the DDR5 timing row names and the paired tRFCns value."""
 
+import contextlib
 import unittest
 from unittest import mock
 
@@ -27,11 +28,29 @@ intel_timings = None
 
 def setUpModule():
     global intel_timings
-    intel_timings = install()
+    intel_timings = install(LGA1700_DDR5)
 
 
 def tearDownModule():
     restore()
+
+
+@contextlib.contextmanager
+def table_for(platform):
+    """The Intel table as it is built for ``platform``.
+
+    install() saves the modules it replaces into one dict, so calling it
+    while a fixture is already up would save the stubs over the real modules
+    and the outer restore would put stubs back. The outer fixture is torn
+    down first and rebuilt after: siblings, never nested.
+    """
+    restore()
+    try:
+        yield install(platform)
+    finally:
+        restore()
+        global intel_timings
+        intel_timings = install(LGA1700_DDR5)
 
 
 class Ddr5LabelTest(unittest.TestCase):
@@ -63,32 +82,38 @@ class Ddr5LabelTest(unittest.TestCase):
         # It has its own profile and its own tRFC2; this map must not reach it.
         self.assertNotIn(AM5, intel_timings.DDR5_TIMING_PLATFORMS)
 
-    def test_the_rename_is_applied_to_the_built_table(self):
-        names = {t.get("name") for t in intel_timings.TIMINGS}
-        if intel_timings.active_platform() in intel_timings.DDR5_TIMING_PLATFORMS:
-            self.assertIn("tRFC2", names)
-            self.assertIn("tRFCns", names)
-            self.assertNotIn("tRFC", names)
-            self.assertNotIn("tRFC (ns)", names)
-        else:
-            self.assertIn("tRFC", names)
+    def test_a_ddr5_table_carries_the_renamed_rows(self):
+        # Built for DDR5 rather than read from whatever the bench is, so this
+        # runs everywhere. It used to branch on the ambient platform, and the
+        # fixture was always DDR4 -- so the DDR5 half never ran on any
+        # machine, including the one the rename was written for.
+        with table_for(LGA1700_DDR5) as built:
+            names = {t.get("name") for t in built.TIMINGS}
+        self.assertIn("tRFC2", names)
+        self.assertIn("tRFCns", names)
+        self.assertNotIn("tRFC", names)
+        self.assertNotIn("tRFC (ns)", names)
+
+    def test_a_ddr4_table_keeps_the_original_rows(self):
+        with table_for(LGA1700_DDR4) as built:
+            names = {t.get("name") for t in built.TIMINGS}
+        self.assertIn("tRFC", names)
+        self.assertNotIn("tRFC2", names)
 
     def test_the_renamed_rows_keep_what_reads_them(self):
         # The rename runs last precisely so the passes that match rows by name
         # have already attached addresses and dual-channel getters. A row that
         # lost either would render blank under its new name.
-        by_name = {t.get("name"): t for t in intel_timings.TIMINGS}
-        if "tRFC2" not in by_name:
-            # The Intel table is what is being read, so the question is
-            # whether *it* was built for an Intel DDR5 platform -- not what
-            # memory is in the machine. Said the short way, this printed
-            # "not a DDR5 platform" on an AM5 bench with DDR5 in both slots,
-            # which reads as the tool failing to see the memory.
-            self.skipTest(
-                "the Intel table here is not an Intel DDR5 one (platform: "
-                "%s), so there is no tRFC2 row to check"
-                % intel_timings.active_platform()
-            )
+        #
+        # This skipped on every machine there has ever been: it read the
+        # ambient table and the fixture was hardcoded to DDR4, so "tRFC2" was
+        # never in it. The skip named the platform, which is what made the
+        # dead test visible. It builds its own DDR5 table now and runs.
+        with table_for(LGA1700_DDR5) as built:
+            by_name = {t.get("name"): t for t in built.TIMINGS}
+        # Named before it is used, so a table missing the rename says so
+        # rather than raising KeyError from the line below.
+        self.assertIn("tRFC2", by_name, "the DDR5 table did not rename tRFC")
         trfc2 = by_name["tRFC2"]
         self.assertIsNotNone(trfc2.get("address"))
         self.assertIsNotNone(trfc2.get("address_a"))
