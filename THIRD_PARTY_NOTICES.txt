@@ -1,0 +1,29 @@
+Third-party components
+======================
+
+inpoutx64.dll / inpoutx64.sys  (NOT distributed with this project)
+------------------------------------------------------------------
+Roch Viewer needs a low-level access driver to read physical memory, PCI
+configuration space and I/O ports. It uses inpout32/64 by Highresolution
+Enterprises (www.highrez.co.uk), which reports:
+
+  Copyright (c) 2008 Highresolution Enterprises.
+  Portions Copyright (c) Logix4u.
+
+Those files are deliberately NOT included in this repository or in any build
+produced from it. They are third-party binaries under their own terms, and
+this project is GPL-3.0; shipping them alongside it would make the combined
+work something neither licence covers. Obtain them from the vendor and place
+them beside the executable yourself -- see "Prerequisites" in README.md.
+
+Reference tools
+---------------
+CPU-Z, HWiNFO, VoidTimings, ASRock Timing Configurator and MemTweakIt were
+used as reference instruments: their readings were compared against this
+project's on the same machine at the same moment to confirm that a register
+had been located correctly. No source, header or data file from any of them
+is included here, and none of them is required to run this.
+
+Where a register was established by comparing against one of those tools, or
+by diffing full captures across a controlled BIOS change, the evidence is
+recorded in a comment beside the definition.

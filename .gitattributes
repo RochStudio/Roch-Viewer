@@ -1,0 +1,23 @@
+# Line endings are the repository's business, not each clone's.
+#
+# Everything already stored here uses LF, because every machine that has
+# committed to it happened to have core.autocrlf=true. That is a per-clone
+# setting: a contributor without it would commit CRLF and every line of the
+# file would show as changed. This makes the normalisation a property of the
+# repository instead, so the stored form is LF regardless of who clones it and
+# Windows working copies still get CRLF on checkout.
+* text=auto
+
+# The binaries are marked rather than left to detection. text=auto decides by
+# looking for NUL bytes and would classify all of these correctly, but
+# inpoutx64.sys is a kernel driver and inpoutx64.dll the only path this
+# project has to the hardware: a misclassification would rewrite bytes inside
+# them, and the cost of being explicit is three lines.
+*.dll binary
+*.sys binary
+*.ico binary
+*.png binary
+
+# Not an image or a driver, but not text either: a 2 MB NVRAM capture whose
+# exact bytes are the point of keeping it.
+nvram.txt binary
