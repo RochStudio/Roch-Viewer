@@ -44,6 +44,33 @@ from rochviewer.ui.main import (
 )
 
 
+def every_platform_row_name():
+    """Every row name this project can build, on any supported platform.
+
+    The exclusion list is one tuple shared by every platform, so some of its
+    names exist only on one. Checking against the table this bench happens to
+    build calls the others typos: tCWL_MR and tCCD_L_MR are read out of the
+    DDR4 mode-register shadow and have no DDR5 equivalent, so they failed here
+    while passing on the DDR4 bench they were added from.
+
+    A real typo is still caught -- it is in no table on any platform.
+    """
+    from rochviewer.ui import main as main_module
+    from rochviewer.intel import intel_timings
+    from rochviewer.platform_profiles import LGA1700_DDR4
+    from tests import intel_stub
+
+    names = {row.get("name") for row in main_module.TIMINGS}
+    names |= {row.get("name") for row in intel_timings.TIMINGS}
+    # The other Intel generation, built on purpose rather than waited for.
+    ddr4 = intel_stub.install(LGA1700_DDR4)
+    try:
+        names |= {row.get("name") for row in ddr4.TIMINGS}
+    finally:
+        intel_stub.restore()
+    return names
+
+
 class DualTimingDefinitionTest(unittest.TestCase):
     def test_value_backed_channel_rows_are_dual(self):
         self.assertTrue(is_dual_timing({"value_a": "A", "value_b": "B"}))
@@ -835,10 +862,9 @@ class TimingsSectionOrderTest(unittest.TestCase):
     def test_every_excluded_name_is_a_row_that_exists(self):
         # An excluded name with no row behind it excludes nothing, and reads
         # like the row was dealt with when it was never there.
-        from rochviewer.intel import intel_timings
         from rochviewer.ui.main import SUMMARY_EXCLUDED_TIMING_NAMES
 
-        names = {row.get("name") for row in intel_timings.TIMINGS}
+        names = every_platform_row_name()
         for name in SUMMARY_EXCLUDED_TIMING_NAMES:
             with self.subTest(name=name):
                 self.assertIn(name, names)
@@ -887,8 +913,7 @@ class TimingsSectionOrderTest(unittest.TestCase):
         # Both tables: the list is shared, and the two platforms spell the
         # command-rate row differently -- AM5 shortens it to CR. Checking
         # only the loaded profile would call the other one's spelling a typo.
-        present = {timing.get("name") for timing in main.TIMINGS}
-        present |= {timing.get("name") for timing in intel_timings.TIMINGS}
+        present = every_platform_row_name()
         for name in SUMMARY_EXCLUDED_TIMING_NAMES:
             with self.subTest(name=name):
                 self.assertIn(name, present)
