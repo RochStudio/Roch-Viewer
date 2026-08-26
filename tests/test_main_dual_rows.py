@@ -171,9 +171,8 @@ class DualTimingDefinitionTest(unittest.TestCase):
         self.assertNotIn(["Gear Down Mode", "Nitro Rx/Tx/Ctrl"], layout)
 
     def test_intel_summary_keeps_every_clock(self):
-        # The three no longer share one row: MCLK sits beside DRAM Frequency,
-        # Uncore beside BCLK, UCLK on the last row. What matters is that none
-        # of them is dropped.
+        # The three no longer share one row: they read down the last column,
+        # MCLK then Uncore then UCLK. What matters is that none is dropped.
         layout = summary_system_memory_layout({"Uncore", "MCLK", "UCLK"})
         placed = [name for row in layout for name in row]
         for name in ("Uncore", "MCLK", "UCLK"):
@@ -183,8 +182,8 @@ class DualTimingDefinitionTest(unittest.TestCase):
     def test_intel_summary_matches_the_requested_arrangement(self):
         layout = summary_system_memory_layout({
             "CPU", "Cores / Threads", "Model", "BIOS",
-            "Microcode", "BCLK", "Uncore", "MCLK", "UCLK", "DRAM Frequency",
-            "Gear Mode", "Power Down", "Memory Capacity",
+            "Microcode", "BCLK", "DDR QCLK Ratio", "Uncore", "MCLK", "UCLK",
+            "DRAM Frequency", "Gear Mode", "Power Down", "Memory Capacity",
         })
         self.assertEqual(layout, [
             ["CPU", "Cores / Threads"],
@@ -193,12 +192,11 @@ class DualTimingDefinitionTest(unittest.TestCase):
             # Microcode joins them: it is a firmware revision like the BIOS
             # beside it, rather than a CPU fact stranded mid memory block.
             ["Model", "BIOS", "Microcode"],
+            # Down the columns: what the kit is, what clocks it, what it
+            # yields. Every cell filled, so no column carries a hole.
             ["DRAM Frequency", "BCLK", "MCLK"],
-            ["Gear Mode", "Memory Capacity", "Uncore"],
-            # The hole Microcode left comes to the foot of the column rather
-            # than sitting in the middle of it, so the rows below it moved up
-            # one. summary_system_memory_layout drops the None.
-            ["Power Down", "UCLK"],
+            ["Memory Capacity", "DDR QCLK Ratio", "Uncore"],
+            ["Gear Mode", "Power Down", "UCLK"],
         ])
 
     def test_intel_summary_clock_rows_sit_on_the_summary_columns(self):
@@ -207,18 +205,28 @@ class DualTimingDefinitionTest(unittest.TestCase):
         # in and out against the timing grid below them.
         blocks = summary_system_memory_blocks({
             "CPU", "Cores / Threads", "Model", "BIOS", "Microcode",
-            "BCLK", "Uncore", "MCLK", "UCLK", "DRAM Frequency", "Gear Mode",
-            "Power Down", "Memory Capacity",
+            "BCLK", "DDR QCLK Ratio", "Uncore", "MCLK", "UCLK",
+            "DRAM Frequency", "Gear Mode", "Power Down", "Memory Capacity",
         })
         aligned = {tuple(names) for names, is_aligned in blocks if is_aligned}
         self.assertEqual(aligned, {
             ("DRAM Frequency", "BCLK", "MCLK"),
-            ("Gear Mode", "Memory Capacity", "Uncore"),
-            # The None is kept rather than dropped: an aligned row holds the
-            # column open so UCLK stays over its own column instead of
-            # sliding into the middle one.
-            ("Power Down", None, "UCLK"),
+            ("Memory Capacity", "DDR QCLK Ratio", "Uncore"),
+            ("Gear Mode", "Power Down", "UCLK"),
         })
+
+    def test_an_intel_row_missing_a_name_still_holds_its_column(self):
+        # No Intel row carries a hole now that every cell is filled, so the
+        # behaviour that keeps UCLK over its own column is checked directly
+        # rather than resting on one arrangement happening to have a gap.
+        blocks = summary_system_memory_blocks({
+            "DRAM Frequency", "MCLK", "Memory Capacity", "Uncore",
+            "Gear Mode", "UCLK",
+        })
+        aligned = {tuple(names) for names, is_aligned in blocks if is_aligned}
+        self.assertIn(("DRAM Frequency", None, "MCLK"), aligned)
+        self.assertIn(("Memory Capacity", None, "Uncore"), aligned)
+        self.assertIn(("Gear Mode", None, "UCLK"), aligned)
 
     def test_no_summary_row_exceeds_the_configured_column_pairs(self):
         # The panel only configures SUMMARY_PAIRS_PER_ROW column pairs; a

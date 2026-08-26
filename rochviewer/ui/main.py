@@ -237,10 +237,16 @@ def summary_system_memory_blocks(available_names):
         add_aligned(("Gear Down Mode", None, None))
         return blocks
 
-    # The memory picture reads down the first column: the speed the DRAM
-    # runs at, how the controller is geared to it, and whether it is
-    # allowed to power down. The clocks derived from that speed line up on
-    # the right, MCLK above UCLK.
+    # Three columns, each reading down as one kind of fact:
+    #
+    #   what the kit is        what it is clocked from   the clocks it yields
+    #   DRAM Frequency         BCLK                      MCLK
+    #   Memory Capacity        DDR QCLK Ratio            Ring
+    #   Gear Mode              Power Down                UCLK
+    #
+    # The first column describes the memory itself, the second the references
+    # and policy the controller applies to it, the third the clocks that fall
+    # out. Every cell is filled, so no column carries a hole.
     #
     # Aligned like the AM5 block, so each column starts where the timing
     # section under it does: DRAM Frequency over tCL, BCLK over tREFI, MCLK
@@ -248,21 +254,23 @@ def summary_system_memory_blocks(available_names):
     # positions, so the three rows stepped in and out against the grid below
     # them.
     #
+    # Uncore is the row's internal name; Summary relabels it to Ring, which is
+    # why the layout names one thing and the panel shows another.
+    #
+    # Power Down is the Misc tab's row, read from the controller's own bit.
+    # AM5 above still places Power Down Mode, which is its own reading from
+    # its own profile -- the two names are not interchangeable.
+    #
     # FCLK is not in these rows because the Intel backend does not report one
     # -- it is an AM5 clock, and the AM5 block above places it. Adding a name
     # here that never resolves would cost a permanent hole in the row.
     #
     # Microcode sits with BIOS: both are firmware revisions, and the pairing
-    # reads better than a CPU fact stranded in the middle of the memory
-    # block. The rows under it come up one each so the hole it leaves lands
-    # at the foot of the column rather than in the middle of it.
+    # reads better than a CPU fact stranded in the middle of the memory block.
     add(("Model", "BIOS", "Microcode"))
     add_aligned(("DRAM Frequency", "BCLK", "MCLK"))
-    add_aligned(("Gear Mode", "Memory Capacity", "Uncore"))
-    # Power Down is the Misc tab's row, read from the controller's own bit.
-    # AM5 above still places Power Down Mode, which is its own reading from
-    # its own profile -- the two names are not interchangeable.
-    add_aligned(("Power Down", None, "UCLK"))
+    add_aligned(("Memory Capacity", "DDR QCLK Ratio", "Uncore"))
+    add_aligned(("Gear Mode", "Power Down", "UCLK"))
     if "Gear Down Mode" in available:
         add(("Gear Down Mode", "Nitro Rx/Tx/Ctrl"))
     return blocks
@@ -488,7 +496,8 @@ def summary_system_memory_names():
     return [
         "CPU", "Cores / Threads",
         "Model", "BIOS", "AGESA", "Microcode",
-        "BCLK", "Uncore", "FCLK", "MCLK", "UCLK", "DRAM Frequency",
+        "BCLK", "DDR QCLK Ratio", "Uncore", "FCLK", "MCLK", "UCLK",
+        "DRAM Frequency",
         "DRAM Ratio", "UCLK:MCLK", "Refresh Mode", "Gear Mode",
         "Memory Capacity",
         "Power Down Mode", "Power Down", "Gear Down Mode", "Nitro Rx/Tx/Ctrl",
@@ -745,6 +754,7 @@ def am5_summary_timing_columns(timings):
 class TimingGUI:
     def __init__(self, root):
         self.root = root
+        self.claim_taskbar_identity()
         self.root.title(f"{APP_NAME} {__version__}")
         self.set_window_icon()
         self.setup_appearance()
@@ -989,11 +999,37 @@ class TimingGUI:
             print(f"Error loading logo: {exc}")
             return None
 
+    # Windows groups taskbar buttons by Application User Model ID, and a
+    # process that never sets one inherits its host's. Run from source that
+    # host is pythonw.exe, so the button showed the Python logo while the
+    # title bar showed ours -- iconbitmap dresses the window, not the button.
+    # Any distinct string works; this one is the conventional dotted form.
+    APP_USER_MODEL_ID = "RochStudio.RochViewer"
+
+    def claim_taskbar_identity(self):
+        """Take the taskbar button away from whatever launched us.
+
+        Has to run before the button exists, which is why it is called ahead of
+        the window rather than beside iconbitmap. Failing is not fatal: the
+        button then keeps the host's icon, which is what it did before.
+        """
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                self.APP_USER_MODEL_ID)
+        except Exception as exc:
+            print(f"Error claiming taskbar identity: {exc}")
+
     def set_window_icon(self):
         """Set a custom window/taskbar icon instead of the default blue icon."""
         try:
             path = self.icon_path()
             if path:
+                # default=path applies to every toplevel this app opens, so
+                # the Advanced and Telemetry windows inherit it rather than
+                # each having to ask. The plain call is kept alongside it:
+                # default alone leaves the already-created root on the old
+                # icon in some Tk builds.
+                self.root.iconbitmap(default=path)
                 self.root.iconbitmap(path)
         except Exception as e:
             print(f"Error setting window icon: {e}")
@@ -1628,7 +1664,13 @@ class TimingGUI:
                   lambda _e: link.configure(text_color=self.BRAND_COLOR))
         self.twitter_link = link
 
-        grip = ctk.CTkLabel(footer, text="◢", width=self.GRIP_SIZE,
+        # No glyph. The window still has to be resizable from here -- there
+        # is no native border to drag, so this corner is the only handle --
+        # but the drawn triangle was the one piece of chrome the app did not
+        # style, sitting under a footer it did not match. The widget keeps its
+        # width, its bindings and its sizing cursor, so the corner behaves
+        # exactly as before and the pointer still announces it.
+        grip = ctk.CTkLabel(footer, text="", width=self.GRIP_SIZE,
                             font=self.COMPACT_BOLD,
                             text_color=self.SUBTITLE_COLOR, cursor="sizing")
         grip.pack(side="right", padx=2)
@@ -1834,6 +1876,25 @@ class TimingGUI:
             # band is better than no window.
             pass
 
+    # Read types a row may ask for directly, as opposed to "dynamic", which
+    # needs its own parameters and is handled before either caller gets here.
+    #
+    # Both value readers used to pass "standard" as a literal, which silently
+    # discarded whatever the row declared. That went unnoticed while every
+    # direct-address row was standard; it surfaced when tWRPDEN asked for the
+    # 64-bit read and the display showed 26 -- the field truncated at the
+    # dword boundary -- while the register table read it correctly as 90.
+    DIRECT_READ_TYPES = ("standard", "wide")
+
+    @classmethod
+    def _direct_read_type(cls, timing, *keys):
+        """The read type a row asks for, falling back to a 4-byte read."""
+        for key in keys:
+            declared = timing.get(key)
+            if declared in cls.DIRECT_READ_TYPES:
+                return declared
+        return "standard"
+
     def _read_compact_side(self, timing, side):
         """Read one side of a dual-channel timing row for the compact view."""
         value_key = f"value_{side}"
@@ -1854,7 +1915,9 @@ class TimingGUI:
                 address=timing[address_key],
                 bit_start=timing[parameters_key]["bit_start"],
                 bit_length=timing[parameters_key]["bit_length"],
-                read_type="standard",
+                read_type=self._direct_read_type(
+                    timing, read_type_key, "read_type"
+                ),
             )
             return apply_formula(raw_value, timing.get("Formula"))
         if timing.get("value") is not None:
@@ -2031,7 +2094,7 @@ class TimingGUI:
                 address=timing["address"],
                 bit_start=timing["parameters"]["bit_start"],
                 bit_length=timing["parameters"]["bit_length"],
-                read_type="standard",
+                read_type=self._direct_read_type(timing, "read_type"),
             )
             return apply_formula(raw_value, timing.get("Formula"))
 
