@@ -14,17 +14,29 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Board sensor rails for Intel desktop platforms, read over Super I/O.
+"""Board sensors -- temperatures and rails -- read over Super I/O.
 
-The memory controller reports VCCSA and VDDQ TX directly through MCHBAR, so
-those two need nothing from this module. DRAM voltage and the CPU auxiliary
-rail are board measurements instead: nothing in the memory controller carries
-them, and they reach the system only through the Super I/O chip's sensor block.
+What the board measures rather than what the memory controller does, which is
+why it sits here and not under either platform. Both call it: the Intel path
+for the rails below, and the AM5 profile for the board temperatures, which on
+that bench come off a Nuvoton NCT6687D.
 
-That transport is shared with the AM5 path and is board-agnostic, but the
-index-to-rail assignment inside the sensor block is chosen by the board vendor
-and does not carry between models. So this module keeps its own map rather than
-borrowing the AM5 one, exactly as ``superio_lpc`` warns.
+It was named ``intel_board_sensors`` and lived in the Intel package, so every
+AM5 board temperature was fetched by importing an Intel module. Nothing ran
+that should not have -- this module's body reads no hardware -- but the
+dispatcher promises the platforms stay apart, and a name is most of what makes
+that promise legible.
+
+The rails are still Intel's. The memory controller reports VCCSA and VDDQ TX
+directly through MCHBAR, so those two need nothing from here. DRAM voltage and
+the CPU auxiliary rail are board measurements instead: nothing in the memory
+controller carries them, and they reach the system only through the Super I/O
+chip's sensor block.
+
+The transport is board-agnostic, but the index-to-rail assignment inside the
+sensor block is chosen by the board vendor and does not carry between models.
+So the Intel rail map here stays its own rather than borrowing the AM5 one,
+exactly as ``superio_lpc`` warns.
 
 ``CONFIRMED_RAILS`` stays empty until an index has been matched against a
 known-good reading on the specific board. An unconfirmed index prints a
@@ -34,7 +46,7 @@ believable but false voltage, which is worse than printing nothing.
 from __future__ import annotations
 
 # Sensor LSB, repeated from superio_lpc rather than imported: that module pulls
-# in lowlevel_io, and the Intel path must not import AMD code to read a board rail.
+# in lowlevel_io, and reading a board rail must not drag the driver in with it.
 # Several channels sit behind a 2:1 divider and decode at half the step.
 SENSOR_STEP_VOLTS = 0.000125
 SENSOR_STEP_DIVIDED = SENSOR_STEP_VOLTS / 2.0

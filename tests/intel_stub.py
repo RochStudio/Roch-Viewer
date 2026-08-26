@@ -185,6 +185,11 @@ READ = "rochviewer.hardware.read"
 TIMINGS_MODULE = "rochviewer.intel.intel_timings"
 INVENTORY = "rochviewer.memory.dimm_inventory"
 DISPATCHER = "rochviewer.timings"
+# Where the generation detection and its WMI cache live. It reads the stubbed
+# wmi below and caches the answer, so it has to be re-imported alongside the
+# table -- left in place it kept the real machine's DDR5 and built the table
+# for a generation the rest of this fixture is not describing.
+DDR_GENERATION = "rochviewer.memory.ddr_generation"
 
 
 INTEL_PACKAGE = "rochviewer.intel"
@@ -234,7 +239,7 @@ def install(platform=LGA1700_DDR4):
     every machine, and the other only ever took its DDR4 branch. The rename
     they exist to guard was unguarded.
     """
-    for name in (READ, "wmi", TIMINGS_MODULE, INVENTORY):
+    for name in (READ, "wmi", TIMINGS_MODULE, INVENTORY, DDR_GENERATION):
         _SAVED_MODULES[name] = sys.modules.get(name)
 
     read_stub = types.ModuleType(READ)
@@ -260,6 +265,8 @@ def install(platform=LGA1700_DDR4):
     # dimm_inventory caches its decode process-wide, so a real reading taken by
     # an earlier test module would otherwise leak into these rows.
     sys.modules.pop(INVENTORY, None)
+    # Before the table, so its import picks up the fresh one.
+    sys.modules.pop(DDR_GENERATION, None)
     _forget_platform(sys.modules.pop(TIMINGS_MODULE, None))
     stub = importlib.import_module(TIMINGS_MODULE)
     _point_package_at(stub)

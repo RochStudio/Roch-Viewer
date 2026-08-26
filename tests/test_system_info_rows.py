@@ -487,7 +487,7 @@ class LpcioNameTest(unittest.TestCase):
         intel_timings.get_lpcio_name.cache_clear()
         self.addCleanup(intel_timings.get_lpcio_name.cache_clear)
         return mock.patch(
-            "rochviewer.intel.intel_board_sensors.board_sensor_profile",
+            "rochviewer.sensors.board_sensors.board_sensor_profile",
             return_value={"reader": reader()},
         )
 
@@ -510,7 +510,7 @@ class LpcioNameTest(unittest.TestCase):
     def test_no_chip_reports_nothing(self):
         intel_timings.get_lpcio_name.cache_clear()
         self.addCleanup(intel_timings.get_lpcio_name.cache_clear)
-        with mock.patch("rochviewer.intel.intel_board_sensors.board_sensor_profile",
+        with mock.patch("rochviewer.sensors.board_sensors.board_sensor_profile",
                         return_value=None):
             self.assertIsNone(intel_timings.get_lpcio_name())
 

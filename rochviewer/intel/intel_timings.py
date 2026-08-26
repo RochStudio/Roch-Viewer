@@ -16,6 +16,7 @@
 
 import wmi
 import winreg
+import importlib
 import sys
 import re
 from functools import lru_cache, partial, wraps
@@ -130,34 +131,49 @@ def ddr5_timing_label(platform, name):
     return name
 
 
-@lru_cache(maxsize=None)
+# The WMI connection, its per-class cache, and the generation detection that
+# uses them now live in rochviewer.memory.ddr_generation. Nothing about any
+# of the three is Intel: they read what SMBIOS already said. They moved
+# because the AM5 side needs the generation too, and reaching in here for it
+# imported this module -- whose body builds the table eagerly, against a
+# hardcoded MCHBAR that on an AMD board is somebody else's address space.
+#
+# Wrapped rather than imported by name, so that patching _wmi_static here
+# still steers the generation detection: the tests over the memory-type row
+# replace this module's accessor, and a plain import would have left the
+# moved function reading the real machine through its own copy.
+_DDR_GENERATION_MODULE = "rochviewer.memory.ddr_generation"
+
+
+def _ddr_generation():
+    """The generation module as it stands now, not as it stood at import.
+
+    Resolved per call through sys.modules rather than bound once: the test
+    fixture stubs wmi and re-imports this module to build the other
+    generation's table, and a name bound at import would have kept pointing
+    at the copy that had already read the real machine.
+    """
+    return importlib.import_module(_DDR_GENERATION_MODULE)
+
+
 def _wmi_connection():
-    """One WMI connection for the process.
+    """One WMI connection for the process. See ddr_generation."""
+    return _ddr_generation()._wmi_connection()
 
-    Building it is most of what a WMI lookup costs, and this file opened
-    thirteen of them while the table was being built.
-    """
-    return wmi.WMI()
+
+def _wmi_static(class_name):
+    """A WMI class's objects, queried once. See ddr_generation."""
+    return _ddr_generation()._wmi_static(class_name)
 
 
 @lru_cache(maxsize=None)
-def _wmi_static(class_name):
-    """Return a WMI class's objects, queried once.
+def detect_ddr_generation():
+    """DDR4, DDR5 or Unknown, through this module's own WMI accessor.
 
-    Only for classes describing identity or installed hardware, which cannot
-    change while the machine is running. Nine such classes were being queried
-    eighteen times between them.
-
-    Failure is cached too, deliberately: WMI being unavailable is not a
-    transient condition, and retrying it once per caller is how the startup
-    cost multiplied in the first place. dimm_inventory caches its own decode
-    the same way.
+    Cached, as it has always been: the installed generation cannot change
+    while the machine is running, and the table asks about twenty times.
     """
-    try:
-        return tuple(getattr(_wmi_connection(), class_name)())
-    except Exception as e:
-        print(f"Error querying {class_name}: {e}")
-        return ()
+    return _ddr_generation().detect_ddr_generation(wmi_static=_wmi_static)
 
 
 # Intel client CPUID models, and the process node each is built on. Family 6
@@ -356,7 +372,7 @@ def get_lpcio_name():
     The vendor comes from the reader that answered rather than from the chip
     name, which carries no vendor of its own.
     """
-    from rochviewer.intel.intel_board_sensors import board_sensor_profile
+    from rochviewer.sensors.board_sensors import board_sensor_profile
 
     profile = board_sensor_profile()
     reader = profile.get("reader") if profile else None
@@ -1210,51 +1226,6 @@ def get_psf0_pll():
     except Exception as e:
         print(f"Error retrieving PSF0 PLL: {e}")
         return "Unknown"
-
-
-@lru_cache(maxsize=None)
-def detect_ddr_generation():
-    """Return DDR4, DDR5, or Unknown using SMBIOS/WMI with board-name fallbacks."""
-    try:
-        detected = []
-        for memory in _wmi_static("Win32_PhysicalMemory"):
-            for field in ("SMBIOSMemoryType", "MemoryType"):
-                raw = getattr(memory, field, None)
-                try:
-                    code = int(raw)
-                except (TypeError, ValueError):
-                    continue
-                # SMBIOS type codes: DDR4/LPDDR4 and DDR5/LPDDR5.
-                if code in (26, 30):
-                    detected.append("DDR4")
-                elif code in (34, 35):
-                    detected.append("DDR5")
-
-        if "DDR5" in detected:
-            return "DDR5"
-        if "DDR4" in detected:
-            return "DDR4"
-
-        # Some systems do not populate SMBIOSMemoryType correctly. Check text fields.
-        text_fields = []
-        for memory in _wmi_static("Win32_PhysicalMemory"):
-            for field in ("PartNumber", "Description", "Caption"):
-                value = (getattr(memory, field, "") or "").upper()
-                if value:
-                    text_fields.append(value)
-        for board in _wmi_static("Win32_BaseBoard"):
-            text_fields.extend([
-                (getattr(board, "Product", "") or "").upper(),
-                (getattr(board, "Version", "") or "").upper(),
-            ])
-        joined = " ".join(text_fields)
-        if "DDR5" in joined:
-            return "DDR5"
-        if "DDR4" in joined:
-            return "DDR4"
-    except Exception as e:
-        print(f"Error detecting DDR generation: {e}")
-    return "Unknown"
 
 
 def _get_twr_from_controller(ddr_generation=None, base=None):
@@ -5508,7 +5479,7 @@ SENSOR_TAB = "Sensors"
 def _board_rail(key):
     """Read one Super I/O rail, importing that path only when it is used."""
     try:
-        from rochviewer.intel.intel_board_sensors import rail_text
+        from rochviewer.sensors.board_sensors import rail_text
 
         return rail_text(key)
     except Exception:
@@ -5563,7 +5534,7 @@ def _board_temperature(key):
     the sensor.
     """
     try:
-        from rochviewer.intel.intel_board_sensors import temperature_text
+        from rochviewer.sensors.board_sensors import temperature_text
 
         text = temperature_text(key)
         if text:

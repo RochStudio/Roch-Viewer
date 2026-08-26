@@ -258,7 +258,7 @@ class Am5Runtime:
             # mutex traffic for one set of numbers.
             "board_temp": _LiveSource(
                 lambda: _import_call(
-                    "rochviewer.intel.intel_board_sensors", "read_board_temperatures"
+                    "rochviewer.sensors.board_sensors", "read_board_temperatures"
                 ),
                 lambda r: "Super I/O READ-ONLY — %d sensor(s)" % len(r),
                 "Board sensors", empty={},

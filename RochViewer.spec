@@ -31,7 +31,7 @@ hiddenimports = [
     'rochviewer.intel.intel_timings',
     # Imported lazily by intel_timings so the tables are built before a
     # sensor is read, which also hides these from the dependency scan.
-    'rochviewer.intel.intel_board_sensors',
+    'rochviewer.sensors.board_sensors',
     'rochviewer.intel.intel_pch_smbus',
     'rochviewer.intel.intel_rapl',
     'rochviewer.memory.ddr4_tsod',

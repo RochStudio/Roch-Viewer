@@ -18,8 +18,8 @@
 
 import unittest
 
-from rochviewer.intel import intel_board_sensors
-from rochviewer.intel.intel_board_sensors import (
+from rochviewer.sensors import board_sensors
+from rochviewer.sensors.board_sensors import (
     CONFIRMED_RAILS,
     CONFIRMED_TEMPERATURES,
     INTEL_RAILS,
@@ -101,8 +101,8 @@ class DetectionRefusalTest(unittest.TestCase):
     """A board whose chip declines must report nothing, and only ask once."""
 
     def setUp(self):
-        intel_board_sensors._DETECTED.clear()
-        self.addCleanup(intel_board_sensors._DETECTED.clear)
+        board_sensors._DETECTED.clear()
+        self.addCleanup(board_sensors._DETECTED.clear)
 
     def test_a_declining_chip_reports_no_temperatures(self):
         reader = _FakeReader(TEMPERATURE_CAPTURE, detects=False)
@@ -156,8 +156,8 @@ class ConfirmedRailReadTest(unittest.TestCase):
     """Behaviour once a rail is confirmed, driven through the sensors argument."""
 
     def setUp(self):
-        intel_board_sensors._DETECTED.clear()
-        self.addCleanup(intel_board_sensors._DETECTED.clear)
+        board_sensors._DETECTED.clear()
+        self.addCleanup(board_sensors._DETECTED.clear)
 
     def test_a_confirmed_rail_is_decoded_and_returned(self):
         # 0x3100 counts at 0.125 mV each is 1.568 V.
@@ -280,8 +280,8 @@ class TemperatureValidationTest(unittest.TestCase):
 
 class BoardTemperatureReadTest(unittest.TestCase):
     def setUp(self):
-        intel_board_sensors._DETECTED.clear()
-        self.addCleanup(intel_board_sensors._DETECTED.clear)
+        board_sensors._DETECTED.clear()
+        self.addCleanup(board_sensors._DETECTED.clear)
 
     def test_every_confirmed_sensor_is_a_known_sensor(self):
         for key in CONFIRMED_TEMPERATURES:

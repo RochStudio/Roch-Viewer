@@ -98,6 +98,17 @@ def select_allocation(entries, segment=0, bus=0):
     )
 
 
+def default_allocation(segment=0, bus=0):
+    """The firmware's own ECAM allocation covering one bus.
+
+    Neither an Intel nor an AMD idea: the window is described by the ACPI
+    MCFG table, which both platforms have and this module already parses.
+    It lived in intel_pch_smbus, so naming a bus on an AMD board meant
+    importing an Intel module to do it.
+    """
+    return select_allocation(parse_mcfg(get_mcfg_table()), segment, bus)
+
+
 def ecam_address(entry, bus, device, function, register):
     if not entry.start_bus <= bus <= entry.end_bus:
         raise ValueError("bus is outside the MCFG allocation")
