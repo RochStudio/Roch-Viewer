@@ -158,6 +158,10 @@ class IteSuperIoReader:
         self._lock = threading.Lock()
         self._mutex = _NamedMutex(ISA_MUTEX_NAME)
         self.chips = {}
+        # The identity rows ask every sensor reader for chip_name, whatever
+        # transport it speaks. This board answers on both config ports, so the
+        # attribute names each chip found rather than only the first.
+        self.chip_name = None
         self.last_error = ""
 
     # -- raw port access ---------------------------------------------------
@@ -228,6 +232,12 @@ class IteSuperIoReader:
                     "step": CHIP_VOLTAGE_STEP.get(name),
                 }
         self.chips = found
+        # Both parts, in config-port order, because the pair is what this
+        # board has -- naming one of them would read as the whole answer.
+        self.chip_name = " + ".join(
+            name for name, chip in sorted(found.items(),
+                                          key=lambda kv: kv[1]["port"])
+        ) or None
         if not found:
             self.last_error = "No ITE Super I/O responded on 0x2E or 0x4E"
         return bool(found)
