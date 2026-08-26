@@ -73,6 +73,19 @@ every register-backed row reads nothing. It says so in a strip across the top
 and names the directories it looked in, so a copy in the wrong place is
 visible rather than silent.
 
+**Installing it is not just a file copy.** `inpoutx64.dll` carries the kernel
+driver inside itself as a resource. The first time it runs elevated it writes
+that driver to `System32\Drivers\inpoutx64.sys` and registers it as an
+automatic-start Windows service, which stays there afterwards whether or not
+this program is ever run again. Removing it means stopping and deleting the
+`inpoutx64` service and deleting that file, not deleting the folder you
+downloaded.
+
+That component is also **no longer maintained**: its author says so on the
+download page and that he can no longer sign the driver. It works, it is
+signed, and every comparable tool depends on it or something like it — but it
+is not something anyone is fixing.
+
 Windows security software may warn about that driver. It is a well-known
 low-level access component and is also, for the same reason, a component
 attackers have abused; decide for yourself whether you want it on your
@@ -147,10 +160,20 @@ rather than by convention:
 
 - **Reads, not writes.** The SMBus transports assemble the address byte with
   the read direction bit set from a path that has no direction parameter. The
-  only writes anywhere are selectors that choose what the next read returns —
-  the PMIC's ADC channel and the SPD hub's page — each restored afterwards,
-  each fixed to one register that no caller can redirect. Nothing that
-  configures a rail or writes an SPD array is reachable.
+  writes that do exist are the ones a read cannot happen without, and each is
+  pinned to a fixed destination no caller can redirect:
+  - **Selectors**, which choose what the next read returns — the PMIC's ADC
+    channel and the SPD hub's page — each restored afterwards.
+  - **The AMD SMU mailbox.** On AMD, telemetry is not memory-mapped: the SMU
+    is asked for it, and asking means writing a message ID and its arguments
+    to the SMN data window. Four command IDs are permitted, listed in one
+    tuple that the sender checks against — table version, table address, table
+    transfer, and GetPBOScalar. Every one is a query. No message that sets a
+    limit, a voltage or a frequency is reachable, and the write-capable SMU
+    diagnostics this project was developed with are deliberately absent from
+    this repository.
+
+  Nothing that configures a rail or writes an SPD array is reachable.
 - **No guessed values.** A decode table names a code that was read; where a
   code is unrecognised the raw value is shown instead. Where a figure cannot
   be read at all it is left blank rather than filled from a plausible
@@ -165,30 +188,103 @@ rather than by convention:
   cycle — or by matching every field of a register at once against a reference
   tool, and the evidence is recorded beside the definition.
 
-## Build and run
+## Getting it running
 
-1. Install 64-bit Python 3.13 with Tcl/Tk.
-2. `py -V:3.13 -m pip install -r requirements.txt`
-3. Put `inpoutx64.dll` and `inpoutx64.sys` in the project directory.
-4. Run from source with `pyw -V:3.13 run_viewer.py`, or build with
-   `py -V:3.13 -m PyInstaller --clean -y RochViewer.spec` and run
-   `dist\RochViewer.exe`.
-5. Accept the administrator prompt.
+There are two ways in. Both need the driver, and both need Administrator.
 
-`pyw` is the windowed launcher, so the viewer comes up without a console behind
-it — the same as the built EXE, which is already windowed. Starting with `py`
-from an ordinary prompt gets you there too: the administrator prompt at step 5
-starts a fresh process, and that one is windowed whichever launcher you used.
+### The quick way: the released EXE
 
-Use `py` from an **already elevated** prompt when you want the console. There is
-no elevation step to pass through, so the process keeps the one it was given,
-and the diagnostics the tool prints when a register or a transport does not
-answer have somewhere to land. Under a windowed launcher they go nowhere.
+1. **Download `RochViewer.exe`** from the
+   [releases page](https://github.com/RochStudio/Roch-Viewer/releases).
+   Nothing to install; it is a single file.
+2. **Get the driver.** Download the InpOut32/64 binaries from
+   [highrez.co.uk](http://www.highrez.co.uk/downloads/inpout32/) and take
+   `inpoutx64.dll` and `inpoutx64.sys` out of the archive.
+3. **Put them in the same folder as `RochViewer.exe`.** Not a subfolder, not
+   somewhere on PATH: beside it. `inpoutx64.dll` is the one this tool looks
+   for; the `.sys` ships alongside it and does no harm.
+4. **Right-click `RochViewer.exe` → Run as administrator.** Windows will
+   prompt; the tool cannot read a register without it.
 
-Run the tests with `py -V:3.13 -m unittest discover -s tests -t .`. A handful
-skip where they need hardware, a platform or a display the running machine
-does not have — a test gated to AM5 skips on an Intel bench, and the reverse.
-GitHub Actions runs the whole suite on Windows for every push.
+First run will also raise SmartScreen, because the EXE is unsigned — *More
+info* → *Run anyway*, or don't, if you would rather build it yourself. Your
+antivirus may object to the driver as well; see
+[Prerequisites](#prerequisites) for why.
+
+If the top of the window shows a red strip saying `inpoutx64.dll not found`,
+step 2 or 3 did not take. The strip names the folders it looked in.
+
+### From source
+
+1. **Install Python 3.13, 64-bit**, from
+   [python.org](https://www.python.org/downloads/windows/). Take the
+   *Windows installer (64-bit)*, and during setup leave **tcl/tk and IDLE**
+   ticked — the interface is Tkinter and will not start without it. Ticking
+   *Add python.exe to PATH* is convenient but not required; the commands below
+   use the `py` launcher, which the installer always provides.
+
+2. **Get the code.**
+
+   ```
+   git clone https://github.com/RochStudio/Roch-Viewer.git
+   cd Roch-Viewer
+   ```
+
+   Or download the ZIP from the repository page and extract it.
+
+3. **Install the four dependencies.**
+
+   ```
+   py -V:3.13 -m pip install -r requirements.txt
+   ```
+
+   That is `customtkinter` for the interface, `wmi` and `pywin32` for the
+   Windows queries, and `pyinstaller` only if you want to build an EXE.
+
+4. **Put `inpoutx64.dll` and `inpoutx64.sys` in the project folder**, beside
+   `run_viewer.py`. Same files, same source as step 2 of the quick way, and
+   the same caveat about the service it installs.
+
+5. **Run it.**
+
+   ```
+   pyw -V:3.13 run_viewer.py
+   ```
+
+   Accept the administrator prompt. If you started from an ordinary,
+   non-elevated prompt, that prompt is where the elevation happens.
+
+To build your own EXE instead:
+
+```
+py -V:3.13 -m PyInstaller --clean -y RochViewer.spec
+```
+
+It lands in `dist\RochViewer.exe`. The driver has to sit beside *that* copy
+too — building does not move it.
+
+### Which launcher, and why
+
+`pyw` is the windowed launcher, so the viewer comes up without a console
+behind it — the same as the built EXE, which is already windowed. Starting
+with `py` from an ordinary prompt gets you there too: accepting the
+administrator prompt starts a fresh process, and that one is windowed
+whichever launcher you used.
+
+Use `py` from an **already elevated** prompt when you want the console. There
+is no elevation step to pass through, so the process keeps the one it was
+given, and the diagnostics the tool prints when a register or a transport does
+not answer have somewhere to land. Under a windowed launcher they go nowhere.
+
+### Running the tests
+
+```
+py -V:3.13 -m unittest discover -s tests -t .
+```
+
+A handful skip where they need hardware, a platform or a display the running
+machine does not have — a test gated to AM5 skips on an Intel bench, and the
+reverse. GitHub Actions runs the whole suite on Windows for every push.
 
 ## Licence
 
