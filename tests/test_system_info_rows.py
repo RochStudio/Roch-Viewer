@@ -566,5 +566,71 @@ class ChannelLayoutTest(unittest.TestCase):
         self.assertIsNone(intel_timings.channel_layout_name(0, "DDR5"))
 
 
+class ChannelLayoutWithoutTheInventoryTest(unittest.TestCase):
+    """The fallback has to tell a quad-channel board from a dual one.
+
+    Boards differ: two channels with two sockets each, and four channels with
+    one each, both present four slots. The reading this replaced separated
+    one populated group from two and nothing more, so every four-slot board
+    came back "Dual Channel" -- right for the consumer boards this tool runs
+    on, and a confident wrong answer on a genuinely four-channel one, which
+    it could not name at any count.
+
+    The socket names carry the channel, so they are read first. There were no
+    tests over this path at all.
+    """
+
+    @staticmethod
+    def layout(num_slots, locators):
+        def fake(cls):
+            if cls == "Win32_PhysicalMemoryArray":
+                return [mock.Mock(MemoryDevices=num_slots)]
+            return [mock.Mock(Tag="Physical Memory %d" % index,
+                              DeviceLocator=locator)
+                    for index, locator in enumerate(locators)]
+        with mock.patch.object(intel_timings, "_wmi_static", fake):
+            return intel_timings._channel_layout_from_slot_tags()
+
+    def test_four_sockets_on_two_channels_is_dual(self):
+        self.assertEqual(
+            self.layout(4, ["Controller0-DIMMA1", "Controller0-DIMMA2",
+                            "Controller1-DIMMB1", "Controller1-DIMMB2"]),
+            "Dual Channel")
+
+    def test_four_sockets_on_four_channels_is_quad(self):
+        # The case the old reading could not produce at all.
+        self.assertEqual(
+            self.layout(4, ["DIMMA1", "DIMMB1", "DIMMC1", "DIMMD1"]),
+            "Quad Channel")
+
+    def test_the_two_four_slot_boards_do_not_read_alike(self):
+        # Stated as its own test because it is the whole point: same slot
+        # count, different board, different answer.
+        self.assertNotEqual(
+            self.layout(4, ["DIMMA1", "DIMMA2", "DIMMB1", "DIMMB2"]),
+            self.layout(4, ["DIMMA1", "DIMMB1", "DIMMC1", "DIMMD1"]))
+
+    def test_channel_prefixed_sockets_are_read_too(self):
+        self.assertEqual(
+            self.layout(8, ["Channel%s-DIMM0" % letter
+                            for letter in "ABCDEFGH"]),
+            "Eight Channel")
+
+    def test_two_sockets_still_answer_without_channel_names(self):
+        # Two populated sockets cannot be more than two channels, so this
+        # stays a real answer even when the names say nothing.
+        self.assertEqual(self.layout(2, ["DIMM0", "DIMM1"]), "Dual Channel")
+
+    def test_one_module_is_single_whatever_the_board(self):
+        self.assertEqual(self.layout(4, ["DIMM0"]), "Single Channel")
+
+    def test_a_board_it_cannot_read_says_so_rather_than_guessing_dual(self):
+        # The behaviour being fixed: unnamed sockets on a four-slot board
+        # used to come back "Dual Channel" with nothing behind it.
+        answer = self.layout(4, ["DIMM0", "DIMM1", "DIMM2", "DIMM3"])
+        self.assertNotIn("Dual", answer)
+        self.assertIn("Unknown", answer)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -644,9 +644,14 @@ CHANNEL_LAYOUT_NAMES = {
 }
 
 
-def channel_layout_name(populated_channels, generation):
+def channel_layout_name(populated_channels, generation=None):
     """Name the layout for a count of populated channels. Pure, so it can be
-    tested without a machine to read."""
+    tested without a machine to read.
+
+    ``generation`` is accepted and unused. It decided whether to double the
+    count for DDR5 sub-channels; that doubling is gone, and the parameter is
+    kept so the callers and tests that name a generation still read sensibly.
+    """
     if not populated_channels:
         return None
     count = populated_channels
@@ -678,33 +683,54 @@ def detect_dual_channel_memory():
     return _channel_layout_from_slot_tags()
 
 
+# The board's own socket name carries the channel; a slot count does not.
+# "DIMMA2", "Controller0-DIMMB1" and "ChannelC-DIMM0" all name one, and
+# counting the distinct letters asks the same question the inventory path
+# asks, of the same SMBIOS records.
+_LOCATOR_CHANNEL = re.compile(r"(?:CHANNEL|CH|DIMM)[ _-]?([A-H])(?![A-Z])", re.I)
+
+
+def _channels_from_locators(modules):
+    """The distinct channel letters the board names for its populated slots."""
+    letters = set()
+    for module in modules:
+        match = _LOCATOR_CHANNEL.search(
+            str(getattr(module, "DeviceLocator", "") or ""))
+        if match:
+            letters.add(match.group(1).upper())
+    return letters
+
+
 def _channel_layout_from_slot_tags():
+    """Channel layout from SMBIOS alone, when the module inventory is absent.
+
+    Reads the socket names first, because they state the channel. Counting
+    slots cannot: the reading below only ever separated one populated group
+    from two, so every four-slot board came back Dual -- correct for the
+    two-DIMM-per-channel consumer boards this tool runs on, and wrong for a
+    genuinely four-channel one, which it had no way to name at all.
+
+    A board whose sockets say nothing is now reported as unread rather than
+    called Dual. Two slots stays a real answer either way: two populated
+    sockets cannot be more than two channels.
+    """
     try:
-        # Get number of memory slots
+        modules = _wmi_static("Win32_PhysicalMemory")
+        named = channel_layout_name(len(_channels_from_locators(modules)))
+        if named:
+            return named
+
         memory_arrays = _wmi_static("Win32_PhysicalMemoryArray")
         if not memory_arrays:
             return "No memory array detected"
         num_slots = memory_arrays[0].MemoryDevices
+        used_slots = {module.Tag for module in modules}
 
-        # Get used memory slots
-        used_slots = set(memory.Tag for memory in _wmi_static("Win32_PhysicalMemory"))
-
+        if len(used_slots) <= 1:
+            return "Single Channel"
         if num_slots == 2:
-            if {"Physical Memory 0", "Physical Memory 1"}.issubset(used_slots):
-                return "Dual Channel"
-            else:
-                return "Single Channel"
-        elif num_slots == 4:
-            a_slots = {"Physical Memory 3", "Physical Memory 2"}
-            b_slots = {"Physical Memory 1", "Physical Memory 0"}
-            a_used = a_slots & used_slots
-            b_used = b_slots & used_slots
-            if a_used and b_used:
-                return "Dual Channel"
-            else:
-                return "Single Channel"
-        else:
-            return f"{num_slots} DIMM slots detected - Unknown Channel Layout"
+            return "Dual Channel"
+        return f"{num_slots} DIMM slots detected - Unknown Channel Layout"
     except Exception as e:
         return f"Error detecting memory layout: {e}"
 # Identity, not telemetry. None of the four functions below can return a
