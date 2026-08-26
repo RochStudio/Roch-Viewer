@@ -171,6 +171,57 @@ def extract_value_from_hex(hex_str: str, bit_start: int, bit_width: int) -> int:
     return value
 
 
+# An all-ones dword is not a value; it is the absence of a device.
+#
+# Reading unmapped MMIO succeeds and returns 0xFFFFFFFF, so a field decoded
+# out of it produces a number rather than a gap: 0x2CE8 is unmapped on Core
+# Ultra 200S, and the eleven drive-strength rows reading it each showed 255 --
+# a plausible-looking level that no register ever stated. This is already how
+# the rest of the project reads all-ones: _read_ddr_ptm_control() returns None
+# on it, and the MCHBAR window is found by where the reads turn to 0xFFFFFFFF.
+# Applying the same rule at the read makes those rows report nothing instead
+# of reporting a mask.
+#
+# Scoped to a fully-set dword rather than a fully-set field, deliberately. A
+# narrow field of all ones is an ordinary value -- tXSR legitimately reads
+# 0x3FF out of a register holding 0x000003FF -- and only the whole dword being
+# set carries the "nobody answered" meaning.
+ALL_ONES_DWORD = 0xFFFFFFFF
+
+
+def _dword_is_unmapped(data):
+    return len(data) == 4 and int.from_bytes(data, "little") == ALL_ONES_DWORD
+
+
+# Some memory-controller fields straddle the 32-bit boundary.
+#
+# 0xE050 on Core Ultra 200S is the case that forced this: tWRPDEN occupies
+# bits 27..36, so neither the dword at 0xE050 nor the one at 0xE054 contains
+# it. extract_value_from_hex reads exactly four bytes by contract, which made
+# such a field unreadable no matter which bit positions were tried -- the
+# register was not mis-decoded, it was unreachable. Reading the pair as one
+# 64-bit little-endian quantity is the whole fix.
+WIDE_READ_BYTES = 8
+
+
+def extract_value_from_wide_hex(
+    hex_str: str, bit_start: int, bit_width: int
+) -> int:
+    compact_hex = hex_str.replace(" ", "")
+    if len(compact_hex) != WIDE_READ_BYTES * 2:
+        raise ValueError(
+            f"Input must be {WIDE_READ_BYTES} bytes "
+            f"({WIDE_READ_BYTES * 2} hex chars), got: {compact_hex}"
+        )
+
+    width = abs(bit_width)
+    raw_value = int.from_bytes(bytes.fromhex(compact_hex), byteorder="little")
+    value = (raw_value >> bit_start) & ((1 << width) - 1)
+    if bit_width < 0:
+        value = int(f"{value:0{width}b}"[::-1], 2)
+    return value
+
+
 def read_timing(
     address=None,
     bit_start=None,
@@ -191,9 +242,17 @@ def read_timing(
 
         if read_type == "standard" and address is not None:
             data = read_physical_memory(address)
-            if data is None:
+            if data is None or _dword_is_unmapped(data):
                 return None
             return extract_value_from_hex(data.hex(), bit_start, bit_length)
+
+        if read_type == "wide" and address is not None:
+            data = read_physical_memory(address, WIDE_READ_BYTES)
+            if data is None:
+                return None
+            return extract_value_from_wide_hex(
+                data.hex(), bit_start, bit_length
+            )
 
         print(
             f"Invalid read configuration: read_type={read_type}, "
