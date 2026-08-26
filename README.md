@@ -9,6 +9,15 @@ while the machine runs.
 It is a read-only viewer. It changes no setting, and nothing it shows is a
 value it was told to expect.
 
+## Download
+
+A built `RochViewer.exe` is attached to every release:
+
+**https://github.com/RochStudio/Roch-Viewer/releases**
+
+It needs one file that is deliberately not in the download — see
+[Prerequisites](#prerequisites). Building it yourself is a few sections below.
+
 ## Supported platforms
 
 | Platform | Memory | Timing source |
@@ -25,13 +34,24 @@ The Intel side is validated on an ASUS ROG MAXIMUS Z790 APEX with an
 i9-14900KS at DDR5-8000 Gear 2, cross-checked against CPU-Z, HWiNFO,
 VoidTimings, ASRock Timing Configurator and MemTweakIt.
 
+It has also been exercised on an LGA1700 DDR4 board and a Z890 TACHYON, and
+both found faults the primary bench could not: every memory clock read half
+its value in Gear 4, four timings were unreachable across a 32-bit register
+boundary, and the channel count needed two boards before it was right — a
+Z790 and a Z890 report it differently, and each is correct for its own
+platform. Neither of those boards is a daily target, so treat them as checked
+rather than continuously validated. The DDR4 mode-register shadow in
+particular is inferred rather than documented and rests on cross-checks from a
+single board.
+
 The AMD side was developed and validated on an MSI B850MPOWER with a Ryzen
-9850X3D, against same-boot ZenTimings, and has not been re-run since it was
-brought into this repository. Treat its readings as needing confirmation
-against a second tool on your own board. Its electrical values -- RTT, ODT and
-the drive strengths -- come from a reverse-engineered APOB parser whose
-channel attribution is verified only for the two-record geometry observed on
-that bench.
+9850X3D, against same-boot ZenTimings. The code has been exercised on that
+board since it came into this repository, and bugs found there have been
+fixed — but **no reading has been compared against a reference tool since the
+move**, so confirm anything you intend to rely on against a second tool on
+your own board. Its electrical values -- RTT, ODT and the drive strengths --
+come from a reverse-engineered APOB parser whose channel attribution is
+verified only for the two-record geometry observed on that bench.
 
 The AMD backend follows ZenStates-Core and ZenTimings by irusanov, both
 GPL-3.0, which is why this project is GPL-3.0 too. See
@@ -47,10 +67,17 @@ GPL-3.0, which is why this project is GPL-3.0 too. See
   `run_viewer.py` to run from source. See `THIRD_PARTY_NOTICES.txt` for why they are
   not bundled.
 
+If the driver is missing the program still opens — the CPU, the board, the
+BIOS and the module identity all come from Windows and need no driver — but
+every register-backed row reads nothing. It says so in a strip across the top
+and names the directories it looked in, so a copy in the wrong place is
+visible rather than silent.
+
 Windows security software may warn about that driver. It is a well-known
 low-level access component and is also, for the same reason, a component
 attackers have abused; decide for yourself whether you want it on your
-machine.
+machine. The released EXE is unsigned, so SmartScreen will prompt on first
+run.
 
 ## What it shows
 
@@ -73,7 +100,7 @@ in two columns named for the slots that are actually populated.
 levels, per-group drive strengths and slew compensation for DATA, CMD, CLK and
 CTL, the ODT latencies and delays, and the four DFE taps.
 
-**Misc** (81 rows) — the per-channel read latencies, the power-down and
+**Misc** (83 rows) — the per-channel read latencies, the power-down and
 command configuration, ECS state, the controller feature switches, the
 preamble and postamble settings, the refresh arbitration controls, and the
 DDR5 mode registers. Drawn as one column: these are settings to read down
@@ -159,8 +186,9 @@ and the diagnostics the tool prints when a register or a transport does not
 answer have somewhere to land. Under a windowed launcher they go nowhere.
 
 Run the tests with `py -V:3.13 -m unittest discover -s tests -t .`. A handful
-skip where they need hardware or a display that the running machine does not
-have.
+skip where they need hardware, a platform or a display the running machine
+does not have — a test gated to AM5 skips on an Intel bench, and the reverse.
+GitHub Actions runs the whole suite on Windows for every push.
 
 ## Licence
 
