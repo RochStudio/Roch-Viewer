@@ -229,7 +229,11 @@ class FollowsTheHardwareTest(unittest.TestCase):
             self.assertEqual(_require(self, "GPU Code Name"), "AD104-250")
 
         nvidia_gpu._CACHE[:] = []
-        with card(0x2C05), mock.patch.object(nvidia_gpu, "_Nvapi",
+        # Pascal, a GTX 1080. This was 0x2C05 until that card was added to the
+        # table, which made the unlisted half of this test assert about a
+        # listed one. A family the table has no entries for cannot go stale
+        # the same way.
+        with card(0x1B80), mock.patch.object(nvidia_gpu, "_Nvapi",
                                              side_effect=OSError), \
                 mock.patch.object(nvidia_gpu, "_nvml_query",
                                   return_value={}):

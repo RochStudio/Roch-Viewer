@@ -84,6 +84,13 @@ GPU_DEVICE_TABLE = {
     0x2704: ("AD103-300", 112, 304),       # GeForce RTX 4080
     0x2782: ("AD104-400", 80, 240),        # GeForce RTX 4070 Ti
     0x2786: ("AD104-250", 64, 184),        # GeForce RTX 4070
+    # Blackwell. The TM count follows the same rule as the Ada entries above
+    # and is derived rather than looked up: this card reports 8960 shaders,
+    # which is 70 SMs at 128 shaders each, and four TM units per SM gives 280.
+    # The ROP count does not follow from anything readable and is the vendor's
+    # figure for the part. Unlike 0x2782 it has not been cross-checked against
+    # a second tool on this bench, so it is the weaker half of the entry.
+    0x2C05: ("GB203-300", 96, 280),        # GeForce RTX 5070 Ti
 }
 
 # NVML architecture -> process node, keyed on the architecture because that is

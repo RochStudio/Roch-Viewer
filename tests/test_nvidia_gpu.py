@@ -29,7 +29,12 @@ from unittest import mock
 from rochviewer.gpu import nvidia_gpu
 
 BENCH_CARD = 0x2786          # AD104, the RTX 4070 on the bench
-OTHER_CARD = 0x2C05          # GB203, an RTX 5070 Ti: not in the table
+# Pascal, a GTX 1080. Deliberately a generation the table does not reach:
+# this was 0x2C05 until that card was added to the table, at which point the
+# test asserting an unlisted card gets nothing was asserting it about a listed
+# one. An id from a family the table has no entries for cannot go stale the
+# same way.
+OTHER_CARD = 0x1B80
 GIGABYTE = 0x1458
 
 
@@ -183,17 +188,19 @@ class AdapterIdentityTest(unittest.TestCase):
 class DeviceTableTest(unittest.TestCase):
     """The table is a claim, so it has to stay internally checkable.
 
-    TM units are four per SM and an SM is 128 shaders, on every Ada part. The
-    shader counts below are what each card reports for itself, so an entry
-    whose TM count does not follow from its shader count is a typo, not a SKU
-    difference. ROP counts follow from nothing readable and are the vendor's.
+    TM units are four per SM and an SM is 128 shaders, on Ada and on Blackwell
+    alike. The shader counts below are what each card reports for itself, so an
+    entry whose TM count does not follow from its shader count is a typo, not a
+    SKU difference. ROP counts follow from nothing readable and are the
+    vendor's.
     """
 
-    ADA_SHADERS = {
+    SHADER_COUNTS = {
         0x2684: 16384,        # RTX 4090
         0x2704: 9728,         # RTX 4080
         0x2782: 7680,         # RTX 4070 Ti -- read off this bench
         0x2786: 5888,         # RTX 4070
+        0x2C05: 8960,         # RTX 5070 Ti -- read off this bench
     }
     SHADERS_PER_SM = 128
     TMUS_PER_SM = 4
@@ -205,11 +212,11 @@ class DeviceTableTest(unittest.TestCase):
 
     def test_every_entry_has_a_shader_count_to_check_against(self):
         self.assertEqual(
-            set(nvidia_gpu.GPU_DEVICE_TABLE), set(self.ADA_SHADERS)
+            set(nvidia_gpu.GPU_DEVICE_TABLE), set(self.SHADER_COUNTS)
         )
 
     def test_tm_units_follow_the_shader_count(self):
-        for device, shaders in self.ADA_SHADERS.items():
+        for device, shaders in self.SHADER_COUNTS.items():
             with self.subTest(device=hex(device)):
                 _, _, tmus = nvidia_gpu.GPU_DEVICE_TABLE[device]
                 self.assertEqual(
