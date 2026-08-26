@@ -1609,12 +1609,40 @@ DDR4_TCCD_L = {0: 4, 1: 5, 2: 6, 3: 7, 4: 8}
 DDR4_TCCD_L_MODE_REGISTER = 0x06
 DDR4_TCCD_L_BITS = (10, 3)
 
+# tCCD_S, the different-bank-group delay, keyed on the burst length in MR0.
+#
+# JESD79-4 fixes it at 4 nCK and gives no way to program it, which is why an
+# earlier controlled experiment found nothing: tCCD was set to 6 and then 8 in
+# the BIOS and no register in the swept window moved, because on DDR4 the DRAM
+# ignores the setting. There was never a field to find. The BIOS shows 4 with
+# the setting on Auto, and 4 is what every burst mode gives.
+#
+# So this is a constant, and it is written as a table keyed on a real register
+# read rather than as a bare 4. That is the whole difference: the row appears
+# only when MR0 can actually be read and names a burst mode this generation
+# defines. A shadow that cannot be read, or a code that is not DDR4's, leaves
+# the row empty instead of asserting a number about a module nobody reached.
+DDR4_TCCD_S = {
+    0: 4,   # BL8 fixed
+    1: 4,   # BC4 or BL8 on the fly
+    2: 4,   # BC4 fixed
+}
+DDR4_TCCD_S_MODE_REGISTER = 0x00
+DDR4_TCCD_S_BITS = (0, 2)
+
 
 def _ddr4_ccd_l(base=None):
     """tCCD_L out of the DDR4 MR6 shadow, or None."""
     code = _ddr4_mode_register_field(
         DDR4_TCCD_L_MODE_REGISTER, *DDR4_TCCD_L_BITS, base=base)
     return None if code is None else DDR4_TCCD_L.get(code)
+
+
+def _ddr4_ccd_s(base=None):
+    """tCCD_S, from the burst length MR0 reports. See DDR4_TCCD_S."""
+    code = _ddr4_mode_register_field(
+        DDR4_TCCD_S_MODE_REGISTER, *DDR4_TCCD_S_BITS, base=base)
+    return None if code is None else DDR4_TCCD_S.get(code)
 
 
 CCD_MODE_REGISTER = 0x0D
@@ -1656,7 +1684,11 @@ def get_ccd_timing(name, base=None):
     # the write variants at all -- those two stay blank rather than being
     # derived from a DDR5 formula that has nothing behind it here.
     if detect_ddr_generation() == "DDR4":
-        return _ddr4_ccd_l(base) if name == "tCCD_L" else None
+        if name == "tCCD_L":
+            return _ddr4_ccd_l(base)
+        if name == "tCCD":
+            return _ddr4_ccd_s(base)
+        return None
 
     derived = CCD_FROM_MR13.get(name)
     if derived is not None:
@@ -4869,10 +4901,13 @@ _install_trefi_ns_row()
 # Runs before the channel-B pass so these rows gain the same A1/B1 columns as
 # the rest of the tab.
 
-# tCCD is deliberately absent. DDR5 fixes the different-bank-group delay at
-# 8 nCK and no mode register carries it, so the row could only ever be blank
-# or be filled with the constant as though it had been read.
+# tCCD leads the group, as the BIOS lists it. It is the different-bank-group
+# delay, and unlike tCCD_L it is not programmable on either generation: DDR4
+# fixes it at 4 nCK and DDR5 at 8. See DDR4_TCCD_S for why it is still keyed
+# on a register read rather than written as a bare constant, and why the row
+# is empty on a generation this project has no burst-length read for.
 CCD_ROWS = (
+    ("tCCD", lambda base=None: get_ccd_timing("tCCD", base)),
     ("tCCD_L", lambda base=None: get_ccd_timing("tCCD_L", base)),
     ("tCCD_L_WR", lambda base=None: get_ccd_timing("tCCD_L_WR", base)),
     ("tCCD_L_WR2", lambda base=None: get_ccd_timing("tCCD_L_WR2", base)),
@@ -5147,6 +5182,7 @@ DUAL_CHANNEL_COMPUTED = {
     "tREFIns": get_trefi_ns,
     # Same shape: installed as getters just above, over a register field the
     # mirror cannot see because the row carries no address.
+    "tCCD": lambda base=None: get_ccd_timing("tCCD", base),
     "tCCD_L": lambda base=None: get_ccd_timing("tCCD_L", base),
     "tCCD_L_WR": lambda base=None: get_ccd_timing("tCCD_L_WR", base),
     "tCCD_L_WR2": lambda base=None: get_ccd_timing("tCCD_L_WR2", base),
@@ -7029,6 +7065,48 @@ def _ddr4_wr_rtp(half, base=None):
     return "N/A" if pair is None else str(pair[half])
 
 
+# The DRAM's own CAS write latency, MR2 A5:A3. DDR4's codes are not
+# contiguous -- 12 steps to 14, skipping 13 -- so this is the JEDEC table
+# rather than an offset from the code.
+DDR4_MR_CWL = {
+    0: "9", 1: "10", 2: "11", 3: "12", 4: "14", 5: "16", 6: "18", 7: "20",
+}
+DDR4_CWL_MODE_REGISTER = 0x02
+DDR4_CWL_BITS = (3, 3)
+
+# The DRAM's own tCCD_L, MR6 A12:A10 -- the same field, and the same codes,
+# the tCCD_L row on the Timings tab already reads. Derived from that table
+# rather than retyped, so the two cannot drift into disagreeing about what a
+# code means; only the rendering differs, since a Misc row is text.
+DDR4_MR_CCD_L = {code: str(value) for code, value in DDR4_TCCD_L.items()}
+
+
+def _ddr4_cwl_mr(base=None):
+    """CWL as the module was programmed with it, out of the MR2 shadow."""
+    return _ddr4_misc_value(
+        DDR4_CWL_MODE_REGISTER, DDR4_CWL_BITS[0], DDR4_CWL_BITS[1],
+        DDR4_MR_CWL, base)
+
+
+def _ddr4_ccd_l_mr(base=None):
+    """tCCD_L as the module was programmed with it, out of the MR6 shadow."""
+    return _ddr4_misc_value(
+        DDR4_TCCD_L_MODE_REGISTER, DDR4_TCCD_L_BITS[0], DDR4_TCCD_L_BITS[1],
+        DDR4_MR_CCD_L, base)
+
+
+# Mode-register copies of a controller timing, and the row each sits under.
+# tWR_MR and tRTP_MR come from the DDR5 map above and are re-pointed at the
+# shadow on DDR4; the other two exist on DDR4 only -- DDR5 keeps CWL and
+# tCCD_L in different registers and this project has no verified mapping for
+# them there, so inventing the rows on that generation would mean reading a
+# register nobody has checked.
+DDR4_ONLY_MODE_REGISTER_TIMINGS = (
+    ("tCWL_MR", _ddr4_cwl_mr),
+    ("tCCD_L_MR", _ddr4_ccd_l_mr),
+)
+
+
 # (row, mode register, bit start, bit length, decode table)
 DDR4_MISC_MODE_REGISTER_FIELDS = (
     ("Burst Length", 0x00, 0, 2, DDR4_MR_BURST_LENGTHS),
@@ -7183,6 +7261,15 @@ def _install_misc_tab():
                 row["value"] = _channel_a(read)
                 row["base_reader"] = read
 
+        # The two the DDR5 map has no entry for, so there is no row here to
+        # re-point and they are built instead. Same shape as the rest: bound
+        # to channel A for Misc, with the unbound reader kept so the move onto
+        # the Timings tab can give them both controllers.
+        for name, read in DDR4_ONLY_MODE_REGISTER_TIMINGS:
+            row = _misc_row(name, "Mode Registers", "Left", _channel_a(read))
+            row["base_reader"] = read
+            rows.append(row)
+
     # The round-trip latencies move in rather than holding a tab of their own.
     # They keep their Latency CHA/CHB headings, so the two blocks stay separate
     # on the page; only the tab strip loses an entry. Done here, inside the
@@ -7208,10 +7295,20 @@ _install_misc_tab()
 # Moved after the fact rather than built elsewhere, so they keep the getters
 # the Misc builder gave them -- the same decode, and the DDR4 re-point that
 # follows it.
+# Every mode-register copy of a controller timing, and nothing else. The row
+# each sits under is its own name without the suffix, so the list is the only
+# place a new one has to be named.
+MODE_REGISTER_TIMING_ROWS = (
+    "tWR_MR", "tRTP_MR", "tCWL_MR", "tCCD_L_MR",
+)
+
+MODE_REGISTER_TIMING_SUFFIX = "_MR"
+MODE_REGISTER_TIMING_FALLBACK = ("Secondary", "Left")
+
+
 def _move_mode_register_timings():
-    """Put the mode-register copies of tWR and tRTP on the Timings tab."""
-    moved = []
-    for name in ("tWR_MR", "tRTP_MR"):
+    """Put the mode-register copies of the timings beside what they restate."""
+    for name in MODE_REGISTER_TIMING_ROWS:
         row = next(
             (t for t in TIMINGS
              if t.get("name") == name and t.get("Tab") == MISC_TAB),
@@ -7219,29 +7316,31 @@ def _move_mode_register_timings():
         )
         if row is None:
             continue
+        under = name[: -len(MODE_REGISTER_TIMING_SUFFIX)]
+        anchor = next(
+            (t for t in TIMINGS
+             if t.get("name") == under and t.get("Tab") == "Timings"),
+            None,
+        )
         TIMINGS.remove(row)
-        row.update({"Tab": "Timings", "Category": "Secondary",
-                    "Column": "Left"})
+        # The section comes from the row being restated rather than a fixed
+        # name. tWR and tRTP are both Secondary, which is what this used to
+        # assume; tCCD_L is in Other Timings, and a copy filed under Secondary
+        # while sitting between two Other Timings rows would put a row in a
+        # section its neighbours are not in.
+        category, column = MODE_REGISTER_TIMING_FALLBACK
+        if anchor is not None:
+            category = anchor.get("Category", category)
+            column = anchor.get("Column", column)
+        row.update({"Tab": "Timings", "Category": category, "Column": column})
         reader = row.pop("base_reader", None)
         if reader is not None:
             # Every row on this tab reads both controllers.
             _promote_computed_row(row, reader)
-        moved.append(row)
-    if not moved:
-        return
-    # Each one directly under the row it restates: tWR_MR below tWR,
-    # tRTP_MR below tRTP.
-    for row in moved:
-        under = row["name"].replace("_MR", "")
-        anchor = next(
-            (i for i, t in enumerate(TIMINGS)
-             if t.get("name") == under and t.get("Tab") == "Timings"),
-            None,
-        )
         if anchor is None:
             TIMINGS.append(row)
         else:
-            TIMINGS.insert(anchor + 1, row)
+            TIMINGS.insert(TIMINGS.index(anchor) + 1, row)
 
 
 _move_mode_register_timings()

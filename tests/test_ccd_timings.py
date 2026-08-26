@@ -24,14 +24,14 @@ from tests.intel_stub import FIELD_READS, MCHBAR, MCHBAR2, install, restore
 
 intel_timings = None
 
-CCD_NAMES = ("tCCD_L", "tCCD_L_WR", "tCCD_L_WR2")
+CCD_NAMES = ("tCCD", "tCCD_L", "tCCD_L_WR", "tCCD_L_WR2")
 
 MR13_NAMES = ("tCCD_L", "tCCD_L_WR", "tCCD_L_WR2")
 
-# tCCD is not a row. DDR5 fixes the different-bank-group delay at 8 nCK and
-# no mode register carries it, so the row could only be blank or be filled
-# with the constant as though it had been read.
-UNSOURCED_NAME = "tCCD"
+# A name nothing carries, used to check that the gate still refuses one.
+# tCCD used to be here: it is a row now, keyed on the burst length MR0
+# reports, and the tests below check it stays empty when that read fails.
+UNSOURCED_NAME = "tNOPE"
 
 
 # A table entry names a mode register in its data byte and points at the slot
@@ -90,28 +90,52 @@ def pin_generation(case, generation):
 class EvidenceGateTest(unittest.TestCase):
     """A timing with nothing to read must report nothing.
 
-    Only tCCD is in that position now. DDR5 fixes the different-bank-group
-    delay at 8 nCK and no register or mode register carries it, so filling the
-    row with the constant would present an assumption as a reading.
+    tCCD is not in that position any more, but the thing the gate protects
+    still applies to it. It is a fixed 4 nCK on DDR4 -- JESD79-4 gives no way
+    to program it, which is why a controlled BIOS change from 6 to 8 moved no
+    register: the DRAM ignores the setting. So the row is a constant, and what
+    keeps it honest is that it is keyed on a real read of MR0's burst length.
+    An unreadable shadow leaves it empty rather than asserting 4 about a
+    module nobody reached, and that is what these check.
     """
 
     def test_no_field_ships_confirmed(self):
         self.assertEqual(intel_timings.CCD_CONFIRMED_FIELDS, {})
 
-    def test_the_unsourced_row_reports_no_value(self):
+    def test_an_unknown_timing_name_reports_no_value(self):
         self.assertIsNone(intel_timings.get_ccd_timing(UNSOURCED_NAME))
 
-    def test_the_unsourced_name_has_no_row(self):
-        names = {r.get("name") for r in intel_timings.TIMINGS}
-        self.assertNotIn(UNSOURCED_NAME, names)
-
-    def test_the_unsourced_name_does_not_read_hardware_at_all(self):
+    def test_an_unknown_name_does_not_read_hardware_at_all(self):
         FIELD_READS.clear()
         self.assertIsNone(intel_timings.get_ccd_timing(UNSOURCED_NAME))
         self.assertEqual(FIELD_READS, [])
 
-    def test_an_unknown_timing_name_reports_no_value(self):
-        self.assertIsNone(intel_timings.get_ccd_timing("tNOPE"))
+    def test_tccd_is_empty_when_the_shadow_cannot_be_read(self):
+        # The whole reason it is a table keyed on a register rather than a
+        # bare 4. Without this the row would assert a timing on a machine
+        # whose mode registers never answered.
+        module = intel_timings
+        saved = module._ddr4_mode_register_field
+        self.addCleanup(
+            setattr, module, "_ddr4_mode_register_field", saved)
+        module._ddr4_mode_register_field = (
+            lambda number, bit_start, bit_length, base=None: None)
+        self.assertIsNone(module._ddr4_ccd_s())
+
+    def test_tccd_is_empty_on_a_burst_code_ddr4_does_not_define(self):
+        # DDR4 defines codes 0-2. Code 3 is reserved, and a reserved code is
+        # not a burst length to derive a delay from.
+        self.assertNotIn(3, intel_timings.DDR4_TCCD_S)
+        module = intel_timings
+        saved = module._ddr4_mode_register_field
+        self.addCleanup(
+            setattr, module, "_ddr4_mode_register_field", saved)
+        module._ddr4_mode_register_field = (
+            lambda number, bit_start, bit_length, base=None: 3)
+        self.assertIsNone(module._ddr4_ccd_s())
+
+    def test_every_ddr4_burst_mode_gives_the_jedec_four(self):
+        self.assertEqual(set(intel_timings.DDR4_TCCD_S.values()), {4})
 
 
 class ModeRegisterTest(unittest.TestCase):
@@ -357,18 +381,35 @@ class InstalledRowTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertTrue(is_dual_timing(row(name)))
 
+    def _ccd_section(self):
+        return [
+            r.get("name") for r in intel_timings.TIMINGS
+            if r.get("Tab") == "Timings"
+            and r.get("Category") == intel_timings.CCD_CATEGORY
+        ]
+
     def test_the_rows_sit_together_after_their_anchor(self):
         # A section draws its rows in table order, so being in the right
         # category is not enough: left among the secondaries they would have
         # rendered at the head of their new section rather than beside the
         # row they belong with.
-        names = [
-            r.get("name") for r in intel_timings.TIMINGS
-            if r.get("Tab") == "Timings"
-            and r.get("Category") == intel_timings.CCD_CATEGORY
-        ]
+        #
+        # Mode-register copies are taken out first. tCCD_L_MR sits directly
+        # under tCCD_L by the rule every _MR row follows, which puts it inside
+        # this group without belonging to it -- the three CCD rows are still
+        # consecutive, and that is what this is checking.
+        names = [n for n in self._ccd_section()
+                 if not n.endswith(intel_timings.MODE_REGISTER_TIMING_SUFFIX)]
         start = names.index(intel_timings.CCD_ANCHOR) + 1
         self.assertEqual(names[start:start + len(CCD_NAMES)], list(CCD_NAMES))
+
+    def test_the_mode_register_copy_sits_directly_under_tccd_l(self):
+        # DDR4 only: DDR5 keeps tCCD_L in a register this project has no
+        # verified mapping for, so the row is absent there rather than wrong.
+        names = self._ccd_section()
+        if "tCCD_L_MR" not in names:
+            self.skipTest("tCCD_L_MR is a DDR4 row")
+        self.assertEqual(names[names.index("tCCD_L") + 1], "tCCD_L_MR")
 
     def test_the_values_are_read_lazily_rather_than_at_import(self):
         self.assertTrue(callable(row("tCCD_L")["value"]))

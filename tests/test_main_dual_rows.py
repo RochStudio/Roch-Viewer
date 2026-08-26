@@ -765,12 +765,13 @@ class TimingsSectionOrderTest(unittest.TestCase):
         # group would read as a deliberate selection rather than what it is.
         from rochviewer.ui.main import SUMMARY_EXCLUDED_TIMING_NAMES
 
-        for name in ("tCCD_L", "tCCD_L_WR", "tCCD_L_WR2"):
+        # tCCD is in here too now that it is a row. It is the one member of
+        # the group that is not programmable, but it is still a
+        # column-to-column delay and the group is excluded as a group -- half
+        # of it on the Summary would read as a deliberate selection.
+        for name in ("tCCD", "tCCD_L", "tCCD_L_WR", "tCCD_L_WR2"):
             with self.subTest(name=name):
                 self.assertIn(name, SUMMARY_EXCLUDED_TIMING_NAMES)
-        # tCCD is not a row anywhere, so excluding it would be listing a name
-        # nothing has -- the mistake the test below guards against.
-        self.assertNotIn("tCCD", SUMMARY_EXCLUDED_TIMING_NAMES)
 
     def test_summary_drops_the_rows_that_restate_a_row_it_already_lists(self):
         # tWR_MR restates tWR and tRTP_MR restates tRTP.

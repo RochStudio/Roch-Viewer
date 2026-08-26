@@ -449,6 +449,85 @@ class Ddr4MiscRowTest(unittest.TestCase):
         self.assertLessEqual(ecs, set(intel_timings.DDR5_ONLY_MISC_ROWS))
 
 
+class ModeRegisterTimingRowTest(unittest.TestCase):
+    """The mode-register copies of controller timings, and where they sit."""
+
+    def _timings(self):
+        return [t for t in intel_timings.TIMINGS if t.get("Tab") == "Timings"]
+
+    def test_each_copy_names_a_row_it_restates(self):
+        # The placement rule derives the anchor by stripping the suffix, so a
+        # copy whose base row does not exist would silently fall to the end of
+        # the table instead of sitting under anything.
+        names = {t.get("name") for t in self._timings()}
+        for copy in intel_timings.MODE_REGISTER_TIMING_ROWS:
+            base = copy[: -len(intel_timings.MODE_REGISTER_TIMING_SUFFIX)]
+            with self.subTest(row=copy):
+                self.assertTrue(copy.endswith(
+                    intel_timings.MODE_REGISTER_TIMING_SUFFIX))
+                if copy in names:
+                    self.assertIn(base, names)
+
+    def test_a_copy_sits_directly_under_what_it_restates(self):
+        names = [t.get("name") for t in self._timings()]
+        for copy in intel_timings.MODE_REGISTER_TIMING_ROWS:
+            if copy not in names:
+                continue
+            base = copy[: -len(intel_timings.MODE_REGISTER_TIMING_SUFFIX)]
+            with self.subTest(row=copy):
+                self.assertEqual(names[names.index(base) + 1], copy)
+
+    def test_a_copy_takes_the_section_of_the_row_it_restates(self):
+        # Not a fixed "Secondary". tWR and tRTP are both secondaries, which is
+        # what the move used to assume; tCCD_L is in Other Timings, and a copy
+        # filed under Secondary while sitting between two Other Timings rows
+        # puts a row in a section its neighbours are not in.
+        rows = {t.get("name"): t for t in self._timings()}
+        for copy in intel_timings.MODE_REGISTER_TIMING_ROWS:
+            if copy not in rows:
+                continue
+            base = copy[: -len(intel_timings.MODE_REGISTER_TIMING_SUFFIX)]
+            with self.subTest(row=copy):
+                self.assertEqual(rows[copy]["Category"],
+                                 rows[base]["Category"])
+                self.assertEqual(rows[copy]["Column"], rows[base]["Column"])
+
+    def test_every_copy_reads_both_controllers(self):
+        rows = {t.get("name"): t for t in self._timings()}
+        for copy in intel_timings.MODE_REGISTER_TIMING_ROWS:
+            if copy in rows:
+                with self.subTest(row=copy):
+                    self.assertTrue(intel_timings.is_dual_timing(rows[copy]))
+
+    def test_none_of_them_reaches_the_summary(self):
+        # The row each restates is already listed there, so a copy only
+        # lengthens the column.
+        from rochviewer.ui.main import SUMMARY_EXCLUDED_TIMING_NAMES
+
+        for copy in intel_timings.MODE_REGISTER_TIMING_ROWS:
+            with self.subTest(row=copy):
+                self.assertIn(copy, SUMMARY_EXCLUDED_TIMING_NAMES)
+
+    def test_the_ccd_l_copy_shares_the_timing_row_s_own_table(self):
+        # Derived from DDR4_TCCD_L rather than retyped, so the Misc copy and
+        # the Timings row cannot drift into disagreeing about what a code
+        # means. Only the rendering differs -- a Misc row is text.
+        self.assertEqual(
+            intel_timings.DDR4_MR_CCD_L,
+            {code: str(value)
+             for code, value in intel_timings.DDR4_TCCD_L.items()},
+        )
+
+    def test_the_ddr4_cwl_codes_are_the_jedec_ones(self):
+        # DDR4's CWL codes are not contiguous: 12 steps to 14, skipping 13.
+        # Deriving them as an offset from the code would be wrong from 4 up.
+        self.assertEqual(
+            intel_timings.DDR4_MR_CWL,
+            {0: "9", 1: "10", 2: "11", 3: "12",
+             4: "14", 5: "16", 6: "18", 7: "20"},
+        )
+
+
 class EmptyModeRegisterTableTest(unittest.TestCase):
     """A table that was never programmed must not answer lookups.
 

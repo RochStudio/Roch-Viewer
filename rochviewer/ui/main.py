@@ -530,18 +530,22 @@ SUMMARY_EXCLUDED_VREF_PREFIXES = ("DQ VREF D", "RX VREF", "QXCOUNT")
 # has ever been called, so the exclusion matched nothing and every one of them
 # showed anyway.
 SUMMARY_EXCLUDED_TIMING_NAMES = (
-    "tCCD_L", "tCCD_L_WR", "tCCD_L_WR2", "tREFI",
+    "tCCD", "tCCD_L", "tCCD_L_WR", "tCCD_L_WR2", "tREFI",
     # One spelling on both platforms now; AM5 always called it CR.
     "CR",
     # A back-to-back allowance rather than a timing anyone reads at a glance,
     # and it landed in the Tertiary column between tRDRD_sg and tRDRD_dg where
     # it broke up the group. Still on the Timings tab.
     "Allow 2cyc B2B LPDDR",
-    # Both restate the row above them on the Timings tab, which is where the
+    # Each restates the row above it on the Timings tab, which is where the
     # pairing is the point. On the Summary the row they restate is already
     # listed, so these only lengthen the column. They stay on Timings,
     # directly under what they restate.
-    "tWR_MR", "tRTP_MR",
+    #
+    # tCCD_L_MR would be dropped by the tCCD_L entry above in any case; it is
+    # named here as well so the group reads as one decision rather than two
+    # rows excluded for unrelated reasons.
+    "tWR_MR", "tRTP_MR", "tCWL_MR", "tCCD_L_MR",
 )
 
 
