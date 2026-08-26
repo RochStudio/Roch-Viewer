@@ -100,7 +100,7 @@ class DualTimingDefinitionTest(unittest.TestCase):
 
     def _am5_names(self):
         return {
-            "CPU", "Cores / Threads", "Model", "BIOS",
+            "CPU", "Cores / Threads", "Model", "BIOS", "Microcode",
             "AGESA", "BCLK", "MCLK", "UCLK", "FCLK", "DRAM Frequency",
             "UCLK:MCLK", "DRAM Ratio", "CR", "Refresh Mode",
             "Memory Capacity",
@@ -111,16 +111,24 @@ class DualTimingDefinitionTest(unittest.TestCase):
         layout = summary_system_memory_layout(self._am5_names())
         self.assertEqual(layout, [
             ["CPU", "Cores / Threads"],
-            ["Model", "BIOS"],
+            # Microcode joins the firmware pair, as it does on Intel.
+            ["Model", "BIOS", "Microcode"],
             ["DRAM Frequency", "AGESA", "MCLK"],
-            # DRAM Ratio leads UCLK:MCLK: the ratio the kit runs at, then how
-            # the controller is geared to it.
-            ["DRAM Ratio", "BCLK", "FCLK"],
-            ["UCLK:MCLK", "Memory Capacity", "UCLK"],
-            ["Power Down Mode", "Refresh Mode", "Nitro Rx/Tx/Ctrl"],
-            # One row longer than the other two columns, so this one is alone.
-            ["Gear Down Mode"],
+            ["Memory Capacity", "BCLK", "FCLK"],
+            ["UCLK:MCLK", "Refresh Mode", "UCLK"],
+            # Four rows of three with no hole: Gear Down Mode sits beside
+            # Refresh Mode, the other controller policy on the strip, rather
+            # than trailing alone on a fifth row.
+            ["Power Down Mode", "Gear Down Mode", "Nitro Rx/Tx/Ctrl"],
         ])
+
+    def test_dram_ratio_is_not_on_the_summary_strip(self):
+        # It was dropped from the strip when the block was squared off. Named
+        # here so its absence reads as the decision it was rather than as a
+        # name that quietly stopped resolving -- System Info still carries it.
+        layout = summary_system_memory_layout(self._am5_names())
+        placed = [name for row in layout for name in row]
+        self.assertNotIn("DRAM Ratio", placed)
 
     def test_the_memory_block_is_aligned_and_the_identity_rows_are_not(self):
         # Only an aligned row lands on the Summary columns; identity packs
@@ -128,29 +136,30 @@ class DualTimingDefinitionTest(unittest.TestCase):
         blocks = summary_system_memory_blocks(self._am5_names())
         aligned = {tuple(names): flag for names, flag in blocks}
         self.assertFalse(aligned[("CPU", "Cores / Threads")])
-        self.assertFalse(aligned[("Model", "BIOS")])
+        self.assertFalse(aligned[("Model", "BIOS", "Microcode")])
         self.assertTrue(aligned[("DRAM Frequency", "AGESA", "MCLK")])
-        self.assertTrue(aligned[("Power Down Mode", "Refresh Mode",
+        self.assertTrue(aligned[("Power Down Mode", "Gear Down Mode",
                                  "Nitro Rx/Tx/Ctrl")])
-        # Alone in its row, but still aligned: it has to land on the first
-        # column rather than pack to the left edge.
-        self.assertTrue(aligned[("Gear Down Mode", None, None)])
 
     def test_an_aligned_row_keeps_a_hole_for_a_missing_name(self):
         # Dropping it would slide BCLK and FCLK one column to the left, under
         # the wrong timing section.
-        blocks = summary_system_memory_blocks(self._am5_names() - {"DRAM Ratio"})
+        blocks = summary_system_memory_blocks(
+            self._am5_names() - {"Memory Capacity"})
         row = next(names for names, _ in blocks if "BCLK" in names)
         self.assertEqual(row, [None, "BCLK", "FCLK"])
         self.assertEqual(row.index("BCLK"), 1)
 
     def test_a_row_that_is_alone_still_holds_the_first_column(self):
-        # Gear Down Mode has no partners, and packing it tight would let it
-        # drift off the column the rows above it sit on.
-        blocks = summary_system_memory_blocks(self._am5_names())
+        # No row is alone in the arrangement above, so one is made: a machine
+        # reporting neither Gear Down Mode nor Nitro leaves Power Down Mode
+        # by itself, and packing it tight would let it drift off the column
+        # the rows above it sit on.
+        blocks = summary_system_memory_blocks(
+            self._am5_names() - {"Gear Down Mode", "Nitro Rx/Tx/Ctrl"})
         row, aligned = next((names, flag) for names, flag in blocks
-                            if "Gear Down Mode" in names)
-        self.assertEqual(row, ["Gear Down Mode", None, None])
+                            if "Power Down Mode" in names)
+        self.assertEqual(row, ["Power Down Mode", None, None])
         self.assertTrue(aligned)
 
     def test_channel_columns_take_the_slot_name(self):

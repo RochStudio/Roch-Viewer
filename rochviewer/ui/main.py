@@ -209,31 +209,37 @@ def summary_system_memory_blocks(available_names):
         # Identity first, packed tight so a long board name stays readable,
         # then a block that reads down the columns:
         #
-        #   what the DRAM runs at   what the firmware is   the clocks
-        #   DRAM Frequency          AGESA                  MCLK
-        #   DRAM Ratio              BCLK                   FCLK
-        #   UCLK:MCLK               Memory Capacity        UCLK
-        #   Power Down Mode         Refresh Mode           Nitro
-        #   Gear Down Mode
+        #   the kit and how it     the firmware and the    the clocks that
+        #   is being driven        policy applied to it    come out
+        #   DRAM Frequency         AGESA                   MCLK
+        #   Memory Capacity        BCLK                    FCLK
+        #   UCLK:MCLK              Refresh Mode            UCLK
+        #   Power Down Mode        Gear Down Mode          Nitro
         #
         # Each column starts where the timing section under it does, so the
         # memory picture sits over tCL, the firmware over tREFI, and the
         # clocks over RTT WR.
         #
-        # DRAM Ratio leads UCLK:MCLK because it is the coarser of the two: the
-        # ratio the kit is running at, then how the controller is geared to
-        # it. The first column is one row longer than the others as a result,
-        # and Gear Down Mode takes that row alone rather than the other two
-        # columns being padded to reach it.
+        # Four rows of three, every cell filled. The block used to run five
+        # rows with Gear Down Mode alone on the last one, because DRAM Ratio
+        # took a row in the first column that the other two had nothing to
+        # put beside. Gear Down Mode moved up next to Refresh Mode, which is
+        # the other controller policy on the strip, and the ragged row went
+        # with it.
+        #
+        # DRAM Ratio is not here. System Info still carries it, above
+        # UCLK:MCLK where it reads as the coarser of the two.
+        #
         # Model, the name System Info gives the board row. The vendor is
         # not carried here: the model names itself, and the two together
-        # spent a third of the strip on one fact.
-        add(("Model", "BIOS"))
+        # spent a third of the strip on one fact. Microcode joins it and the
+        # BIOS, as it does on the Intel strip: three firmware revisions
+        # reading as one fact about the board.
+        add(("Model", "BIOS", "Microcode"))
         add_aligned(("DRAM Frequency", "AGESA", "MCLK"))
-        add_aligned(("DRAM Ratio", "BCLK", "FCLK"))
-        add_aligned(("UCLK:MCLK", "Memory Capacity", "UCLK"))
-        add_aligned(("Power Down Mode", "Refresh Mode", "Nitro Rx/Tx/Ctrl"))
-        add_aligned(("Gear Down Mode", None, None))
+        add_aligned(("Memory Capacity", "BCLK", "FCLK"))
+        add_aligned(("UCLK:MCLK", "Refresh Mode", "UCLK"))
+        add_aligned(("Power Down Mode", "Gear Down Mode", "Nitro Rx/Tx/Ctrl"))
         return blocks
 
     # Three columns, each reading down as one kind of fact:
