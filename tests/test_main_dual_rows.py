@@ -797,13 +797,14 @@ class TimingsSectionOrderTest(unittest.TestCase):
 
         primary, _tertiary = intel_summary_timing_columns(intel_timings.TIMINGS)
         names = {row.get("name") for row in intel_timings.TIMINGS}
-        # Whichever spelling this platform uses, in nanoseconds, then the
+        # tRFCns first -- the same derived row under the same name on both
+        # generations -- then whichever spelling this platform uses for the
         # all-bank interval, then the per-bank one. Written from the names
         # that exist rather than fixed to DDR5's, because the suite's stub
-        # loads a DDR4 fixture and DDR4 renames neither and has no per-bank
-        # interval at all.
+        # loads a DDR4 fixture and DDR4 neither renames tRFC nor has a
+        # per-bank interval at all.
         expected = [name for name in
-                    ("tRFCns", "tRFC (ns)", "tRFC2", "tRFC", "tRFCpb")
+                    ("tRFCns", "tRFC2", "tRFC", "tRFCpb")
                     if name in names]
         self.assertTrue(expected, "no refresh cycle row to place")
         start = primary.index("tWR") + 1
@@ -822,8 +823,11 @@ class TimingsSectionOrderTest(unittest.TestCase):
         for name in listed:
             with self.subTest(name=name):
                 self.assertIn(name, names)
-        # The pairs are mutually exclusive: one spelling each, never both.
-        for a, b in (("tRFCns", "tRFC (ns)"), ("tRFC2", "tRFC")):
+        # The pair is mutually exclusive: one spelling, never both. Only
+        # tRFC has two -- the ns rows stopped being renamed per platform, so
+        # ("tRFCns", "tRFC (ns)") was left here asserting against a name that
+        # can no longer exist, which is an assertion that cannot fail.
+        for a, b in (("tRFC2", "tRFC"),):
             with self.subTest(pair=(a, b)):
                 self.assertFalse(a in listed and b in listed)
 
