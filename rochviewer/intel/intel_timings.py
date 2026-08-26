@@ -615,24 +615,40 @@ def get_tWTR_S(base=None):
 # latencies for them -- MC0/MC1 x CHA/CHB read 70, 65, 71 and 65, with rank 1
 # left at the unpopulated 25 on all four. Four sub-channels, one rank each.
 #
-# The row counts DIMM channels, and that is a reversal.
+# What this row counts is decided by the platform, because the tools it has to
+# agree with disagree with each other.
 #
-# It used to double the count on DDR5 to name the sub-channels, on a note
-# recording that ASRock's Timing Configurator showed "Channels # Quad" against
-# these same two populated slots. Timing Configurator 4.1.5 on this bench
-# shows "Channels # Dual" against exactly that configuration, so whatever the
-# earlier reading was, it is not what the tool reports now, and the doubling
-# was resting on it.
+# Two DDR5 boards, two modules in each, and the same two reference tools:
 #
-# Both numbers describe something real -- two DIMM channels, four sub-channels,
-# and the RTL block a tab away still trains four round-trip latencies. What
-# settles it is which one the row's name asks for: a channel count beside a
-# slot count is read as DIMMs, and every tool that shows the pair counts them
-# the same way.
+#   Z790 APEX    (LGA1700 DDR5)   ASRock Timing Configurator, HWiNFO: Quad / 4
+#   Z890 TACHYON (LGA1851)        the same two tools:                 Dual / 2
 #
-# Kept as a named constant rather than deleted. The sub-channel factor is a
-# fact about DDR5 whether or not this row multiplies by it.
+# Both numbers are true of both boards. Two DIMM channels, four sub-channels,
+# and the RTL block a tab away trains four round-trip latencies either way.
+# What differs is the convention each platform's tools follow, and a viewer
+# exists to agree with them -- so the factor is keyed on the platform, not on
+# the memory generation.
+#
+# This was DDR5-wide in both directions before, and both were wrong for one of
+# these boards: doubling everywhere made the Tachyon say Quad against a tool
+# showing Dual, and then doubling nowhere made the APEX say Dual against a
+# tool showing Quad. One board cannot settle the other.
+SUBCHANNEL_COUNTED_PLATFORMS = (LGA1700_DDR5,)
 DDR5_SUBCHANNELS_PER_CHANNEL = 2
+
+
+def reported_channel_count(populated_channels, platform=None):
+    """How many channels this platform's reference tools show for that many.
+
+    Pure, so the convention can be tested for a platform without standing in
+    front of one.
+    """
+    if not populated_channels:
+        return 0
+    if platform in SUBCHANNEL_COUNTED_PLATFORMS:
+        return populated_channels * DDR5_SUBCHANNELS_PER_CHANNEL
+    return populated_channels
+
 
 CHANNEL_LAYOUT_NAMES = {
     1: "Single Channel",
@@ -644,25 +660,21 @@ CHANNEL_LAYOUT_NAMES = {
 }
 
 
-def channel_layout_name(populated_channels, generation=None):
-    """Name the layout for a count of populated channels. Pure, so it can be
-    tested without a machine to read.
-
-    ``generation`` is accepted and unused. It decided whether to double the
-    count for DDR5 sub-channels; that doubling is gone, and the parameter is
-    kept so the callers and tests that name a generation still read sensibly.
-    """
-    if not populated_channels:
+def channel_layout_name(populated_channels, platform=None):
+    """Name the layout for a count of populated channels, as ``platform``
+    counts them. Pure, so it can be tested without a machine to read."""
+    count = reported_channel_count(populated_channels, platform)
+    if not count:
         return None
-    count = populated_channels
     return CHANNEL_LAYOUT_NAMES.get(count, "%d Channels" % count)
 
 
 def detect_dual_channel_memory():
     """How many channels the controller runs, named as the reference tools do.
 
-    Counts the channels the installed modules populate. See
-    DDR5_SUBCHANNELS_PER_CHANNEL for why that is not doubled on DDR5.
+    Counts the channels the installed modules populate, then names them the
+    way this platform's reference tools do. See SUBCHANNEL_COUNTED_PLATFORMS
+    for why that is not one rule for all of DDR5.
 
     Falls back to the slot-tag reading below when the module inventory is
     unavailable. Both paths now answer the same question, which they did not
@@ -675,7 +687,7 @@ def detect_dual_channel_memory():
             module.get("channel") for module in read_modules()
             if module.get("channel")
         }
-        named = channel_layout_name(len(channels), detect_ddr_generation())
+        named = channel_layout_name(len(channels), active_platform())
         if named:
             return named
     except Exception:
@@ -716,7 +728,8 @@ def _channel_layout_from_slot_tags():
     """
     try:
         modules = _wmi_static("Win32_PhysicalMemory")
-        named = channel_layout_name(len(_channels_from_locators(modules)))
+        named = channel_layout_name(
+            len(_channels_from_locators(modules)), active_platform())
         if named:
             return named
 

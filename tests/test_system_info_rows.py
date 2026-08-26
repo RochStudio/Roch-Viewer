@@ -20,6 +20,11 @@ import contextlib
 import unittest
 from unittest import mock
 
+from rochviewer.platform_profiles import (
+    LGA1700_DDR4,
+    LGA1700_DDR5,
+    LGA1851,
+)
 from rochviewer.ui.display_values import resolve_display_value
 from tests.intel_stub import install, restore
 
@@ -522,48 +527,70 @@ class PlacementHelperTest(unittest.TestCase):
 
 
 class ChannelLayoutTest(unittest.TestCase):
-    """DDR5 counts sub-channels; DDR4 counts channels.
+    """Which count the row shows is a platform convention, not a DDR5 rule.
 
-    The row counts DIMM channels on both generations. It doubled on DDR5 to
-    name the sub-channels, on a note recording that ASRock's Timing
-    Configurator showed "Quad" against two populated slots; 4.1.5 shows "Dual"
-    against exactly that configuration, so the doubling was resting on a
-    reading the tool does not produce. Four sub-channels are still real and
-    the RTL block still trains four -- but a channel count printed beside a
-    slot count is read as DIMMs.
+    Two DDR5 boards, two modules in each, and the same two reference tools
+    report different numbers:
+
+        Z790 APEX    (LGA1700 DDR5)  Timing Configurator, HWiNFO: Quad / 4
+        Z890 TACHYON (LGA1851)       the same two tools:          Dual / 2
+
+    Both are true of both boards -- two DIMM channels, four sub-channels, and
+    four round-trip latencies trained either way. The row exists to agree with
+    the tools beside it, so the factor is keyed on the platform.
+
+    This was a DDR5-wide rule in both directions before, and each direction
+    was wrong for one of these boards. One board cannot settle the other,
+    which is why both are named here together.
     """
 
-    def test_ddr5_counts_the_dimm_channels_not_the_sub_channels(self):
+    def test_lga1700_ddr5_counts_the_sub_channels(self):
         self.assertEqual(
-            intel_timings.channel_layout_name(2, "DDR5"), "Dual Channel")
-        self.assertEqual(
-            intel_timings.channel_layout_name(1, "DDR5"), "Single Channel")
+            intel_timings.channel_layout_name(2, LGA1700_DDR5), "Quad Channel")
 
-    def test_both_generations_name_a_count_the_same_way(self):
-        # The two paths disagreed while one doubled and the other did not, so
-        # the same board could be dual or quad depending on which answered.
-        for populated in (1, 2, 4):
-            with self.subTest(populated=populated):
-                self.assertEqual(
-                    intel_timings.channel_layout_name(populated, "DDR5"),
-                    intel_timings.channel_layout_name(populated, "DDR4"))
+    def test_lga1851_counts_the_dimm_channels(self):
+        self.assertEqual(
+            intel_timings.channel_layout_name(2, LGA1851), "Dual Channel")
+
+    def test_the_two_ddr5_platforms_do_not_read_alike(self):
+        # The whole point, stated so it cannot quietly stop being checked:
+        # same module count, same generation, different platform, different
+        # answer.
+        self.assertNotEqual(
+            intel_timings.channel_layout_name(2, LGA1700_DDR5),
+            intel_timings.channel_layout_name(2, LGA1851))
 
     def test_ddr4_counts_the_channels_themselves(self):
         # No sub-channels there, so two DIMM channels stay dual.
         self.assertEqual(
-            intel_timings.channel_layout_name(2, "DDR4"), "Dual Channel")
+            intel_timings.channel_layout_name(2, LGA1700_DDR4), "Dual Channel")
         self.assertEqual(
-            intel_timings.channel_layout_name(1, "DDR4"), "Single Channel")
+            intel_timings.channel_layout_name(1, LGA1700_DDR4),
+            "Single Channel")
+
+    def test_one_module_is_dual_on_the_doubling_platform(self):
+        # One populated channel is two sub-channels there, which is what the
+        # tools show; the factor names a layout rather than describing sticks.
+        self.assertEqual(
+            intel_timings.channel_layout_name(1, LGA1700_DDR5), "Dual Channel")
+
+    def test_an_unknown_platform_does_not_double(self):
+        # Doubling is opt-in per platform. Somewhere nobody has stood in front
+        # of reports what it counted rather than twice it.
+        self.assertEqual(
+            intel_timings.channel_layout_name(2, "some-future-socket"),
+            "Dual Channel")
 
     def test_an_unnamed_count_still_reports_a_number(self):
         # Better a bare count than nothing on a layout the table skips.
         self.assertEqual(
-            intel_timings.channel_layout_name(5, "DDR4"), "5 Channels")
+            intel_timings.channel_layout_name(5, LGA1700_DDR4), "5 Channels")
 
     def test_nothing_populated_is_no_answer_rather_than_a_wrong_one(self):
         # None, so the caller falls through to the slot-tag reading instead
         # of publishing "0 Channels" as though it had measured something.
-        self.assertIsNone(intel_timings.channel_layout_name(0, "DDR5"))
+        self.assertIsNone(intel_timings.channel_layout_name(0, LGA1700_DDR5))
+        self.assertIsNone(intel_timings.channel_layout_name(0, LGA1851))
 
 
 class ChannelLayoutWithoutTheInventoryTest(unittest.TestCase):
@@ -588,8 +615,13 @@ class ChannelLayoutWithoutTheInventoryTest(unittest.TestCase):
             return [mock.Mock(Tag="Physical Memory %d" % index,
                               DeviceLocator=locator)
                     for index, locator in enumerate(locators)]
+        # Pinned to a platform that does not double, so these cases test the
+        # channel counting rather than the sub-channel convention on top of
+        # it. The doubling has its own tests above.
         with mock.patch.object(intel_timings, "_wmi_static", fake):
-            return intel_timings._channel_layout_from_slot_tags()
+            with mock.patch.object(intel_timings, "active_platform",
+                                   lambda: LGA1851):
+                return intel_timings._channel_layout_from_slot_tags()
 
     def test_four_sockets_on_two_channels_is_dual(self):
         self.assertEqual(
