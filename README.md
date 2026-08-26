@@ -1,10 +1,10 @@
 # Roch Viewer 1.0.0
 
 Roch Viewer is a Windows memory-controller and timing viewer for Intel and AMD
-desktop platforms. It reads the memory controller, the modules, the board and the CPU
-directly, and shows what they actually report — the timings the controller was
-programmed with, the training results it settled on, and the sensors that move
-while the machine runs.
+desktop platforms. It reads the memory controller, the modules, the board and
+the CPU directly, and shows what they actually report — the timings the
+controller was programmed with, the training results it settled on, and the
+sensors that move while the machine runs.
 
 It is a read-only viewer. It changes no setting, and nothing it shows is a
 value it was told to expect.
@@ -49,7 +49,7 @@ The AMD side was developed and validated on an MSI B850MPOWER with a Ryzen
 board since it came into this repository, and bugs found there have been
 fixed — but **no reading has been compared against a reference tool since the
 move**, so confirm anything you intend to rely on against a second tool on
-your own board. Its electrical values -- RTT, ODT and the drive strengths --
+your own board. Its electrical values — RTT, ODT and the drive strengths —
 come from a reverse-engineered APOB parser whose channel attribution is
 verified only for the two-record geometry observed on that bench.
 
@@ -66,9 +66,8 @@ GPL-3.0, which is why this project is GPL-3.0 too. See
   `RochViewer.exe`, or beside `run_viewer.py` to run from source. See
   `THIRD_PARTY_NOTICES.txt` for why it is not bundled.
 
-  That one file is all you need. The kernel driver is inside it as a
-  resource -- the "Binaries only" archive on the download page does not
-  contain a `.sys` at all, and does not need to.
+  That one file is all you need — the "Binaries only" archive on the
+  download page contains no `.sys`, and does not need to.
 
 If the driver is missing the program still opens — the CPU, the board, the
 BIOS and the module identity all come from Windows and need no driver — but
@@ -76,13 +75,13 @@ every register-backed row reads nothing. It says so in a strip across the top
 and names the directories it looked in, so a copy in the wrong place is
 visible rather than silent.
 
-**Installing it is not just a file copy.** `inpoutx64.dll` carries the kernel
-driver inside itself as a resource. The first time it runs elevated it writes
-that driver to `System32\Drivers\inpoutx64.sys` and registers it as an
-automatic-start Windows service, which stays there afterwards whether or not
-this program is ever run again. Removing it means stopping and deleting the
-`inpoutx64` service and deleting that file, not deleting the folder you
-downloaded.
+**Installing it is not just a file copy.** The DLL carries the kernel driver
+inside itself as a resource, which is why it is the only file you need. The
+first time it runs elevated it writes that driver to
+`System32\Drivers\inpoutx64.sys` and registers it as an automatic-start Windows
+service, which stays there afterwards whether or not this program is ever run
+again. Removing it means stopping and deleting the `inpoutx64` service and
+deleting that file, not deleting the folder you downloaded.
 
 That component is also **no longer maintained**: its author says so on the
 download page and that he can no longer sign the driver. It works, it is
