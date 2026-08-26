@@ -1440,6 +1440,7 @@ class TimingGUI:
         self.main_frame.pack(fill="both", expand=True, padx=5, pady=(2, 4))
 
         self.build_footer()
+        self.build_driver_notice()
 
         self.tabview = ctk.CTkTabview(
             self.main_frame,
@@ -1641,6 +1642,64 @@ class TimingGUI:
     TWITTER_HANDLE = "@MateoPCTech"
     FOOTER_HEIGHT = 24
     GRIP_SIZE = 14
+
+    # Shown only when the driver is missing, which is the state every new
+    # user starts in: it is not distributed with this project, so the first
+    # run has no way to read a register.
+    #
+    # Without this the window comes up looking healthy -- the CPU, the board,
+    # the BIOS and the module identity all arrive over WMI and need no driver
+    # at all -- while every register row reads N/A, and two read "Error".
+    # There is nothing on screen to say why, so the honest conclusions
+    # available to a user are "my hardware is not supported" or "this is
+    # broken", and neither is true.
+    #
+    # read.py already works out exactly what went wrong and leaves it in
+    # DRIVER_ERROR "for anything that wants to explain itself". Nothing did.
+    DRIVER_NOTICE_HEIGHT = 34
+
+    @staticmethod
+    def driver_notice_text(problem, missing):
+        """The notice for a driver problem, or None when there is not one.
+
+        Separate from the widget so it can be checked without a display,
+        which is what CI has.
+        """
+        if not problem:
+            return None
+        # read.py's message opens with the sentence that matters and follows
+        # it with the directories searched -- more than one line can hold. It
+        # is split on ". " rather than "." because the first sentence ends in
+        # a filename that has a dot of its own, and splitting there left the
+        # notice reading "inpoutx64".
+        headline = str(problem).split(". ")[0].strip().rstrip(".")
+        advice = ("Put it beside this program and restart." if missing else
+                  "Restart as administrator, or check it is the 64-bit build.")
+        return ("%s — the readings below come from the memory controller and "
+                "are unavailable without it. %s" % (headline, advice))
+
+    def build_driver_notice(self):
+        """Say why every reading is empty, when that is why."""
+        from rochviewer.hardware import read as hardware_read
+
+        problem = getattr(hardware_read, "DRIVER_ERROR", None)
+        if not problem:
+            return
+
+        notice = ctk.CTkFrame(self.main_frame, height=self.DRIVER_NOTICE_HEIGHT,
+                              corner_radius=6, fg_color=self.BG_COLOR2,
+                              border_width=1, border_color=self.BRAND_COLOR)
+        notice.pack(fill="x", side="top", padx=4, pady=(4, 0))
+        notice.pack_propagate(False)
+
+        ctk.CTkLabel(
+            notice,
+            text=self.driver_notice_text(
+                problem, getattr(hardware_read, "DLL_PATH", None) is None),
+            font=self.COMPACT_BOLD, text_color=self.BRAND_COLOR,
+            anchor="w", justify="left", wraplength=self.WINDOW_WIDTH - 40,
+        ).pack(side="left", padx=8)
+        self.driver_notice = notice
 
     def build_footer(self):
         footer = ctk.CTkFrame(self.main_frame, height=self.FOOTER_HEIGHT,
