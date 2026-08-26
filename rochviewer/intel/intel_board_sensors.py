@@ -138,29 +138,6 @@ STEP_REFERENCE_CAPTURE = {
     0x130: 0xD080,
 }
 
-# --- Board temperatures.
-#
-# The same chip reports the board's thermal sensors one window below the
-# voltages, as a whole number of degrees in the high byte and 256ths in the
-# low byte.
-#
-# Confirmed on the same board against HWiNFO reading this chip. Sweeping
-# 0x100-0x11E returned seven live sensors and then zeros, in HWiNFO's own
-# listed order, at values that line up sensor for sensor:
-#
-#   0x100 CPU          0x102 System      0x104 MOS       0x106 PCH
-#   0x108 CPU Socket   0x10A T0          0x10C T1
-#
-# The anchor is 0x10A: it reads about 11 C against HWiNFO's T0 of 11.5 C, and
-# nothing else on this board sits anywhere near 11 C, so the alignment is not
-# a coincidence of similar numbers. The small offsets elsewhere are the minutes
-# between the two captures, and 0x100 is furthest out because the CPU had been
-# working.
-#
-# T0 and T1 are the board's external thermistor headers. They are read but not
-# displayed: T0's 11 C is a header with nothing attached, and a row that
-# reports an unconnected probe as a temperature is worse than no row.
-TEMPERATURE_BLOCK_START = 0x100
 TEMPERATURE_FRACTION = 256.0
 
 # key -> (row label, min C, max C).

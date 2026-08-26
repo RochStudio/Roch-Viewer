@@ -27,8 +27,6 @@ import ctypes
 import time
 
 ADLX_OK = 0
-ADLX_NOT_SUPPORTED = 12
-
 # IADLXSystem is the one interface that is not reference-counted, so its
 # vtable starts at its own methods rather than Acquire/Release/QueryInterface.
 SYSTEM_GET_GPUS = 1

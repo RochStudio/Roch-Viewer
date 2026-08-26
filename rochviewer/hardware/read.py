@@ -15,7 +15,6 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import ctypes
-import os
 from ctypes import wintypes
 
 
@@ -70,11 +69,6 @@ if inpout is not None:
     inpout.MapPhysToLin.restype = wintypes.LPVOID
     inpout.UnmapPhysicalMemory.argtypes = [wintypes.HANDLE, wintypes.LPVOID]
     inpout.UnmapPhysicalMemory.restype = wintypes.BOOL
-
-
-def driver_available():
-    """True when a read has any chance of working."""
-    return inpout is not None
 
 
 def map_physical_address(phys_addr, size):

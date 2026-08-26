@@ -16,11 +16,9 @@
 
 import wmi
 import winreg
-import os
 import sys
 import re
 from functools import lru_cache, partial, wraps
-from pathlib import Path
 from rochviewer.hardware.read import read_timing, read_physical_memory_int
 from rochviewer.ui.display_values import is_dual_timing, resolve_display_value
 # Classification only: this module performs no privileged access and is the
@@ -387,18 +385,6 @@ def get_memory_type():
             found.append(name)
     return " / ".join(found) if found else None
 
-
-def _wmi_live(class_name):
-    """Query a class whose values move, reusing the shared connection.
-
-    Performance counters belong here rather than in _wmi_static: caching one
-    would pin a reading that is supposed to change.
-    """
-    try:
-        return tuple(getattr(_wmi_connection(), class_name)())
-    except Exception as e:
-        print(f"Error querying {class_name}: {e}")
-        return ()
 
 # The clock rows are read down one column, so they have to be written the same
 # way. Three of them were built by pasting the unit straight onto a rounded
@@ -1425,16 +1411,6 @@ def get_tmod_value():
         return "Error"
 
 
-# Column-to-column delays, from Intel's documented memory-controller fields.
-# TC_RDRD holds the read-to-read pair and TC_WRWR the write-to-write one; in
-# each, field .sg is the same-bank-group case and .dg the different-bank-group
-# one. Both are already in tCK and both exist on DDR4 and DDR5.
-TC_RDRD_OFFSET = 0xE00C
-TC_WRWR_OFFSET = 0xE018
-BANK_GROUP_SAME_BIT = 0
-BANK_GROUP_DIFFERENT_BIT = 8
-
-
 def _get_bank_group_timing(setup_name, register_offset, bit_start, base=None):
     """Return a live column-to-column timing in DRAM tCK cycles."""
     try:
@@ -1865,25 +1841,6 @@ DFE_GAIN_FORMULA ={
     12: "RFU",
     13: "RFU",
     14: "RFU",
-    15: "RFU"
-}
-
-DFE_TAP_FORMULA ={
-    0: "RZQ/7 (34)",
-    1: "RZQ/6 (40)",
-    2: "RZQ/5 (48)",
-    3: "RFU",
-    4: "RZQ/7 (34)",
-    5: "RZQ/6 (40)",
-    6: "RZQ/5 (48)",
-    7: "RFU",
-    8: "RZQ/7 (34)",
-    9: "RZQ/6 (40)",
-    10: "RZQ/5 (48)",
-    11: "RFU",
-    12: "RZQ/7 (34)",
-    13: "RZQ/6 (40)",
-    14: "RZQ/5 (48)",
     15: "RFU"
 }
 
@@ -7018,9 +6975,10 @@ MISC_FEATURE_FIELDS = (
 # 0x5E00, and the whole 0x5Exx block is dead silicon here -- zero to every
 # query, as is 0x5918 beside it. A zero from a dead register decodes to a
 # confident "Disabled" that means nothing, which is worse than N/A because it
-# does not look like an absence. Kept visible on request rather than hidden,
-# and named here so the row is not mistaken for a reading.
-ARROW_LAKE_UNTRUSTED_FEATURES = ("Realtime Memory",)
+# does not look like an absence. Kept visible on request rather than hidden;
+# this note is beside the row above so it is not mistaken for a reading. It
+# was also a constant naming that row, which nothing consulted -- an unread
+# list of untrusted rows enforces nothing and reads as though it does.
 
 # 2N Mode is MR2 bit 2, reached through the pointer path rather than by
 # indexing the table directly: an entry's data byte names the mode register

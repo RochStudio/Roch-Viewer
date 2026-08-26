@@ -328,11 +328,6 @@ def decode_sensor_volts(raw, step=SENSOR_STEP_VOLTS):
     return (int(raw) & 0xFFFF) * float(step)
 
 
-def decode_millivolts(raw):
-    """Legacy helper used by the research probe's raw listing."""
-    return (int(raw) & 0xFFFF) / 1000.0
-
-
 def read_board_rails(reader_factory=SuperIoReader, sensors=None):
     """Read the confirmed Super I/O rails. Returns ``{rail key: volts}``.
 

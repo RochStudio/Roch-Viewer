@@ -60,13 +60,11 @@ SAFETY — reads are unrestricted within the allowlist; writes are not:
 
 from __future__ import annotations
 
-import ctypes
 import os
 import threading
 import time
-from ctypes import wintypes
 
-from rochviewer.amd.smn import InpOutByteIO, NamedMutex
+from rochviewer.hardware.lowlevel_io import InpOutByteIO, NamedMutex
 
 # The mutex every mainstream monitoring tool takes before touching SMBus.
 SMBUS_MUTEX_NAME = "Global\\Access_SMBUS.HTP.Method"

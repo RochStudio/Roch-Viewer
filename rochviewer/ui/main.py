@@ -37,7 +37,6 @@ import threading
 import tkinter
 import warnings
 import webbrowser
-import wmi
 
 
 # Termination and drive rows: their own Summary panel, never a timing column.

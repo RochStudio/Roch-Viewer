@@ -172,6 +172,3 @@ class InpOutPhysicalAccess:
         if not self._read(ctypes.c_void_p(address), ctypes.byref(value)):
             raise OSError("GetPhysLong failed at 0x%016X" % address)
         return int(value.value)
-
-def make_inpout_physical_reader(dll):
-    return InpOutPhysicalAccess(dll).read_dword

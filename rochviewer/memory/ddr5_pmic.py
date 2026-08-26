@@ -58,10 +58,6 @@ SWA_SWB_BASE_MV = 800
 SWC_BASE_MV = 1500
 VID_STEP_MV = 5
 
-# Registers dumped by the research probe. Reading is harmless, so the window
-# is wide enough to catch rail registers outside the documented block.
-PMIC_REGISTER_SCAN = tuple(range(0x00, 0x80))
-
 # Mode register.  The VID registers do not record whether the vendor 8-bit
 # overclocking extension is active, so it is read from here.
 #
@@ -122,37 +118,6 @@ def decode_rails(read_register, rails=None):
         except ValueError:
             continue
     return values
-
-# --- SPD identification (JESD400-5) -----------------------------------------
-#
-# The SPD carries the PMIC's manufacturer and device type.  Knowing the exact
-# part is what turns register archaeology into a documented lookup, so the
-# probe reports these rather than pattern-matching register values.
-SPD_PMIC0_MANUFACTURER_LSB = 552
-SPD_PMIC0_MANUFACTURER_MSB = 553
-SPD_PMIC0_DEVICE_TYPE = 554
-SPD_PMIC0_REVISION = 555
-SPD_MODULE_MANUFACTURER_LSB = 512
-SPD_MODULE_MANUFACTURER_MSB = 513
-SPD_HUB_MANUFACTURER_LSB = 320
-SPD_HUB_MANUFACTURER_MSB = 321
-
-# Bytes the probe pulls to identify the parts on the module.
-SPD_IDENTITY_RANGE = (320, 8), (512, 48)
-
-# JEP106 continuation-coded IDs seen on DDR5 PMICs.
-PMIC_VENDORS = {
-    0x00B3: "IDT / Renesas",
-    0x0086: "Intel",
-    0x001B: "Montage",
-    0x00C1: "Infineon",
-    0x004E: "Richtek",
-    0x0098: "Analog Devices",
-    0x009D: "Monolithic Power Systems",
-    0x00E9: "Rohm",
-    0x0031: "Texas Instruments",
-}
-
 
 # Which PMIC answered last time, so repeat reads skip the bus scan.
 #
@@ -398,17 +363,6 @@ def read_dimm_temperature(reader_factory=None):
 _SPD_LOCATIONS = {"reader": None, "locations": ()}
 
 
-def decode_jep106(lsb, msb):
-    """Return ``(code, vendor name)`` for a JEP106 manufacturer pair."""
-    code = ((int(lsb) & 0x7F) << 8) | (int(msb) & 0xFF)
-    # Some parts store the pair the other way round; try both before giving up.
-    swapped = ((int(msb) & 0x7F) << 8) | (int(lsb) & 0xFF)
-    for candidate in (code, swapped):
-        if candidate in PMIC_VENDORS:
-            return candidate, PMIC_VENDORS[candidate]
-    return code, "unknown"
-
-
 def decode_vid_7bit(raw, base_mv):
     """JEDEC 7-bit VID decode, in volts."""
     return (base_mv + (((int(raw) & 0xFF) >> 1) & 0x7F) * VID_STEP_MV) / 1000.0
@@ -417,19 +371,6 @@ def decode_vid_7bit(raw, base_mv):
 def decode_vid_8bit(raw, base_mv):
     """Vendor 8-bit overclocking VID decode, in volts."""
     return (base_mv + (int(raw) & 0xFF) * VID_STEP_MV) / 1000.0
-
-
-def decode_swa_swb_volts(raw, eight_bit=False):
-    """Decode a SWA/SWB (VDD/VDDQ) VID byte into volts."""
-    decode = decode_vid_8bit if eight_bit else decode_vid_7bit
-    return decode(raw, SWA_SWB_BASE_MV)
-
-
-def decode_swc_volts(raw, eight_bit=False):
-    """Decode a SWC (VPP) VID byte into volts."""
-    decode = decode_vid_8bit if eight_bit else decode_vid_7bit
-    return decode(raw, SWC_BASE_MV)
-
 
 
 # The PMIC's ADC telemetry window is deliberately not used. It was explored as

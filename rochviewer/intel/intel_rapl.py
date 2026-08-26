@@ -65,11 +65,6 @@ ENERGY_STATUS = {
     "cores": 0x5928,
 }
 
-DOMAIN_LABELS = {
-    "package": "CPU Package Power",
-    "cores": "CPU Cores Power",
-}
-
 # A rate outside this band is a failed read or a counter that wrapped more
 # than once, not a package draw. Desktop parts do not sustain a kilowatt.
 POWER_MIN_W = 0.0

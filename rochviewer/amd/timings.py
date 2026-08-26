@@ -326,12 +326,3 @@ def read_channel(reader, base):
             regs[off] = val & 0xFFFFFFFF
     return decode_channel(regs)
 
-
-def read_all(reader):
-    """Decode every populated UMC channel; returns a list of dicts."""
-    channels = []
-    for base in UMC_BASES:
-        decoded = read_channel(reader, base)
-        if decoded is not None:
-            channels.append((base, decoded))
-    return channels

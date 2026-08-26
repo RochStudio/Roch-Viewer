@@ -57,16 +57,7 @@ from rochviewer.amd.smu_clocks import (
     decode_table_float,
 )
 from rochviewer.amd.smn import AMD_VENDOR_ID
-from rochviewer.sensors.voltage_rails import (  # noqa: F401  (re-exported for callers)
-    CANDIDATE_MAX_VOLTS,
-    CANDIDATE_MIN_VOLTS,
-    RAILS,
-    RAILS_BY_KEY,
-    VoltageRail,
-    format_volts,
-    is_candidate_voltage,
-    validate_voltage,
-)
+from rochviewer.sensors.voltage_rails import RAILS_BY_KEY, validate_voltage
 
 # rail key -> PM-table byte offset.  Populate ONLY with probe-confirmed values.
 #
