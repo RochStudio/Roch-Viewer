@@ -91,7 +91,28 @@ class MiscRowTest(unittest.TestCase):
                      | set(intel_timings.DDR4_UNREACHABLE_MISC_ROWS))
             self.assertTrue(gated & set(expected))
             expected = [name for name in expected if name not in gated]
-        self.assertEqual(names, expected)
+        # Presence, not order. The tab is now ordered by section rather than
+        # by the sequence the passes that build it happen to run in, so the
+        # build order this list describes is no longer the drawn order --
+        # test_the_sections_are_drawn_in_the_declared_order covers that.
+        self.assertEqual(sorted(names), sorted(expected))
+        self.assertEqual(len(names), len(set(names)))
+
+    def test_the_sections_are_drawn_in_the_declared_order(self):
+        rows = self._tab_rows()
+        if not rows:
+            self.skipTest("Misc tab is not installed on this platform")
+        seen = []
+        for row in rows:
+            category = row.get("Category")
+            if not seen or seen[-1] != category:
+                seen.append(category)
+        # Each section appears once and only once: a category showing up in
+        # two places means rows of one kind were split across the tab.
+        self.assertEqual(len(seen), len(set(seen)), seen)
+        declared = [name for name in intel_timings.MISC_SECTION_ORDER
+                    if name in set(seen)]
+        self.assertEqual(seen, declared)
 
     def test_every_section_is_in_the_one_column(self):
         rows = self._rows()

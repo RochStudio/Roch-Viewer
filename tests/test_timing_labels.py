@@ -157,10 +157,19 @@ class PairedRefreshValueTest(unittest.TestCase):
 
     def test_ddr5_shows_the_all_bank_then_the_same_bank_interval(self):
         # 480 and 390 ticks at MCLK 4000 are the bench's own numbers. The
-        # all-bank interval then the per-bank one, unit named once at the end,
-        # which is the shape the AM5 profile uses for the same pair.
+        # all-bank interval then the per-bank one, unit named once at the end.
         getter = self._getter(LGA1700_DDR5, 480, 390)
-        self.assertEqual(getter(), "120/98 (ns)")
+        self.assertEqual(getter(), "120/98 ns")
+
+    def test_every_nanosecond_row_names_its_unit_the_same_way(self):
+        # The paired row was the one place on the tab that bracketed its unit,
+        # against a bare "ns" from the single-value branch beside it and from
+        # tREFIns under it. Pinned so the two forms cannot drift apart again.
+        for all_bank, per_bank in ((480, 390), (480, None)):
+            with self.subTest(per_bank=per_bank):
+                value = self._getter(LGA1700_DDR5, all_bank, per_bank)()
+                self.assertTrue(value.endswith(" ns"), value)
+                self.assertNotIn("(", value)
 
     def test_ddr4_shows_one_interval(self):
         getter = self._getter(LGA1700_DDR4, 480, 390)

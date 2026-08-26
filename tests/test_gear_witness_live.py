@@ -72,7 +72,21 @@ class GearWitnessTest(unittest.TestCase):
         # row would print the same wrong answer twice.
         scheduler = self.module.scheduler_gear_mode()
         if scheduler is None:
-            self.skipTest("scheduler register unreadable -- no driver?")
+            # Two very different causes, and reporting them as one sent the
+            # first Arrow Lake bench looking for a driver problem it did not
+            # have. A readable register that answers None means the two gear
+            # flags read the same, which is a finding about the map, not a
+            # missing driver -- and the other test in this class is the one
+            # that reports it.
+            raw = self.module.read_physical_memory_int(
+                self.module.MCHBAR + self.module.SCHEDULER_CONFIG_OFFSET, 4)
+            if raw is None or int(raw) == 0xFFFFFFFF:
+                self.skipTest("scheduler register unreadable -- no driver?")
+            self.skipTest(
+                "SC_GS_CFG 0x%08X does not carry the gear flags at bits "
+                "%d/%d on this platform; the row cannot be witnessed here"
+                % (int(raw), self.module.SCHEDULER_GEAR2_BIT,
+                   self.module.SCHEDULER_GEAR4_BIT))
         self.assertEqual(self.module.get_gear_mode_value(),
                          "Gear Mode %d" % scheduler)
 
@@ -86,6 +100,17 @@ class GearWitnessTest(unittest.TestCase):
         if raw is None:
             self.skipTest("no driver")
         self.assertNotEqual(int(raw), 0xFFFFFFFF)
+
+        if self.module.is_arrow_lake_platform():
+            # One flag here, not two, so "both read the same" is the normal
+            # state rather than a fault -- in Gear 2 this register reads
+            # 0x00000009 with bit 31 clear. Asserting the Raptor Lake pair
+            # disagreed passed in Gear 4 and failed in Gear 2, which says
+            # nothing about the map and everything about the encoding.
+            # What is worth claiming here is that the flag decodes at all.
+            self.assertIn(self.module.scheduler_gear_mode(), (2, 4))
+            return
+
         gear2 = int(raw) >> self.module.SCHEDULER_GEAR2_BIT & 1
         gear4 = int(raw) >> self.module.SCHEDULER_GEAR4_BIT & 1
         self.assertNotEqual(

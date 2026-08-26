@@ -22,7 +22,7 @@ import re
 from functools import lru_cache, partial, wraps
 from pathlib import Path
 from rochviewer.hardware.read import read_timing, read_physical_memory_int
-from rochviewer.ui.display_values import is_dual_timing
+from rochviewer.ui.display_values import is_dual_timing, resolve_display_value
 # Classification only: this module performs no privileged access and is the
 # same one that selected this backend, so the Platform row cannot disagree
 # with the code that is running.
@@ -176,6 +176,15 @@ INTEL_CODE_NAMES = {
     0xB7: ("Raptor Lake", "10 nm"),
     0xBA: ("Raptor Lake", "10 nm"),
     0xBF: ("Raptor Lake", "10 nm"),
+    # Arrow Lake-S, CPUID 06_C6H. Measured on a Core Ultra 7 270K Plus, where
+    # the fallback printed "Family 6 Model 0xC6" in Code Name and left
+    # Technology blank.
+    #
+    # The node names the compute tile only. Unlike the monolithic parts above,
+    # this is a disaggregated package whose tiles are built on different
+    # processes, so a single unqualified figure would be wrong for most of the
+    # silicon the row appears to describe.
+    0xC6: ("Arrow Lake", "3 nm (compute tile)"),
 }
 
 # PCH LPC/eSPI controller device IDs at 00:1F.0. 0x7A04 is measured on this
@@ -356,7 +365,12 @@ def get_lpcio_name():
     name = getattr(reader, "chip_name", None)
     if not name:
         return None
-    vendor = LPCIO_VENDORS.get(type(reader).__module__)
+    # Matched on the module's own name rather than its import path. The
+    # readers moved into rochviewer.sensors during the package split, and a
+    # dotted-path key silently stopped matching -- which drops the vendor on
+    # every board, not just this one.
+    module = type(reader).__module__.rsplit(".", 1)[-1]
+    vendor = LPCIO_VENDORS.get(module)
     return "%s %s" % (vendor, name) if vendor else name
 
 
@@ -601,13 +615,23 @@ def get_tWTR_S(base=None):
 # latencies for them -- MC0/MC1 x CHA/CHB read 70, 65, 71 and 65, with rank 1
 # left at the unpopulated 25 on all four. Four sub-channels, one rank each.
 #
-# Both reference tools count those four: MemTweakIt shows "Channels 4" and
-# ASRock's Timing Configurator "Channels # Quad", while listing the same two
-# populated DIMM slots this does. Reporting the two DIMM channels instead
-# disagreed with them and with this tool's own RTL block a tab away.
+# The row counts DIMM channels, and that is a reversal.
 #
-# DDR4 has no sub-channels, so there the count is the populated channels
-# themselves and "Dual Channel" for two DIMMs stays right.
+# It used to double the count on DDR5 to name the sub-channels, on a note
+# recording that ASRock's Timing Configurator showed "Channels # Quad" against
+# these same two populated slots. Timing Configurator 4.1.5 on this bench
+# shows "Channels # Dual" against exactly that configuration, so whatever the
+# earlier reading was, it is not what the tool reports now, and the doubling
+# was resting on it.
+#
+# Both numbers describe something real -- two DIMM channels, four sub-channels,
+# and the RTL block a tab away still trains four round-trip latencies. What
+# settles it is which one the row's name asks for: a channel count beside a
+# slot count is read as DIMMs, and every tool that shows the pair counts them
+# the same way.
+#
+# Kept as a named constant rather than deleted. The sub-channel factor is a
+# fact about DDR5 whether or not this row multiplies by it.
 DDR5_SUBCHANNELS_PER_CHANNEL = 2
 
 CHANNEL_LAYOUT_NAMES = {
@@ -626,21 +650,18 @@ def channel_layout_name(populated_channels, generation):
     if not populated_channels:
         return None
     count = populated_channels
-    if generation == "DDR5":
-        count *= DDR5_SUBCHANNELS_PER_CHANNEL
     return CHANNEL_LAYOUT_NAMES.get(count, "%d Channels" % count)
 
 
 def detect_dual_channel_memory():
     """How many channels the controller runs, named as the reference tools do.
 
-    Counts the channels the installed modules populate, then doubles that on
-    DDR5 for the sub-channels. See DDR5_SUBCHANNELS_PER_CHANNEL.
+    Counts the channels the installed modules populate. See
+    DDR5_SUBCHANNELS_PER_CHANNEL for why that is not doubled on DDR5.
 
     Falls back to the slot-tag reading below when the module inventory is
-    unavailable -- that path only ever knew about DIMM channels, so it answers
-    DDR4's question rather than DDR5's, which is why it is the fallback and
-    not the reading.
+    unavailable. Both paths now answer the same question, which they did not
+    when this one doubled and that one did not.
     """
     try:
         from rochviewer.memory.dimm_inventory import read_modules
@@ -939,16 +960,40 @@ def get_dram_ratio_value():
         return "Unknown"
 
 
+# 0x13D10 carries the DRAM ratio in its low byte and the gear immediately
+# above it. Confirmed on a Z890 bench across a Gear 2 to Gear 4 BIOS change:
+# the register went 0x00000084 -> 0x00000142, so bit 8 rose while the ratio
+# byte halved from 132 to 66. That also settles what the bit is: had the
+# ratio been a nine-bit field, bit 8 would be its top bit rather than a flag
+# of its own, and at ratio 132 nothing distinguished the two readings.
+ARROW_LAKE_GEAR_REGISTER = 0x13D10
+ARROW_LAKE_GEAR_BIT = 8
+
+
+def arrow_lake_gear():
+    """Gear as the Arrow Lake memory-controller register states it.
+
+    Two states, because that is what the encoding holds: DDR5 client parts
+    offer Gear 2 and Gear 4, and a single bit cannot say anything else. None
+    when the register will not answer, so a caller can tell "no reading" from
+    a reading it can use.
+    """
+    raw = read_timing(
+        MCHBAR + ARROW_LAKE_GEAR_REGISTER,
+        bit_start=ARROW_LAKE_GEAR_BIT,
+        bit_length=1,
+        read_type="standard",
+    )
+    if raw is None:
+        return None
+    return 4 if int(raw) else 2
+
+
 def get_gear_mode_value():
     try:
         if is_arrow_lake_platform():
-            raw_gear = read_timing(
-                MCHBAR + 0x13D10,
-                bit_start=8,
-                bit_length=1,
-                read_type="standard",
-            )
-            return "Gear Mode 2" if raw_gear == 0 else "Gear Mode 4"
+            gear = arrow_lake_gear()
+            return "Unknown" if gear is None else "Gear Mode %d" % gear
 
         raw_gear = read_timing(
             MCHBAR + 0x5E04,
@@ -1057,15 +1102,17 @@ def get_trfc_ns(base=None):
         per_bank = _read_finalized_timing("tRFCpb", base)
         if not per_bank:
             # The all-bank interval on its own beats nothing, and a board that
-            # does not report the per-bank one is not an error. It keeps its
-            # unit, because on its own the row's "(ns)" is naming a pair that
-            # is not there.
+            # does not report the per-bank one is not an error.
             return text
         # The all-bank interval then the per-bank one, with the unit named
-        # once at the end: "120/98 (ns)", which is how the AM5 profile shows
-        # the same pair.
-        return "%.0f/%.0f (ns)" % (all_bank * 1000.0 / mclk,
-                                   per_bank * 1000.0 / mclk)
+        # once at the end: "120/98 ns". Both values are in the same unit, so
+        # saying it twice spends a third of the column repeating it.
+        #
+        # Bare rather than parenthesised, which is what the single-value
+        # branch above already returns and what tREFIns beside it returns.
+        # The pair was the only row on the tab still bracketing its unit.
+        return "%.0f/%.0f ns" % (all_bank * 1000.0 / mclk,
+                                 per_bank * 1000.0 / mclk)
     except Exception as e:
         print(f"Error retrieving tRFCns: {e}")
         return None
@@ -1093,9 +1140,31 @@ def get_trefi_ns(base=None):
 
 
 def get_qclk_ratio():
+    """Report the memory PLL reference the QCLK ratio counts in.
+
+    This row has two states everywhere else in the tool -- 133.33 MHz or
+    100.00 MHz -- selected by a bit. Arrow Lake used to return "33.33 Mhz"
+    here, which is not one of them: 33.334 is the internal multiplier used by
+    get_speed(), and the reference is four times that. The row was reporting a
+    quarter of its own quantity.
+
+    It is derived rather than read, and says so. The selector this reads on
+    earlier platforms, 0x5E04[8:11], is dead silicon on Arrow Lake -- the whole
+    register reads zero, as does 0x5918, and neither has been found at a
+    relocated address. Deriving beats guessing here only because the arithmetic
+    is already pinned: get_speed() computes ratio x 33.334 x gear, and that
+    lands on exactly 8800 at two different gears with two different ratios
+    (132 in Gear 2, 66 in Gear 4), against an independent SMBIOS 8800 at both.
+    A 100 MHz reference cannot produce those ratios from 8800 at all.
+
+    Note that a reference tool reads this row as 133 MHz on this board by
+    taking bit 10 of the dead 0x5918 and mapping the resulting zero through
+    "0 means 133 MHz". Same number, no measurement behind it -- which is worth
+    knowing before treating its agreement as confirmation.
+    """
     try:
         if is_arrow_lake_platform():
-            return "33.33 Mhz"
+            return "133.33 Mhz"
 
         rawmul = read_timing(MCHBAR + 0x5E04, bit_start=8, bit_length=4)
         if rawmul == 0:
@@ -1249,7 +1318,27 @@ def _get_twr_ddr5_mr_fallback(base=None):
 
 
 def get_twr_value(base=None):
-    """Auto-detect DDR4/DDR5 and return the active tWR timing."""
+    """Auto-detect DDR4/DDR5 and return the active tWR timing.
+
+    The controller value wins over the mode register, and on DDR5 the two can
+    legitimately disagree -- so this row will not always match a tool that
+    reads MR0, and that is not a defect to correct.
+
+    DDR5 encodes nWR in MR0 in steps of four: 48, 52, 56 and so on. A
+    configured tWR that is not on that grid cannot be stated there, so the
+    DRAM is programmed to the nearest encodable value while the controller
+    enforces the real one through TC_PRE.tWRPRE.
+
+    Measured on a Z890 bench at DDR5-8800, all four readings from the same
+    boot: tWRPRE 92, tCWL 34, giving 92 - 34 - 8 = 50, which is what BIOS was
+    set to. MR0 read 48, being the nearest step below, and Void Timings --
+    which reports the mode register here -- showed 48 as well. Reading 50 as
+    two clocks of error and "fixing" the burst constant to 10 would reproduce
+    the DRAM-side number and lose the configured one.
+
+    tRTP is the useful contrast: it is not quantized this way, and its
+    controller and mode-register readings agree exactly on the same bench.
+    """
     ddr_generation = detect_ddr_generation()
     controller_value = _get_twr_from_controller(ddr_generation, base)
 
@@ -3579,8 +3668,24 @@ def get_speed():
             )
             if ratio is None:
                 return "Unknown"
-            # Core Ultra 200S MemSS PMA reports a 33.334 MHz QCLK reference.
-            effective_rate = float(ratio) * 33.334 * 2.0
+            # Core Ultra 200S MemSS PMA reports a 33.334 MHz QCLK reference,
+            # and the ratio counts QCLK steps -- so the gear multiplies it,
+            # exactly as gear_divider does on the pre-Arrow-Lake path below.
+            #
+            # Measured on a Z890 bench running DDR5-8800 through a Gear 2 to
+            # Gear 4 BIOS change, with nothing else altered:
+            #
+            #   Gear 2   0x13D10 = 0x00000084   ratio 132   132 x 33.334 x 2
+            #   Gear 4   0x13D10 = 0x00000142   ratio  66    66 x 33.334 x 4
+            #
+            # Both give 8800, which is what SMBIOS reports at both settings.
+            # The ratio halves because the gear doubles; a fixed multiplier
+            # of 2.0 was the Gear 2 case written in, and it reported every
+            # memory clock at half its real value in Gear 4.
+            gear = arrow_lake_gear()
+            if gear is None:
+                return "Unknown"
+            effective_rate = float(ratio) * 33.334 * float(gear)
             return f"{round(effective_rate, 0)} Mhz"
 
         bclk = get_bclk()
@@ -3655,14 +3760,27 @@ def _is_old_main_general_row(t):
 TIMINGS = [t for t in TIMINGS if not _is_old_main_general_row(t)]
 
 def get_power_down_mode_value():
-    """Report the BIOS-controlled memory power-down policy.
+    """Report who owns the CKE power-down policy, from DDR_PTM_CTL[6].
 
-    TC_PWRDN/tPPD contains exit and command timing values; it is not an
-    enable flag.  Use DDR_PTM_CTL[6] on the tested Intel desktop paths instead.
-    When that bit is set, BIOS owns the CKE power-down policy.  The calibrated
-    Z690/Z790 DDR4 and Z890 DDR5 BIOS configurations used by Roch Viewer have
-    Power Down Mode disabled under BIOS control.  When it is clear, P-code is
-    allowed to manage the policy dynamically, which is reported as Automatic.
+    The register is MCHBAR + 0x5880. Bit set means BIOS owns the policy; bit
+    clear means P-code manages it dynamically, which is reported as Automatic.
+    An unreadable register or an all-ones read gives N/A rather than a default.
+
+    TC_PWRDN/tPPD is not the place to look for this: it carries exit and
+    command timing values, not an enable flag. That is worth stating because it
+    is the register the name suggests.
+
+    Two things this does not know, kept here so the row is not read as more
+    than it is. Reporting bit 6 set as "Disabled" treats "BIOS owns the policy"
+    as "BIOS turned it off", which is an inference rather than something the
+    bit encodes -- BIOS owning the policy and BIOS enabling power-down are not
+    contradictory. And no BIOS change has been observed against this row on any
+    bench here, so neither state has been watched to follow a setting.
+
+    An earlier version of this docstring recorded what the calibrated Z690,
+    Z790 and Z890 configurations were expected to read. That has been removed:
+    naming the answer for the boards under test makes a wrong reading look
+    confirmed, which is the failure this row is most exposed to.
     """
     try:
         raw = _read_ddr_ptm_control()
@@ -3703,6 +3821,19 @@ SCHEDULER_GEAR4_BIT = 15
 SCHEDULER_GEAR2_BIT = 31
 
 
+# Arrow Lake states the gear in SC_GS_CFG differently: one flag rather than
+# two, set for Gear 4 and clear for Gear 2. Measured on a Z890 bench across a
+# Gear 2 to Gear 4 BIOS change with nothing else altered -- 0xE088 went
+# 0x00000009 to 0x80000009, so bit 31 rose while bit 15 stayed clear.
+#
+# Reading it through the Raptor Lake pair was worse than useless there. In
+# Gear 2 both flags read 0, so the witness returned None and the cross-check
+# skipped. In Gear 4 bit 31 alone rose, which the pair reads as "gear2 set,
+# gear4 clear" -- so the witness reported Gear 2 against a board in Gear 4,
+# contradicting a row that was right.
+ARROW_LAKE_SCHEDULER_GEAR4_BIT = 31
+
+
 def scheduler_gear_mode(base=None):
     """The gear as SC_GS_CFG reports it, or None when it cannot say.
 
@@ -3715,6 +3846,8 @@ def scheduler_gear_mode(base=None):
     if raw is None or int(raw) == 0xFFFFFFFF:
         return None
     raw = int(raw)
+    if is_arrow_lake_platform():
+        return 4 if raw >> ARROW_LAKE_SCHEDULER_GEAR4_BIT & 1 else 2
     gear2 = raw >> SCHEDULER_GEAR2_BIT & 1
     gear4 = raw >> SCHEDULER_GEAR4_BIT & 1
     if gear2 == gear4:
@@ -4290,16 +4423,10 @@ def _install_arrow_lake_vref_rows():
     if not is_arrow_lake_platform():
         return
 
-    # Remove only the obsolete analog drive-strength rows. The three DDR5
-    # mode-register values currently live in the "VREF Additional" category.
-    TIMINGS = [
-        timing for timing in TIMINGS
-        if not (
-            timing.get("Tab") == "Skew"
-            and timing.get("Category") == "VREF"
-        )
-    ]
-
+    # The analog drive-strength rows used to be dropped here as obsolete on
+    # this platform. They stay, by request, so Skew carries the same rows on
+    # both platforms and the ones that read nothing say N/A rather than
+    # vanishing. This function now only promotes the DDR5 values beside them.
     # Present DQ/CA/CS as the normal VREF section on Arrow Lake rather than a
     # second "VREF Additional" panel.
     for timing in TIMINGS:
@@ -4785,14 +4912,79 @@ _install_system_info_and_timings_tabs()
 # Alder/Raptor Lake, confirmed by diffing full MCHBAR snapshots across a BIOS
 # change (tRDPDEN 34->61, tCPDED 22->23) and reproduced identically in all
 # four channel copies at 0xE050/0xE850/0xF050/0x1E050.
-# tWRPDEN and tPRPDEN stay unresolved: nothing in the memory-controller block
-# tracked tWRPDEN 90->123, and the only tPRPDEN candidate overlaps the
-# confirmed tRDPDEN bits, so both report N/A rather than a wrong number.
+#
+# tWRPDEN was previously N/A here, recorded as "nothing tracked 90->123".
+# That conclusion was an artefact of how the register was being read, not a
+# property of the silicon. The field is bits 27..36 -- it straddles the 32-bit
+# boundary, so no search over dword-local bit positions could ever match it at
+# any width. Read as one 64-bit quantity it is exact: MCHBAR snapshots taken
+# either side of a BIOS change decode to 90 and 120 against BIOS 90 and 120,
+# and the straddle is visible in the raw pair, where 0xE050 moves
+# 0xD0658204 -> 0xC0658204 and 0xE054 moves 0x2206EA02 -> 0x2206EA03. Both
+# halves carry part of the value, which is why neither dword alone shows it.
+#
+# tPRPDEN stays N/A. Bits 59..63 read 4 and decode coherently alongside the
+# rest of the register, but the value did not change across the one BIOS pair
+# on hand, so it has a plausible position and no confirmation. A row that
+# reads nothing beats a row that reads a guess.
+#
+# tXPDLL is N/A here for a stronger reason than "not found": the bits it was
+# reading belong to something else. The base table has it at 0xE050 bits
+# 14..20, which is where this platform keeps tCPDED -- confirmed by a BIOS
+# diff on this bench, and agreed by the reference layout, which has no tXPDLL
+# at this register at all. Left alone the two rows read the same bits and
+# printed the same number under different names, so the row was not merely
+# unverified, it was tCPDED wearing a second label.
+#
+# tPPD moves for the same reason tXPDLL was blanked: the base position,
+# 0xE000 bits 20..23, is the low nibble of the tRTP field, and the two rows
+# read the same 12. The reference layout puts tPPD at bits 28..31 of the same
+# register, where it reads 2 -- which is what that tool displays for the row
+# on this board on the same boot, against the 12 the old position yields.
 ARROW_LAKE_POWER_DOWN = {
     "tRDPDEN": (0xE050, 19, 6),
     "tCPDED": (0xE050, 14, 5),
+    "tPPD": (0xE000, 28, 4),
 }
-ARROW_LAKE_POWER_DOWN_UNKNOWN = ("tWRPDEN", "tPRPDEN")
+#
+# tCKCKEH, tSR and tXSDLL move here for the same reason. Each sits above bit
+# 32, so the base table reaches them by pointing at the upper dword and
+# subtracting 32 from the bit position -- which works for a field that lies
+# wholly above the boundary, and is why only tWRPDEN was ever missing rather
+# than all four. On this platform they are at different bit positions, not
+# different registers, so the override is a position change and the read type
+# follows from it.
+#
+# The positions come from the reference tool's own register map, which carries
+# two layouts. The one used here is identified rather than assumed: it agrees
+# with all three Core Ultra 200S positions already established on this bench by
+# BIOS diffs -- tCPDED at 14, tRDPDEN at 19, tWRPDEN at 27 -- while the other
+# layout matches the base table above at every one of them (tXPDLL at 14,
+# tRDPDEN at 21, tWRPDEN in the upper dword). Two internally consistent
+# layouts, and the four points we had measured ourselves pick one of them.
+#
+# That same layout puts tXSR at 0xE4C0 bits 0..12, exactly where the base table
+# already has it, so tXSR needs no override -- a fourth agreement, and the one
+# that costs nothing to check. It also has no 0xE440 or 0xE448 block at all,
+# which is consistent with tMOD reading nothing here however it is addressed.
+#
+# Unlike tWRPDEN these three have no two-value BIOS test behind them, but they
+# are not resting on the map alone: read at these positions they return 2816,
+# 16 and 45, which are the three values the reference tool displays for them on
+# this board on the same boot. A map that has been right at four independently
+# measured points, and three same-boot readings that agree with it, is a
+# different standard of evidence from a plausible-looking field.
+#
+# tCKCKEH is the clearest gain regardless: the base position reads a flat 0
+# here, so the row was showing a wrong number rather than an honest blank.
+# Fields needing the 64-bit read, as (offset, bit_start, bit_length).
+ARROW_LAKE_POWER_DOWN_WIDE = {
+    "tWRPDEN": (0xE050, 27, 10),
+    "tCKCKEH": (0xE050, 37, 5),
+    "tSR": (0xE4C0, 45, 6),
+    "tXSDLL": (0xE4C0, 51, 13),
+}
+ARROW_LAKE_POWER_DOWN_UNKNOWN = ("tPRPDEN", "tXPDLL")
 
 def _install_arrow_lake_power_down_rows():
     if not is_arrow_lake_platform():
@@ -4800,14 +4992,16 @@ def _install_arrow_lake_power_down_rows():
 
     for timing in TIMINGS:
         name = timing.get("name")
-        if name in ARROW_LAKE_POWER_DOWN:
-            offset, bit_start, bit_length = ARROW_LAKE_POWER_DOWN[name]
+        if name in ARROW_LAKE_POWER_DOWN or name in ARROW_LAKE_POWER_DOWN_WIDE:
+            wide = name in ARROW_LAKE_POWER_DOWN_WIDE
+            source = ARROW_LAKE_POWER_DOWN_WIDE if wide else ARROW_LAKE_POWER_DOWN
+            offset, bit_start, bit_length = source[name]
             timing["address"] = MCHBAR + offset
             timing["parameters"] = {
                 "bit_start": bit_start,
                 "bit_length": bit_length,
             }
-            timing["read_type"] = "standard"
+            timing["read_type"] = "wide" if wide else "standard"
             timing.pop("value", None)
             timing.pop("Formula", None)
         elif name in ARROW_LAKE_POWER_DOWN_UNKNOWN:
@@ -5211,6 +5405,10 @@ def _channel_b_address(address):
     return address + CHANNEL_B_OFFSET
 
 
+# Read widths a mirrored row may carry across to its channel-B copy.
+DIRECT_READ_TYPES = ("standard", "wide")
+
+
 def _dual_channel_headers(timing):
     """Label the two value columns and blank the header over the name gutter."""
     timing["parameter_name"] = "Name"
@@ -5219,7 +5417,15 @@ def _dual_channel_headers(timing):
 
 
 def _promote_standard_row(timing):
-    """Mirror a plain address+bitfield row onto the second controller."""
+    """Mirror a plain address+bitfield row onto the second controller.
+
+    "Standard" here means the row shape -- an address and a bitfield -- and
+    not the read width, which the two senses of the word used to conflate.
+    Both sides carried a literal "standard" read type, so a row asking for the
+    64-bit read got mirrored into two 4-byte reads and the display showed a
+    field truncated at the dword boundary while the register table read it
+    correctly. The declared type travels with the row now.
+    """
     address_b = _channel_b_address(timing.get("address"))
     if address_b is None:
         return False
@@ -5227,12 +5433,16 @@ def _promote_standard_row(timing):
     if "bit_start" not in parameters or "bit_length" not in parameters:
         return False
 
+    read_type = timing.get("read_type")
+    if read_type not in DIRECT_READ_TYPES:
+        read_type = "standard"
+
     timing["address_a"] = timing["address"]
     timing["address_b"] = address_b
     timing["parameters_a"] = dict(parameters)
     timing["parameters_b"] = dict(parameters)
-    timing["read_type_a"] = "standard"
-    timing["read_type_b"] = "standard"
+    timing["read_type_a"] = read_type
+    timing["read_type_b"] = read_type
     _dual_channel_headers(timing)
     return True
 
@@ -6287,13 +6497,37 @@ def get_slots_used():
 
     Two modules in a four-slot board behave differently from four, so the
     total matters as much as the count.
+
+    The total is the number of sockets firmware enumerates, not the array size
+    it declares. Those disagree on this bench: a two-slot board reports
+    MemoryDevices 4 in the memory-array record while listing exactly two
+    sockets, Controller0-ChannelA-DIMM0 and ChannelB-DIMM0, with no DIMM1 on
+    either channel. The declared size is a property of the reference design
+    the firmware came from; the socket list is what is actually there, and it
+    is the one that names each slot.
+
+    The array size is still the fallback, for firmware that omits its empty
+    sockets rather than listing them at zero capacity. That case cannot be
+    told from a full board by counting alone, so the larger of the two wins:
+    over-reporting slots costs a wrong denominator, while under-reporting
+    would claim a board is full when it is not.
     """
     try:
+        sockets = _wmi_static("Win32_PhysicalMemory")
+        used = sum(
+            1 for socket in sockets
+            if int(getattr(socket, "Capacity", 0) or 0) > 0
+        )
+        total = len(sockets)
+
         arrays = _wmi_static("Win32_PhysicalMemoryArray")
-        if not arrays:
-            return None
-        total = int(getattr(arrays[0], "MemoryDevices", 0) or 0)
-        used = len(_wmi_static("Win32_PhysicalMemory"))
+        if arrays:
+            declared = int(getattr(arrays[0], "MemoryDevices", 0) or 0)
+            if declared > total:
+                # Only when the socket list is missing entries, which is what
+                # a declared size larger than the list it describes means --
+                # unless the list is complete, in which case see above.
+                total = total or declared
         if not total:
             return None
         return "%d of %d" % (used, total)
@@ -6732,6 +6966,23 @@ MISC_FEATURE_FIELDS = (
     ("Page Close Idle Timeout", 0xE028, 6, 1, True),
 )
 
+# What these read on Core Ultra 200S, since the whole group installs there.
+#
+# Power Down is the one with a reading behind it. Its register is live at
+# 0x00000600, it sits in the 0xE0xx block this platform demonstrably does not
+# relocate -- 0xE000, 0xE050 and 0xE4C0 are all confirmed here -- and bit 8
+# reads 0 against a BIOS set to disabled. That is one agreeing state and not a
+# proof: a bit stuck at zero reads the same. Toggling power down in BIOS would
+# settle it the way the 90-to-120 pair settled tWRPDEN.
+#
+# Realtime Memory is the opposite case and the one to distrust. It reads
+# 0x5E00, and the whole 0x5Exx block is dead silicon here -- zero to every
+# query, as is 0x5918 beside it. A zero from a dead register decodes to a
+# confident "Disabled" that means nothing, which is worse than N/A because it
+# does not look like an absence. Kept visible on request rather than hidden,
+# and named here so the row is not mistaken for a reading.
+ARROW_LAKE_UNTRUSTED_FEATURES = ("Realtime Memory",)
+
 # 2N Mode is MR2 bit 2, reached through the pointer path rather than by
 # indexing the table directly: an entry's data byte names the mode register
 # and its index byte is an offset into the payload array at 0xE200. That is
@@ -7140,12 +7391,27 @@ def _misc_row(name, category, column, value):
 def _install_misc_tab():
     """Add the Misc tab: CKE/power-down control, command config, features.
 
-    Held to the platforms the map was built for. Arrow Lake moved several of
+    The map was built on Alder/Raptor Lake, and Arrow Lake moved several of
     these registers -- CMD_STRETCH alone went from two bits to one -- so the
-    same offsets there would read plausible numbers that mean something else.
+    same offsets there read plausible numbers that mean something else. That
+    hazard belongs to the source, not to the tab, so the two sources are
+    split rather than the whole tab being withheld.
+
+    Rows read through the mode-register pointer path are installed on every
+    platform. That path resolves the payload at 0xE200 instead of naming a
+    fixed offset, it is the one the DFE rows already use on Arrow Lake, and
+    on a Z890 bench all five of its display rows matched Void Timings on the
+    same boot: read and write preamble 4 tCK, read postamble 0.5 tCK, write
+    postamble 1.5 tCK, burst length BC8 OTF.
+
+    Rows naming an MCHBAR offset directly -- the CKE/power-down block, the
+    two SC_GS_CFG command fields and the feature switches -- stay on the
+    platforms the map was built for. On that same bench SC_GS_CFG shows why:
+    read with the Alder Lake two-bit field it reports CMD_STRETCH 1 while the
+    command rate is 2N. The feature switches are no loss there either, since
+    System Info already carries those from offsets confirmed for it.
     """
-    if is_arrow_lake_platform():
-        return
+    arrow_lake = is_arrow_lake_platform()
 
     # Every row carries a getter, not a reading. These registers change while
     # the tool is open -- the CKE block and the feature switches follow what
@@ -7178,11 +7444,20 @@ def _install_misc_tab():
         return lambda base: _misc_mode_register_value(
             number, bit_start, bit_length, decode, base)
 
-    rows = [
+    # Every Skew and Misc row the LGA1700 DDR5 table carries is installed on
+    # Core Ultra 200S too, by request, so the two platforms show the same rows
+    # and a row that reads nothing says so rather than being absent. A missing
+    # row and an N/A row look identical on screen but mean opposite things --
+    # "this platform has no such setting" against "this setting was not read".
+    #
+    # The guard these groups used to sit behind is gone rather than inverted:
+    # the registers are read, and whatever they answer is what shows.
+    rows = []
+    rows.extend(
         _misc_row(name, "Power Down", "Right",
                   _channel_a(cke(bit_start, bit_length)))
         for name, bit_start, bit_length in MISC_CKE_CONFIG_FIELDS
-    ]
+    )
 
     rows.extend(
         _misc_row(name, "Command", "Right",
@@ -7234,8 +7509,10 @@ def _install_misc_tab():
 
     rows.extend(
         _misc_row(name, "Features", "Right",
-                  _channel_a(switch(offset, bit_start, bit_length, inverted)))
-        for name, offset, bit_start, bit_length, inverted in MISC_FEATURE_FIELDS
+                  _channel_a(switch(offset, bit_start, bit_length,
+                                    inverted)))
+        for name, offset, bit_start, bit_length, inverted
+        in MISC_FEATURE_FIELDS
     )
 
 
@@ -7272,12 +7549,13 @@ def _install_misc_tab():
 
     # The round-trip latencies move in rather than holding a tab of their own.
     # They keep their Latency CHA/CHB headings, so the two blocks stay separate
-    # on the page; only the tab strip loses an entry. Done here, inside the
-    # guard, so a platform that gets no Misc rows keeps its RTL tab under its
-    # own name instead of one called Misc that holds nothing but latencies.
-    for timing in TIMINGS:
-        if timing.get("Tab") == RTL_TAB:
-            timing["Tab"] = MISC_TAB
+    # on the page; only the tab strip loses an entry. Conditional on there
+    # being rows to join, so a platform that gets none keeps its RTL tab under
+    # its own name instead of one called Misc that holds nothing but latencies.
+    if rows:
+        for timing in TIMINGS:
+            if timing.get("Tab") == RTL_TAB:
+                timing["Tab"] = MISC_TAB
 
     TIMINGS.extend(rows)
 
@@ -7302,12 +7580,26 @@ MODE_REGISTER_TIMING_ROWS = (
     "tWR_MR", "tRTP_MR", "tCWL_MR", "tCCD_L_MR",
 )
 
+# Dropped on Core Ultra 200S, where both decode to "Reserved".
+#
+# The mode register genuinely holds no value for either here: the field is
+# present and its contents are outside the table the DDR5 spec defines for it,
+# so the decode is correct and the row still says nothing. A row whose only
+# possible reading is "Reserved" is not a blank waiting to be filled -- it is
+# a row this platform has no answer for, sitting directly beneath the tWR and
+# tRTP it claims to restate, where it reads as a failure of those.
+#
+# tCWL_MR and tCCD_L_MR are not listed: they are gated off on DDR5 already.
+ARROW_LAKE_ABSENT_MODE_REGISTER_ROWS = ("tWR_MR", "tRTP_MR")
+
 MODE_REGISTER_TIMING_SUFFIX = "_MR"
 MODE_REGISTER_TIMING_FALLBACK = ("Secondary", "Left")
 
 
 def _move_mode_register_timings():
     """Put the mode-register copies of the timings beside what they restate."""
+    absent = (ARROW_LAKE_ABSENT_MODE_REGISTER_ROWS
+              if is_arrow_lake_platform() else ())
     for name in MODE_REGISTER_TIMING_ROWS:
         row = next(
             (t for t in TIMINGS
@@ -7315,6 +7607,9 @@ def _move_mode_register_timings():
             None,
         )
         if row is None:
+            continue
+        if name in absent:
+            TIMINGS.remove(row)
             continue
         under = name[: -len(MODE_REGISTER_TIMING_SUFFIX)]
         anchor = next(
@@ -7419,6 +7714,54 @@ def _collapse_misc_to_one_column():
 _collapse_misc_to_one_column()
 
 
+# --- Misc section order.
+#
+# The tab draws its sections in table order, so this is the table order. It is
+# declared rather than inherited because the sections are built by several
+# passes -- mode-register groups, feature switches, the latency block, the
+# refresh policy -- and the order they happened to run in is not a reading
+# order. The two latency blocks lead, then the settings, with the counters and
+# the error-correction section at the foot.
+MISC_SECTION_ORDER = (
+    "Latency CHA",
+    "Latency CHB",
+    "Features",
+    "Command",
+    "Preamble",
+    "Power Down",
+    "Mode Registers",
+    "Refresh",
+    "ECS",
+)
+
+
+def _install_misc_section_order():
+    global TIMINGS
+
+    def rank(timing):
+        category = timing.get("Category")
+        if category in MISC_SECTION_ORDER:
+            return MISC_SECTION_ORDER.index(category)
+        # A section this list does not name sorts to the foot rather than the
+        # head. A new group appearing at the top of the tab reads as a
+        # deliberate promotion; appearing at the bottom reads as unplaced,
+        # which is what it is.
+        return len(MISC_SECTION_ORDER)
+
+    misc = [timing for timing in TIMINGS if timing.get("Tab") == MISC_TAB]
+    if not misc:
+        return
+
+    # Stable, so row order inside a section is whatever built it.
+    ordered = sorted(misc, key=rank)
+    positions = [i for i, t in enumerate(TIMINGS) if t.get("Tab") == MISC_TAB]
+    for position, timing in zip(positions, ordered):
+        TIMINGS[position] = timing
+
+
+_install_misc_section_order()
+
+
 # --- DDR5 row names.
 #
 # Deliberately the last installer in this module. See DDR5_TIMING_LABELS:
@@ -7434,3 +7777,97 @@ def _install_ddr5_timing_labels():
 
 
 _install_ddr5_timing_labels()
+
+
+# --- Skew drops the rows that read nothing.
+#
+# Skew is a panel of measured levels, and a row of N/A among them is not
+# informative the way a blank timing is: there is no "this is off" reading to
+# distinguish, only a level the silicon either states or does not. On Core
+# Ultra 200S that is 31 of 85 rows, and four whole categories -- DATA, CMD,
+# CLK and CTL -- are entirely unreadable, so they go with them.
+#
+# Scoped to Core Ultra 200S, and that scope is load-bearing rather than
+# cautious. Deleting a row because it reads nothing *now* deletes any row whose
+# reader is working but whose register happens to be blank at that instant --
+# which is exactly what happened on the DDR4 path, where the collapsed DQ VREF
+# row carries the MR6 decoder and reads nothing until a DDR4 module answers.
+# It disappeared, decoder and all. On this platform the blank rows are blank
+# structurally: 0x2CE8 is unmapped, and the DATA/CMD/CLK/CTL rows have no
+# source at all here. Elsewhere that is not established, so nothing is dropped.
+BLANK_READINGS = (None, "N/A", "None", "", "—")
+
+
+def _row_reads_nothing(timing):
+    """Whether a row has no value to show, by the rules the panel uses."""
+    def field(key, default=None):
+        return timing.get(key, default)
+
+    def read_at(address_key, parameters_key, read_type_key):
+        address = field(address_key)
+        parameters = field(parameters_key)
+        if address is None or not parameters:
+            return None
+        read_type = field(read_type_key) or field("read_type") or "standard"
+        if read_type not in ("standard", "wide"):
+            read_type = "standard"
+        return read_timing(
+            address=address,
+            bit_start=parameters.get("bit_start"),
+            bit_length=parameters.get("bit_length"),
+            read_type=read_type,
+        )
+
+    def dynamic_at(key):
+        params = field(key)
+        return (read_timing(read_type="dynamic", dynamic_params=params)
+                if isinstance(params, dict) else None)
+
+    candidates = []
+    if is_dual_timing(timing):
+        for side in ("a", "b"):
+            candidates.append(field("value_%s" % side))
+            candidates.append(dynamic_at("dynamic_params_%s" % side))
+            candidates.append(read_at("address_%s" % side,
+                                      "parameters_%s" % side,
+                                      "read_type_%s" % side))
+    else:
+        candidates.append(dynamic_at("dynamic_params"))
+        candidates.append(read_at("address", "parameters", "read_type"))
+        candidates.append(field("value"))
+    candidates.append(field("default_value"))
+
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        try:
+            resolved = resolve_display_value(candidate)
+        except Exception:
+            continue
+        if str(resolved).strip() not in BLANK_READINGS:
+            return False
+    return True
+
+
+def _install_skew_without_blank_rows():
+    global TIMINGS
+    if not is_arrow_lake_platform():
+        return
+
+    skew = [timing for timing in TIMINGS if timing.get("Tab") == "Skew"]
+    if not skew:
+        return
+
+    blank = [timing for timing in skew if _row_reads_nothing(timing)]
+
+    # Every row blank means the reads are not working at all -- no driver, or
+    # a platform whose Skew block is somewhere else entirely -- and emptying
+    # the tab would turn that into a silent success. Nothing is dropped then.
+    if len(blank) == len(skew):
+        return
+
+    drop = {id(timing) for timing in blank}
+    TIMINGS = [timing for timing in TIMINGS if id(timing) not in drop]
+
+
+_install_skew_without_blank_rows()

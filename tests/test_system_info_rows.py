@@ -170,6 +170,11 @@ class PresenceTest(unittest.TestCase):
         # none of them may carry `live`, which is what would put them on the
         # refresh worker.
         by_name = {row.get("name"): row for row in system_info_rows()}
+        # Manufactured is in this list even on a bench where it reads
+        # nothing. It is the one identity row whose only source is SPD, so it
+        # stays blank wherever the SPD hub is unreachable -- the row is still
+        # the right row, and its absence would say the module has no build
+        # date rather than that this machine cannot reach it.
         for name in ("RAM Manufacturer", "DRAM Manufacturer", "DRAM Die",
                      "Part Number", "Serial Number", "Manufactured"):
             row = by_name.get(name)
@@ -519,18 +524,29 @@ class PlacementHelperTest(unittest.TestCase):
 class ChannelLayoutTest(unittest.TestCase):
     """DDR5 counts sub-channels; DDR4 counts channels.
 
-    The reference tools both count the sub-channels -- MemTweakIt "Channels
-    4", ASRock's configurator "Quad" -- against the same two populated DIMM
-    slots. This tool drew four RTL groups while calling the memory dual
-    channel, which disagreed with them and with itself.
+    The row counts DIMM channels on both generations. It doubled on DDR5 to
+    name the sub-channels, on a note recording that ASRock's Timing
+    Configurator showed "Quad" against two populated slots; 4.1.5 shows "Dual"
+    against exactly that configuration, so the doubling was resting on a
+    reading the tool does not produce. Four sub-channels are still real and
+    the RTL block still trains four -- but a channel count printed beside a
+    slot count is read as DIMMs.
     """
 
-    def test_ddr5_doubles_the_populated_channels(self):
-        # Two DIMM channels, four 32-bit sub-channels, one per trained RTL.
+    def test_ddr5_counts_the_dimm_channels_not_the_sub_channels(self):
         self.assertEqual(
-            intel_timings.channel_layout_name(2, "DDR5"), "Quad Channel")
+            intel_timings.channel_layout_name(2, "DDR5"), "Dual Channel")
         self.assertEqual(
-            intel_timings.channel_layout_name(1, "DDR5"), "Dual Channel")
+            intel_timings.channel_layout_name(1, "DDR5"), "Single Channel")
+
+    def test_both_generations_name_a_count_the_same_way(self):
+        # The two paths disagreed while one doubled and the other did not, so
+        # the same board could be dual or quad depending on which answered.
+        for populated in (1, 2, 4):
+            with self.subTest(populated=populated):
+                self.assertEqual(
+                    intel_timings.channel_layout_name(populated, "DDR5"),
+                    intel_timings.channel_layout_name(populated, "DDR4"))
 
     def test_ddr4_counts_the_channels_themselves(self):
         # No sub-channels there, so two DIMM channels stay dual.
