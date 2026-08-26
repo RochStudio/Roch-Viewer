@@ -143,10 +143,16 @@ rather than by convention:
 1. Install 64-bit Python 3.13 with Tcl/Tk.
 2. `py -V:3.13 -m pip install -r requirements.txt`
 3. Put `inpoutx64.dll` and `inpoutx64.sys` in the project directory.
-4. Run from source with `py -V:3.13 run_viewer.py`, or build with
+4. Run from source with `pyw -V:3.13 run_viewer.py`, or build with
    `py -V:3.13 -m PyInstaller --clean -y RochViewer.spec` and run
    `dist\RochViewer.exe`.
 5. Accept the administrator prompt.
+
+`pyw` is the windowed launcher, so the viewer comes up on its own without a
+console behind it — the same as the built EXE, which is already windowed. Use
+`py` instead when you want that console: the diagnostics the tool prints when a
+register or a transport does not answer go to stdout, and under `pyw` there is
+nowhere for them to land.
 
 Run the tests with `py -V:3.13 -m unittest discover -s tests -t .`. A handful
 skip where they need hardware or a display that the running machine does not

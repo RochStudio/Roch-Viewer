@@ -18,6 +18,18 @@ EXE's own file icon stayed correct; and elevation relaunched a module that
 cannot run as a script, so the UAC prompt appeared and nothing followed. If
 you cloned this repository before 2026-08-25, pull again.
 
+Corrected on 2026-08-26, on an LGA1851 bench, and worth naming because these
+changed readings rather than adding them. Every memory clock read half its
+real value in Gear 4, and the gear cross-check reported Gear 2 against a board
+in Gear 4 -- it read the two flags Raptor Lake uses, where this platform
+states the gear with one. tWRPDEN, tCKCKEH, tSR and tXSDLL read nothing at
+all: each spans or sits above the 32-bit boundary of a register that was being
+read four bytes at a time, so no bit position could reach them. tXPDLL was
+printing its neighbour's bits under its own name, DDR QCLK Ratio reported a
+quarter of its own quantity, and the channel count named the DDR5
+sub-channels where every tool it is read beside counts DIMM channels. If you
+pulled between those two dates, pull again.
+
 The AMD backend is here too, following ZenStates-Core and ZenTimings by
 irusanov. That was the reason this could not ship before: those are GPL-3.0,
 this was not, and clean-room provenance could not be demonstrated for a
