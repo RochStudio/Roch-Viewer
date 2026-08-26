@@ -61,11 +61,14 @@ GPL-3.0, which is why this project is GPL-3.0 too. See
 
 - Windows 10 or 11, 64-bit.
 - Administrator rights. Low-level register access requires them.
-- **The inpoutx64 driver**, which is not distributed here. Download
-  `inpoutx64.dll` and `inpoutx64.sys` from Highresolution Enterprises
-  (www.highrez.co.uk) and put both beside `RochViewer.exe`, or beside
-  `run_viewer.py` to run from source. See `THIRD_PARTY_NOTICES.txt` for why they are
-  not bundled.
+- **`inpoutx64.dll`**, which is not distributed here. Get it from
+  Highresolution Enterprises (www.highrez.co.uk) and put it beside
+  `RochViewer.exe`, or beside `run_viewer.py` to run from source. See
+  `THIRD_PARTY_NOTICES.txt` for why it is not bundled.
+
+  That one file is all you need. The kernel driver is inside it as a
+  resource -- the "Binaries only" archive on the download page does not
+  contain a `.sys` at all, and does not need to.
 
 If the driver is missing the program still opens — the CPU, the board, the
 BIOS and the module identity all come from Windows and need no driver — but
@@ -198,11 +201,11 @@ There are two ways in. Both need the driver, and both need Administrator.
    [releases page](https://github.com/RochStudio/Roch-Viewer/releases).
    Nothing to install; it is a single file.
 2. **Get the driver.** Download the InpOut32/64 binaries from
-   [highrez.co.uk](http://www.highrez.co.uk/downloads/inpout32/) and take
-   `inpoutx64.dll` and `inpoutx64.sys` out of the archive.
-3. **Put them in the same folder as `RochViewer.exe`.** Not a subfolder, not
-   somewhere on PATH: beside it. `inpoutx64.dll` is the one this tool looks
-   for; the `.sys` ships alongside it and does no harm.
+   [highrez.co.uk](http://www.highrez.co.uk/downloads/inpout32/) — the
+   "Binaries only" archive is enough — and take **`inpoutx64.dll`** out of it.
+   That single file is all this needs; the kernel driver is inside it.
+3. **Put it in the same folder as `RochViewer.exe`.** Not a subfolder, not
+   somewhere on PATH: beside it.
 4. **Right-click `RochViewer.exe` → Run as administrator.** Windows will
    prompt; the tool cannot read a register without it.
 
@@ -241,9 +244,9 @@ step 2 or 3 did not take. The strip names the folders it looked in.
    That is `customtkinter` for the interface, `wmi` and `pywin32` for the
    Windows queries, and `pyinstaller` only if you want to build an EXE.
 
-4. **Put `inpoutx64.dll` and `inpoutx64.sys` in the project folder**, beside
-   `run_viewer.py`. Same files, same source as step 2 of the quick way, and
-   the same caveat about the service it installs.
+4. **Put `inpoutx64.dll` in the project folder**, beside `run_viewer.py`.
+   Same file, same source as step 2 of the quick way, and the same caveat
+   about the service it installs.
 
 5. **Run it.**
 

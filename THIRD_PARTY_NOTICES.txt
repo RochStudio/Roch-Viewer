@@ -1,7 +1,7 @@
 Third-party components
 ======================
 
-inpoutx64.dll / inpoutx64.sys  (NOT distributed with this project)
+inpoutx64.dll  (NOT distributed with this project)
 ------------------------------------------------------------------
 Roch Viewer needs a low-level access driver to read physical memory, PCI
 configuration space and I/O ports. It uses inpout32/64 by Highresolution
@@ -10,11 +10,15 @@ Enterprises (www.highrez.co.uk), which reports:
   Copyright (c) 2008 Highresolution Enterprises.
   Portions Copyright (c) Logix4u.
 
-Those files are deliberately NOT included in this repository or in any build
-produced from it. They are third-party binaries under their own terms, and
-this project is GPL-3.0; shipping them alongside it would make the combined
-work something neither licence covers. Obtain them from the vendor and place
-them beside the executable yourself -- see "Prerequisites" in README.md.
+That file is deliberately NOT included in this repository or in any build
+produced from it. It is a third-party binary under its own terms, and this
+project is GPL-3.0; shipping it alongside would make the combined work
+something neither licence covers. Obtain it from the vendor and place it
+beside the executable yourself -- see "Prerequisites" in README.md.
+
+It carries the kernel driver inside itself as a resource and installs it as a
+Windows service on the first elevated run, so the DLL is the only file needed
+and the service outlives this program.
 
 ZenStates-Core and ZenTimings  (followed, not bundled)
 -------------------------------------------------------
