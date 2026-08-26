@@ -148,11 +148,15 @@ rather than by convention:
    `dist\RochViewer.exe`.
 5. Accept the administrator prompt.
 
-`pyw` is the windowed launcher, so the viewer comes up on its own without a
-console behind it — the same as the built EXE, which is already windowed. Use
-`py` instead when you want that console: the diagnostics the tool prints when a
-register or a transport does not answer go to stdout, and under `pyw` there is
-nowhere for them to land.
+`pyw` is the windowed launcher, so the viewer comes up without a console behind
+it — the same as the built EXE, which is already windowed. Starting with `py`
+from an ordinary prompt gets you there too: the administrator prompt at step 5
+starts a fresh process, and that one is windowed whichever launcher you used.
+
+Use `py` from an **already elevated** prompt when you want the console. There is
+no elevation step to pass through, so the process keeps the one it was given,
+and the diagnostics the tool prints when a register or a transport does not
+answer have somewhere to land. Under a windowed launcher they go nowhere.
 
 Run the tests with `py -V:3.13 -m unittest discover -s tests -t .`. A handful
 skip where they need hardware or a display that the running machine does not

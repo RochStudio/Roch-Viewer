@@ -8,6 +8,11 @@ Roch Viewer began as a private tool validated on one bench and covering both
 Intel and AMD desktop platforms. This is the Intel half, published on its own:
 LGA1700 with DDR5 or DDR4, and LGA1851.
 
+Elevation relaunches through the windowed interpreter, so accepting the
+administrator prompt no longer leaves a console window sitting behind the
+viewer. Start from an already-elevated prompt when you want that console:
+there is no elevation step to pass through, so the process keeps it.
+
 Fixed before release, but after this repository was first pushed: the driver,
 the icon and the elevation relaunch were each looked for "beside my own
 module", which was the project root until the modules moved into packages.

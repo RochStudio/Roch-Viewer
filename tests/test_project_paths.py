@@ -77,6 +77,83 @@ class TheProjectRootIsReachableTest(unittest.TestCase):
         )
 
 
+class ElevationInterpreterTest(unittest.TestCase):
+    """Elevation decides which interpreter the user ends up with.
+
+    It starts a brand new process, so a console interpreter named here leaves
+    a console window sitting behind the viewer for the rest of the session --
+    one the user never asked for, unlike the shell they started from.
+
+    Forward slashes below because ntpath splits on either, and a Windows
+    literal in a test is a backslash-escape accident waiting to happen.
+    """
+
+    WINDOWED = "C:/Py/pythonw.exe"
+
+    def test_a_windowed_interpreter_is_kept_as_it_is(self):
+        from rochviewer.ui import main
+        self.assertEqual(main.windowed_interpreter(self.WINDOWED),
+                         self.WINDOWED)
+
+    def test_it_falls_back_when_there_is_no_windowed_one(self):
+        # An embedded or repackaged distribution may not ship pythonw, and a
+        # console is worth much less than not starting.
+        from rochviewer.ui import main
+        missing = "C:/no-such-dir-here/python.exe"
+        self.assertEqual(main.windowed_interpreter(missing), missing)
+
+    def test_it_prefers_a_windowed_interpreter_that_is_there(self):
+        from rochviewer.ui import main
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            open(os.path.join(directory, "pythonw.exe"), "wb").close()
+            chosen = main.windowed_interpreter(
+                os.path.join(directory, "python.exe"))
+        self.assertTrue(chosen.lower().endswith("pythonw.exe"))
+
+    def _elevate(self, frozen, executable):
+        """Run run_as_admin against a fake shell and return its arguments."""
+        from rochviewer.ui import main
+        calls = []
+
+        class FakeShell:
+            @staticmethod
+            def ShellExecuteW(handle, verb, program, parameters, cwd, show):
+                calls.append((verb, program, parameters))
+
+        with mock.patch.object(main.ctypes, "windll") as windll:
+            with mock.patch.object(main.sys, "frozen", frozen, create=True):
+                with mock.patch.object(main.sys, "executable", executable):
+                    with mock.patch.object(main, "windowed_interpreter",
+                                           lambda: self.WINDOWED):
+                        with mock.patch.object(
+                                main, "launcher_path",
+                                lambda: "C:/app/run_viewer.py"):
+                            with mock.patch.object(main.sys, "exit",
+                                                   lambda code=0: None):
+                                windll.shell32 = FakeShell
+                                main.run_as_admin()
+        return calls
+
+    def test_the_chosen_interpreter_is_what_elevation_actually_runs(self):
+        # The helper returning the right name proves nothing on its own --
+        # run_as_admin has to hand it to ShellExecuteW. This is the assertion
+        # that catches the value being computed and then ignored, which is
+        # how the read width was lost a few commits ago.
+        calls = self._elevate(False, "C:/Py/python.exe")
+        self.assertEqual(len(calls), 1)
+        verb, program, parameters = calls[0]
+        self.assertEqual(verb, "runas")
+        self.assertEqual(program, self.WINDOWED)
+        self.assertIn("run_viewer.py", parameters)
+
+    def test_a_frozen_build_elevates_into_itself(self):
+        # It is already a windowed executable, and handing an interpreter the
+        # EXE path would elevate into something that cannot run it.
+        calls = self._elevate(True, "C:/app/RochViewer.exe")
+        self.assertEqual(calls, [("runas", "C:/app/RochViewer.exe", None)])
+
+
 class ModuleChainTest(unittest.TestCase):
     def test_it_reaches_the_root_from_a_two_deep_module(self):
         from rochviewer.ui import main

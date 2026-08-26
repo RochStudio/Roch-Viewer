@@ -3958,9 +3958,41 @@ def launcher_path():
     return None
 
 
+WINDOWED_INTERPRETER = "pythonw.exe"
+
+
+def windowed_interpreter(executable=None):
+    """The interpreter to elevate into: windowed where one exists.
+
+    Elevation starts a brand new process, so whichever interpreter is named
+    here decides what the user ends up with for the rest of the session. A
+    console interpreter gives that process a console window, which sits behind
+    the viewer doing nothing -- and unlike the one the user started from, they
+    never asked for it. pythonw.exe is the same interpreter without it, beside
+    python.exe in every standard install.
+
+    The cost is that stdout goes nowhere under it, so the diagnostics this
+    tool prints when a register or a transport does not answer are lost. The
+    way back is to elevate first and start it yourself: an already-elevated
+    process never reaches this function, and keeps its console.
+
+    Falls back to the current interpreter when there is no windowed one --
+    an embedded or repackaged distribution may not ship pythonw, and a
+    console is worth much less than starting at all.
+    """
+    current = executable if executable is not None else sys.executable
+    current = current or ""
+    if os.path.basename(current).lower() == WINDOWED_INTERPRETER:
+        return current
+    windowed = os.path.join(os.path.dirname(current), WINDOWED_INTERPRETER)
+    return windowed if os.path.exists(windowed) else current
+
+
 def run_as_admin():
     """Relaunch with administrative privileges."""
     parameters = None
+    # Frozen already means a windowed executable; there is nothing to swap.
+    executable = sys.executable
     if not getattr(sys, "frozen", False):
         launcher = launcher_path()
         if launcher is None:
@@ -3970,8 +4002,9 @@ def run_as_admin():
             )
             sys.exit(1)
         parameters = f'"{launcher}"'
+        executable = windowed_interpreter()
     ctypes.windll.shell32.ShellExecuteW(
-        None, "runas", sys.executable, parameters, None, 1
+        None, "runas", executable, parameters, None, 1
     )
     sys.exit(0)
 
