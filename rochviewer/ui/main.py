@@ -54,7 +54,12 @@ def summary_signal_timings(timings):
 
 # Terminations that are switched off, which read as zero ohms. RTT_OFF is the
 # Intel table's spelling; Hi-Z is the same state named after the impedance.
-RTT_OFF_VALUES = ("RTT_OFF", "OFF", "HI-Z", "HIZ")
+# Compared with spaces removed and upper-cased, so "Rtt_off" and "Hi Z"
+# match too. "DISABLED" is what the DDR4 RTT tables emit for code 0 --
+# without it those rows fell through to the verbatim branch and the
+# Summary printed "Disabled/Disabled", which does not fit the column and
+# says in nine characters what 0 says in one.
+RTT_OFF_VALUES = ("RTT_OFF", "OFF", "HI-Z", "HIZ", "DISABLED")
 
 # Categories whose rows are drivers rather than terminations. Switching a
 # termination off leaves the line unterminated, and this panel has always
@@ -76,6 +81,7 @@ def summary_rtt_display(value, category=None):
       "RZQ/4 (60)"    -> "60"       (Intel tables omit the unit)
       "RZQ/0.5 (480)" -> "480"
       "RTT_OFF"       -> "0"        (an unterminated line)
+      "Disabled"      -> "0"        (the DDR4 tables' word for it)
       "40 Ω"          -> "40"
       "RFU"           -> "RFU"      (reserved: not a resistance)
 
@@ -83,6 +89,7 @@ def summary_rtt_display(value, category=None):
 
       "Hi-Z"          -> "Hi-Z"     (a driver that is not driving)
       "Off"           -> "Hi-Z"
+      "Disabled"      -> "Hi-Z"
 
     The Timings tab keeps the full RZQ string, where the ratio is the point.
     """
@@ -671,13 +678,14 @@ def intel_summary_timing_columns(timings):
         "tRDPDEN", "tWRPDEN", "tCPDED",
     ]
     # The refresh cycle times follow the write recovery, which is where they
-    # were asked for. Named both ways because the two generations spell them
-    # differently and DDR4 has no per-bank refresh at all: DDR5 renames tRFC
-    # to tRFC2 and tRFC (ns) to tRFCns, so on either platform exactly one of
-    # each pair exists and the other resolves to nothing.
+    # were asked for. tRFC is named both ways because the two generations
+    # spell it differently -- DDR5 renames it to tRFC2 -- so on either
+    # platform exactly one of that pair exists and the other resolves to
+    # nothing. tRFCns is not in that position: it is the same derived row
+    # under the same name on both, and tRFCpb only ever exists on DDR5.
     primary_secondary = insert_summary_rows_after(
         primary_secondary, "tWR",
-        [name for name in ("tRFCns", "tRFC (ns)", "tRFC2", "tRFC", "tRFCpb")
+        [name for name in ("tRFCns", "tRFC2", "tRFC", "tRFCpb")
          if any(timing.get("name") == name for timing in timings)],
     )
     # The refresh interval heads the column, ahead of the turnarounds.

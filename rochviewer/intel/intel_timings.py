@@ -106,7 +106,13 @@ CHANNEL_B = MCHBAR + CHANNEL_B_OFFSET
 # tRFC2 and tRFCpb; the register this row reads is the all-bank one, so tRFC2
 # is what it is. DDR4 has a single tRFC and no per-bank refresh at all, which
 # is why this is a rename per platform rather than a correction everywhere.
-# tRFCns follows the same naming as the AM5 profile's row of that name.
+#
+# The two derived nanosecond rows used to be renamed here as well: they were
+# declared "tRFC (ns)" and "tREFI (ns)" and drawn as tRFCns and tREFIns on
+# DDR5 only. They are not any more. A derived row restating a raw one in
+# nanoseconds is the same row on both generations, so it carries the same
+# compact name on both, matching the AM5 profile's rows of those names. Only
+# tRFC, which really is a different register on DDR5, is still renamed.
 #
 # Applied last, by _install_ddr5_timing_labels at the foot of this module.
 # Everything that matches rows by name -- the Arrow Lake field map, the
@@ -116,8 +122,6 @@ CHANNEL_B = MCHBAR + CHANNEL_B_OFFSET
 # resolves the label the same way this does.
 DDR5_TIMING_LABELS = {
     "tRFC": "tRFC2",
-    "tRFC (ns)": "tRFCns",
-    "tREFI (ns)": "tREFIns",
 }
 
 
@@ -4786,7 +4790,7 @@ _install_arrow_lake_power_down_rows()
 
 
 # --- Derived refresh row.
-# tRFC (ns) is computed from the live tRFC and MCLK, mirroring AM5, and is
+# tRFCns is computed from the live tRFC and MCLK, mirroring AM5, and is
 # pinned directly above tRFC so Summary and Timings share one order.
 def _install_trfc_ns_row():
     index = next(
@@ -4799,12 +4803,12 @@ def _install_trfc_ns_row():
     )
     if index is None:
         return
-    if any(timing.get("name") == "tRFC (ns)" for timing in TIMINGS):
+    if any(timing.get("name") == "tRFCns" for timing in TIMINGS):
         return
 
     reference = TIMINGS[index]
     TIMINGS.insert(index, {
-        "name": "tRFC (ns)",
+        "name": "tRFCns",
         "value": get_trfc_ns,
         "Category": "Refresh timings",
         "Tab": reference.get("Tab", "Timings"),
@@ -4817,7 +4821,7 @@ _install_trfc_ns_row()
 
 
 def _install_trefi_ns_row():
-    """Pin tREFI (ns) directly below the raw interval it restates."""
+    """Pin tREFIns directly below the raw interval it restates."""
     index = next(
         (
             i for i, timing in enumerate(TIMINGS)
@@ -4828,12 +4832,12 @@ def _install_trefi_ns_row():
     )
     if index is None:
         return
-    if any(timing.get("name") == "tREFI (ns)" for timing in TIMINGS):
+    if any(timing.get("name") == "tREFIns" for timing in TIMINGS):
         return
 
     reference = TIMINGS[index]
     TIMINGS.insert(index + 1, {
-        "name": "tREFI (ns)",
+        "name": "tREFIns",
         "value": get_trefi_ns,
         "Category": "Refresh timings",
         "Tab": reference.get("Tab", "Timings"),
@@ -5139,8 +5143,8 @@ DUAL_CHANNEL_COMPUTED = {
     # a getter and drop the address, so there is nothing for the address
     # mirror to work from.
     "tWR": get_twr_value,
-    "tRFC (ns)": get_trfc_ns,
-    "tREFI (ns)": get_trefi_ns,
+    "tRFCns": get_trfc_ns,
+    "tREFIns": get_trefi_ns,
     # Same shape: installed as getters just above, over a register field the
     # mirror cannot see because the row carries no address.
     "tCCD_L": lambda base=None: get_ccd_timing("tCCD_L", base),

@@ -411,7 +411,11 @@ class DualTimingDefinitionTest(unittest.TestCase):
 
     def test_a_termination_that_is_off_reads_as_zero_ohms(self):
         # An unterminated line belongs in the same column as the numbers.
-        for text in ("RTT_OFF", "Off", "OFF", "Hi-Z"):
+        # "Disabled" is in here because it is the word the DDR4 RTT tables
+        # use for code 0; without it the Summary printed "Disabled/Disabled",
+        # which does not fit the column and says in nine characters what 0
+        # says in one.
+        for text in ("RTT_OFF", "Off", "OFF", "Hi-Z", "Disabled", "DISABLED"):
             with self.subTest(text=text):
                 self.assertEqual(summary_rtt_display(text, "RTT"), "0")
                 self.assertEqual(summary_rtt_display(text, "ODT"), "0")

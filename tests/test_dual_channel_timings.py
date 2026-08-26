@@ -304,11 +304,11 @@ class SectionLayoutTest(unittest.TestCase):
         # Each of these says the same thing as the row above in different
         # units or from a different source, so reading it anywhere else on
         # the tab means hunting for what it is a restatement of.
-        # Declared names: tREFI (ns) is what the row is called in the table
-        # and DDR5_TIMING_LABELS draws it as tREFIns.
+        # tREFIns is the declared name on both generations: a derived row
+        # restating a raw one in nanoseconds is the same row either way.
         names = [row.get("name") for row in timings_rows()]
         for restated, restatement in (("tWR", "tWR_MR"), ("tRTP", "tRTP_MR"),
-                                      ("tREFI", "tREFI (ns)")):
+                                      ("tREFI", "tREFIns")):
             with self.subTest(name=restatement):
                 self.assertIn(restatement, names)
                 self.assertEqual(names[names.index(restated) + 1],
@@ -572,7 +572,7 @@ class InstalledTableTest(unittest.TestCase):
 
     def test_derived_rows_are_dual_even_without_an_address(self):
         by_name = {row.get("name"): row for row in timings_rows()}
-        for name in ("tWR", "tRFC (ns)", "CR", "tWTR_L", "tWTR_S"):
+        for name in ("tWR", "tRFCns", "CR", "tWTR_L", "tWTR_S"):
             with self.subTest(name=name):
                 self.assertIn(name, by_name)
                 self.assertIn("value_b", by_name[name])

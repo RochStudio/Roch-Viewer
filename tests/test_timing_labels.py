@@ -59,21 +59,32 @@ class Ddr5LabelTest(unittest.TestCase):
             with self.subTest(platform=platform):
                 self.assertEqual(
                     intel_timings.ddr5_timing_label(platform, "tRFC"), "tRFC2")
-                self.assertEqual(
-                    intel_timings.ddr5_timing_label(platform, "tRFC (ns)"),
-                    "tRFCns")
 
     def test_ddr4_keeps_trfc(self):
         # DDR4 has one refresh interval and no per-bank refresh at all, so
         # tRFC2 would name something the modules do not have.
         self.assertEqual(
             intel_timings.ddr5_timing_label(LGA1700_DDR4, "tRFC"), "tRFC")
-        self.assertEqual(
-            intel_timings.ddr5_timing_label(LGA1700_DDR4, "tRFC (ns)"),
-            "tRFC (ns)")
+
+    def test_the_derived_nanosecond_rows_are_named_alike_on_both(self):
+        # A derived row restating a raw one in nanoseconds is the same row on
+        # either generation, so it carries one name on both. These used to be
+        # renamed on DDR5 only, which left DDR4 reading "tRFC (ns)" against
+        # the DDR5 board's "tRFCns" for the identical calculation.
+        for platform in (LGA1700_DDR4, LGA1700_DDR5, LGA1851):
+            for name in ("tRFCns", "tREFIns"):
+                with self.subTest(platform=platform, name=name):
+                    self.assertEqual(
+                        intel_timings.ddr5_timing_label(platform, name), name)
+
+    def test_only_trfc_is_still_renamed_per_platform(self):
+        # tRFC really is a different register on DDR5. Nothing else is.
+        self.assertEqual(set(intel_timings.DDR5_TIMING_LABELS), {"tRFC"})
 
     def test_an_unlisted_row_is_never_renamed(self):
-        for name in ("tCL", "tRFCpb", "tREFI", "tRP"):
+        # tRFCns and tREFIns are in here deliberately: they are the declared
+        # names now, carried unchanged onto DDR5 rather than renamed onto it.
+        for name in ("tCL", "tRFCpb", "tREFI", "tRP", "tRFCns", "tREFIns"):
             with self.subTest(name=name):
                 self.assertEqual(
                     intel_timings.ddr5_timing_label(LGA1700_DDR5, name), name)
@@ -92,7 +103,6 @@ class Ddr5LabelTest(unittest.TestCase):
         self.assertIn("tRFC2", names)
         self.assertIn("tRFCns", names)
         self.assertNotIn("tRFC", names)
-        self.assertNotIn("tRFC (ns)", names)
 
     def test_a_ddr4_table_keeps_the_original_rows(self):
         with table_for(LGA1700_DDR4) as built:
