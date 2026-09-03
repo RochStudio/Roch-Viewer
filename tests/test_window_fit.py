@@ -149,15 +149,21 @@ class ChromeTest(unittest.TestCase):
             TimingGUI.choose_icon_size(widths, TimingGUI.LOGO_SIZE),
             TimingGUI.LOGO_SIZE)
 
-    def test_the_brand_colour_is_one_definition_used_by_both(self):
-        # The title-bar name and the footer link are meant to match. Two
-        # literals drift; one constant cannot. Checked per method rather than
-        # by counting over the class, which also catches the hover binding
-        # and would pass on the wrong two.
-        for method in (TimingGUI.build_title_bar, TimingGUI.build_footer):
-            with self.subTest(method=method.__name__):
-                self.assertIn("text_color=self.BRAND_COLOR",
-                              inspect.getsource(method))
+    def test_the_chrome_takes_its_colours_from_the_palette(self):
+        # These two used to be asserted as a matching pair on BRAND_COLOR.
+        # They no longer match: the title is plain text and the footer link is
+        # branded, because the red marks what is selected or interactive and a
+        # static title competes with that. What still holds, and is the point
+        # of the test, is that neither writes a colour literal -- two literals
+        # drift, palette entries cannot.
+        title = inspect.getsource(TimingGUI.build_title_bar)
+        footer = inspect.getsource(TimingGUI.build_footer)
+        self.assertIn("text_color=self.TEXT_COLOR", title)
+        self.assertNotIn("text_color=self.BRAND_COLOR", title)
+        self.assertIn("text_color=self.BRAND_COLOR", footer)
+        for name, source in (("title bar", title), ("footer", footer)):
+            with self.subTest(chrome=name):
+                self.assertNotRegex(source, r'text_color=\("?#')
 
     def test_the_selected_tab_carries_readable_text_on_the_red(self):
         # The strip went from blue to the app's red. TEXT_COLOR is near-black

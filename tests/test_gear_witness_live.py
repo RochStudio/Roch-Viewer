@@ -88,7 +88,7 @@ class GearWitnessTest(unittest.TestCase):
                 % (int(raw), self.module.SCHEDULER_GEAR2_BIT,
                    self.module.SCHEDULER_GEAR4_BIT))
         self.assertEqual(self.module.get_gear_mode_value(),
-                         "Gear Mode %d" % scheduler)
+                         "%d" % scheduler)
 
     def test_the_scheduler_register_is_actually_claimed(self):
         # 0xFFFFFFFF is an unclaimed window, and scheduler_gear_mode reports

@@ -843,9 +843,14 @@ class TimingGUI:
                 logo_label = ctk.CTkLabel(bar, image=self.logo, text="")
             logo_label.pack(side="left", padx=(8, 0))
 
+        # The window's own name, in the plain text colour rather than the
+        # brand red. The logo beside it already carries the brand, and the red
+        # is what the tab strip and the section headings use to mark what is
+        # selected or what a block is -- spending it on a static title made it
+        # compete with them.
         title = ctk.CTkLabel(
             bar, text=f"{APP_NAME} {__version__}", font=self.COMPACT_BOLD,
-            text_color=self.BRAND_COLOR, anchor="w",
+            text_color=self.TEXT_COLOR, anchor="w",
         )
         title.pack(side="left", padx=(6, 10))
 
@@ -1059,35 +1064,51 @@ class TimingGUI:
 
         # Each tuple is (light mode, dark mode). CustomTkinter automatically
         # updates every widget using these colors when the mode changes.
-        # The dark surfaces sit lower than they did. The steps between them
-        # are kept, and the shading step widened by one, because the same
-        # 4-value lift reads as less separation the darker the pair gets.
-        self.BG_COLOR = ("#F1F5F9", "#161616")
-        self.BG_COLOR2 = ("#FFFFFF", "#1C1C1C")
-        self.SECTION_COLOR = ("#E2E8F0", "#1C1C1C")
-        self.ROW_COLOR = ("#F8FAFC", "#202020")
-        self.BORDER_COLOR = ("#CBD5E1", "#101010")
+        # The dark surfaces sit lower than they did, twice now. Every one of
+        # them moved by the same six values the second time, so the steps
+        # between them -- and the shading step, widened by one earlier because
+        # the same lift reads as less separation the darker the pair gets --
+        # are exactly what they were. Only the floor moved. The light half is
+        # untouched: darkening a light theme changes what it is.
+        self.BG_COLOR = ("#F1F5F9", "#101010")
+        self.BG_COLOR2 = ("#FFFFFF", "#161616")
+        self.SECTION_COLOR = ("#E2E8F0", "#161616")
+        self.ROW_COLOR = ("#F8FAFC", "#1A1A1A")
+        self.BORDER_COLOR = ("#CBD5E1", "#0A0A0A")
         self.TEXT_COLOR = ("#0F172A", "#FFFFFF")
         self.VALUE_COLOR = ("#B91C1C", "#FF4D4D")
-        self.HIGHLIGHT_COLOR = ("#E8EEF5", "#1D1D1D")
+        self.HIGHLIGHT_COLOR = ("#E8EEF5", "#171717")
         # The tab strip follows the title bar and the footer link: the app's
         # red rather than the theme's blue. Saturated in light, muted in dark,
         # which is the pair the blue used and the reason a flat #B91C1C in
         # both looked like a warning banner against the dark surfaces.
         self.TAB_SELECTED_COLOR = ("#B91C1C", "#5D1A1A")
-        self.TAB_UNSELECTED_COLOR = ("#D7E1EC", "#2E2E2E")
+        self.TAB_UNSELECTED_COLOR = ("#D7E1EC", "#282828")
         self.TAB_HOVER_COLOR = ("#DC2626", "#792A2A")
         # White on the selected tab in both modes. TEXT_COLOR is near-black
         # in light mode, and near-black on a dark red is unreadable -- the
         # blue it replaced was light enough to carry it.
         self.TAB_SELECTED_TEXT_COLOR = ("#FFFFFF", "#FFFFFF")
-        self.TAB_UNSELECTED_HOVER_COLOR = ("#C5D2E0", "#3A3A3A")
-        self.HEADER_COLOR = ("#E2E8F0", "#222222")
+        self.TAB_UNSELECTED_HOVER_COLOR = ("#C5D2E0", "#343434")
+        self.HEADER_COLOR = ("#E2E8F0", "#1C1C1C")
         self.SUBTITLE_COLOR = ("#475569", "#B0B0B0")
         # A rule between Summary blocks: visible against both backgrounds
         # without competing with the values, which are the loudest thing on
         # the tab and should stay that way.
-        self.RULE_COLOR = ("#94A3B8", "#4A4A4A")
+        # Every hairline in the window -- the two in the Summary and the one
+        # above the module strip -- in the brand red, matching the section
+        # headings they sit between. Its own name rather than a reuse of
+        # BRAND_COLOR, and this is why: the rules are muted where the text is
+        # not.
+        #
+        # They are already one pixel, which is the floor, so "thinner" has to
+        # come out of weight rather than height. Each is mixed a third of the
+        # way into the surface behind it -- 25% on dark, 15% on light -- which
+        # drops the dark rule from 5.5:1 to 3.6:1 against its ground and the
+        # light one from 5.9:1 to 4.8:1. Both stay well clear of the point a
+        # hairline starts disappearing, and a full-strength red on a one-pixel
+        # line was reading heavier than the line actually was.
+        self.HAIRLINE_COLOR = ("#C13D3D", "#C53F3F")
         # The app's own red, used for the title-bar name and the footer link.
         # Same pair as VALUE_COLOR, named separately because these two follow
         # the brand rather than the reading-is-red rule the tables use.
@@ -1212,6 +1233,14 @@ class TimingGUI:
         self.appearance_mode = str(mode).title()
         ctk.set_appearance_mode(self.appearance_mode)
         self.save_setting("appearance_mode", self.appearance_mode)
+        self._repaint_hairlines()
+
+    def _repaint_hairlines(self):
+        """Re-colour every hairline for the current appearance mode."""
+        colour = self._pick_color(self.HAIRLINE_COLOR)
+        for rule in getattr(self, "_hairlines", []):
+            if rule.winfo_exists():
+                rule.configure(bg=colour)
 
     def telemetry_modules(self):
         """Module identity for the telemetry window, keyed by channel letter.
@@ -1580,9 +1609,7 @@ class TimingGUI:
         # Keep one DIMM strip at the bottom of the window.
         # The installed modules are their own block, so a rule separates them
         # from the tab above the way the Summary separates its own blocks.
-        self.bottom_rule = ctk.CTkFrame(
-            self.root, corner_radius=0, height=2, fg_color=self.RULE_COLOR
-        )
+        self.bottom_rule = self._hairline(self.root)
         self.bottom_rule.pack(fill="x", padx=9, pady=(2, 0))
 
         self.bottom_part_number_frame = ctk.CTkFrame(
@@ -2739,26 +2766,64 @@ class TimingGUI:
         # by luck now that each column takes the width its own rows need.
         self._summary_about_rows.append(body)
         for offset, row_names in enumerate(rows):
+            # Zebra shading, on the same parity as the tables below: the first
+            # row clear, every second one tinted. Drawn before the cells, the
+            # way _row_fill is used everywhere else -- the cells and their
+            # labels are transparent and created after, so they stack above
+            # the band rather than hiding it.
+            # Zebra shading on the same parity as the tables below: the
+            # first row clear, every second one tinted. The fill covers the
+            # gaps between the columns, the cells and labels cover themselves.
+            bg = self.HIGHLIGHT_COLOR if offset % 2 else "transparent"
+            self._row_fill(body, offset, bg, column_count)
             self._summary_about_aligned_row(
                 body, row_names, timing_by_name, label_overrides,
-                column_count, row=offset,
+                column_count, row=offset, bg=bg,
             )
         return grid_row + 1
 
-    def _summary_rule(self, parent, row, pady=(3, 3)):
+    def _summary_rule(self, parent, row, pady=(4, 4)):
         """Draw a hairline across the panel, the way ZenTimings separates its
         header blocks from the grid below them."""
-        # Two pixels, not one: a CTkFrame one pixel tall draws nothing at
-        # all, which is how this first went in invisible. A CTkLabel renders
-        # but reserves a whole text line, which is a bar rather than a rule.
-        rule = ctk.CTkFrame(
-            parent, height=2, corner_radius=0, fg_color=self.RULE_COLOR
-        )
+        # A plain tkinter frame, one pixel tall. CTkFrame applies the widget
+        # scaling to its height and rounds, which at some DPI settings rounded
+        # a one-pixel rule to nothing -- that is how the first version went in
+        # invisible and came back two pixels thick. tkinter's own frame takes
+        # the height literally, so the rule is a hairline at every scaling
+        # rather than a bar at some of them.
+        rule = self._hairline(parent)
         rule.grid(row=row, column=0, sticky="ew", padx=self.ROW_PADX, pady=pady)
         return rule
 
-    def _summary_about_pair(self, parent, timing, label_overrides, column):
-        """Draw one label/value pair, returning the next free column."""
+    def _hairline(self, parent):
+        """A one-pixel rule in the brand red, registered for repainting.
+
+        A plain frame does not follow the appearance mode the way CTk widgets
+        do, so every hairline is kept in a list and repainted on a toggle.
+        """
+        rule = tkinter.Frame(
+            parent, height=1, borderwidth=0, highlightthickness=0,
+            bg=self._pick_color(self.HAIRLINE_COLOR),
+        )
+        self._hairlines = [
+            r for r in getattr(self, "_hairlines", []) if r.winfo_exists()
+        ] + [rule]
+        return rule
+
+    def _pick_color(self, pair):
+        """The half of a (light, dark) colour pair for the current mode."""
+        return pair[1] if ctk.get_appearance_mode().lower() == "dark" else pair[0]
+
+    def _summary_about_pair(self, parent, timing, label_overrides, column,
+                            bg="transparent"):
+        """Draw one label/value pair, returning the next free column.
+
+        ``bg`` tints the pair for a shaded row. It has to be set on the labels
+        themselves: a CTk widget asked for "transparent" paints the colour it
+        finds on its parent, so a label left transparent over a tinted band
+        repaints the panel background across it and the band disappears
+        wherever the text sits. The shaded tables set it the same way.
+        """
         label_text = label_overrides.get(timing.get("name"), timing.get("name", ""))
         if label_text:
             name_label = ctk.CTkLabel(
@@ -2767,7 +2832,7 @@ class TimingGUI:
                 font=self.COMPACT_FONT,
                 height=self.ROW_HEIGHT,
                 anchor="w", padx=self.ROW_PADX, pady=self.ROW_PADY,
-                text_color=self.TEXT_COLOR, fg_color="transparent",
+                text_color=self.TEXT_COLOR, fg_color=bg, bg_color=bg,
             )
             name_label.grid(row=0, column=column, sticky="w")
             column += 1
@@ -2778,7 +2843,7 @@ class TimingGUI:
             height=self.ROW_HEIGHT,
             anchor="w", justify="left",
             padx=self.ROW_PADX, pady=self.ROW_PADY,
-            text_color=self.VALUE_COLOR, fg_color="transparent",
+            text_color=self.VALUE_COLOR, fg_color=bg, bg_color=bg,
         )
         value_label.grid(row=0, column=column, sticky="w")
         # Drawn once and never looked at again, which is why a lost first read
@@ -2787,7 +2852,8 @@ class TimingGUI:
         return column + 1
 
     def _summary_about_aligned_row(self, body, row_names, timing_by_name,
-                                   label_overrides, column_count, row=0):
+                                   label_overrides, column_count, row=0,
+                                   bg="transparent"):
         """Put one entry per Summary column, on those columns.
 
         ``body`` is shared with the other aligned rows and ``row`` says which
@@ -2799,7 +2865,7 @@ class TimingGUI:
             timing = timing_by_name.get(timing_name) if timing_name else None
             if timing is None:
                 continue
-            cell = ctk.CTkFrame(body, corner_radius=0, fg_color="transparent")
+            cell = ctk.CTkFrame(body, corner_radius=0, fg_color=bg)
             cell.grid(
                 row=row,
                 column=column,
@@ -2811,7 +2877,7 @@ class TimingGUI:
                 # because the offset was inside the cell.
                 padx=(0, 0 if column == column_count - 1 else 8),
             )
-            self._summary_about_pair(cell, timing, label_overrides, 0)
+            self._summary_about_pair(cell, timing, label_overrides, 0, bg)
 
     def _summary_about_tight_row(self, body, row_names, timing_by_name,
                                  label_overrides):

@@ -136,7 +136,7 @@ class Ddr5LabelTest(unittest.TestCase):
 class PairedRefreshValueTest(unittest.TestCase):
     """tRFCns carries both intervals on DDR5 and one on DDR4."""
 
-    def _getter(self, platform, all_bank, per_bank, mclk="4000 Mhz"):
+    def _getter(self, platform, all_bank, per_bank, mclk="4000 MHz"):
         module = intel_timings
         saved = (module.active_platform, module.get_mclk,
                  module._read_finalized_timing)
