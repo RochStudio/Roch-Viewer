@@ -313,7 +313,7 @@ def core_clock_text(index):
         return None
     if not 0 <= index < len(cores):
         return None
-    return "%.0f Mhz" % cores[index][1]
+    return "%.0f MHz" % cores[index][1]
 
 
 def core_labels():
@@ -361,4 +361,4 @@ def clock_text(key):
         megahertz = read_clocks().get(key)
     except Exception:
         return None
-    return None if megahertz is None else "%.0f Mhz" % megahertz
+    return None if megahertz is None else "%.0f MHz" % megahertz

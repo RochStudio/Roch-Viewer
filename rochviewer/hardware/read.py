@@ -72,11 +72,6 @@ if inpout is not None:
     inpout.UnmapPhysicalMemory.restype = wintypes.BOOL
 
 
-def driver_available():
-    """True when a read has any chance of working."""
-    return inpout is not None
-
-
 def map_physical_address(phys_addr, size):
     if inpout is None:
         return None, None

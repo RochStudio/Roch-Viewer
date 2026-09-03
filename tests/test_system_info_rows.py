@@ -452,16 +452,16 @@ class MegahertzFormatTest(unittest.TestCase):
     """The clock rows are read down one column and must be written alike."""
 
     def test_a_whole_number_carries_no_decimal_point(self):
-        # Uncore printed "5000.0Mhz" beside an MCLK of "2000 Mhz".
-        self.assertEqual(intel_timings._mhz(5000.0), "5000 Mhz")
+        # Uncore printed "5000.0Mhz" beside an MCLK of "2000 MHz".
+        self.assertEqual(intel_timings._mhz(5000.0), "5000 MHz")
 
     def test_the_unit_is_separated_from_the_number(self):
-        self.assertEqual(intel_timings._mhz(100.0), "100 Mhz")
+        self.assertEqual(intel_timings._mhz(100.0), "100 MHz")
 
     def test_a_real_fraction_survives(self):
         # Trimming must lose what rounding added, not the reading itself.
-        self.assertEqual(intel_timings._mhz(4987.5), "4987.5 Mhz")
-        self.assertEqual(intel_timings._mhz(1066.666), "1066.666 Mhz")
+        self.assertEqual(intel_timings._mhz(4987.5), "4987.5 MHz")
+        self.assertEqual(intel_timings._mhz(1066.666), "1066.666 MHz")
 
     def test_an_integer_reads_the_same_as_its_float(self):
         self.assertEqual(intel_timings._mhz(2000), intel_timings._mhz(2000.0))
@@ -568,3 +568,46 @@ class ChannelLayoutTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SlotTagFallbackTest(unittest.TestCase):
+    """The SMBIOS-only channel count reads the locator, not a tag number.
+
+    The old fallback assumed "Physical Memory 2" and "3" were channel A and
+    "0" and "1" channel B. No board is obliged to number its tags that way,
+    and on the MSI Z790MPOWER the tags are 0 and 1 while the locators say A
+    and B -- which a tag-number rule had no way to see.
+    """
+
+    def _sockets(self, *locators, capacity=16 << 30):
+        class Socket:
+            def __init__(self, locator, cap):
+                self.DeviceLocator = locator
+                self.Capacity = cap
+                self.Tag = "Physical Memory 0"   # the same tag on every one
+        return [Socket(l, capacity) for l in locators]
+
+    def _layout(self, *locators):
+        with mock.patch.object(intel_timings, "_wmi_static",
+                               return_value=self._sockets(*locators)), \
+                mock.patch.object(intel_timings, "detect_ddr_generation",
+                                  return_value="DDR5"):
+            return intel_timings._channel_layout_from_slot_tags()
+
+    def test_two_letters_are_dual_whatever_the_tags_say(self):
+        self.assertEqual(self._layout("DIMMA1", "DIMMB1"), "Dual Channel")
+        self.assertEqual(
+            self._layout("Controller0-DIMMA1", "Controller1-DIMMB1"),
+            "Dual Channel")
+
+    def test_one_letter_is_single(self):
+        self.assertEqual(self._layout("DIMMA1", "DIMMA2"), "Single Channel")
+
+    def test_an_empty_socket_does_not_count(self):
+        with mock.patch.object(intel_timings, "_wmi_static",
+                               return_value=self._sockets("DIMMA1")
+                               + self._sockets("DIMMB1", capacity=0)), \
+                mock.patch.object(intel_timings, "detect_ddr_generation",
+                                  return_value="DDR5"):
+            self.assertEqual(intel_timings._channel_layout_from_slot_tags(),
+                             "Single Channel")
