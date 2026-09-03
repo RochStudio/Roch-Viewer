@@ -34,10 +34,27 @@ frames keep a long value's cost to its own row, and give the band something
 that spans the full width to paint on.
 """
 
+import ctypes
+import os
+from ctypes import wintypes
+
 import customtkinter as ctk
 from tkinter import font as tkfont
 
 REFRESH_MS = 1000
+
+# The dump lands on the desktop under one name, overwritten each time. A
+# timestamped name would leave a pile of files behind after a tuning session,
+# and the thing people do with this is paste the latest one.
+DUMP_NAME = "RochViewer.txt"
+
+# Two spaces in, the name padded to here, then " : ", which puts the separator
+# at column 38 -- measured off the reference tool's own dump rather than
+# guessed, so the two files line up when read side by side. A longer name
+# pushes its own colon right rather than being truncated, which is what that
+# dump does and what keeps a long register name readable.
+DUMP_NAME_WIDTH = 36
+DUMP_SEPARATOR_COLUMN = 38
 
 ROW_HEIGHT = 19
 
@@ -75,6 +92,50 @@ def measuring_font_size(font):
         return -abs(int(font[1]))
     except (TypeError, ValueError, IndexError, KeyError):
         return None
+
+
+def desktop_directory():
+    """The user's Desktop, asked of Windows rather than assumed.
+
+    ~/Desktop is wrong on any machine whose desktop is redirected -- OneDrive
+    does it by default -- and a dump written there is one the user cannot
+    find. SHGetFolderPathW answers where it actually is; the expanded home is
+    the fallback for when that call is unavailable.
+    """
+    try:
+        buffer = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+        # CSIDL_DESKTOPDIRECTORY, current user, no creation.
+        if ctypes.windll.shell32.SHGetFolderPathW(None, 0x0010, None, 0,
+                                                  buffer) == 0 and buffer.value:
+            return buffer.value
+    except Exception as exc:
+        print(f"Could not ask Windows for the desktop: {exc}")
+    return os.path.join(os.path.expanduser("~"), "Desktop")
+
+
+def format_dump(entries, read=None):
+    """Render ``entries`` as the aligned "name : value" text of the dump.
+
+    Pure, so the layout can be checked without a window or a machine to read.
+    ``read`` is the reader to call for each row, defaulting to the one stored
+    on the entry; a row that raises is written as N/A rather than dropped,
+    because a dump that silently omits what it could not read is a dump you
+    cannot trust to be complete.
+    """
+    lines = []
+    for tab, category, name, reader in entries:
+        try:
+            value = (read or (lambda r=reader: r()))(reader) if read else reader()
+        except Exception:
+            value = None
+        if isinstance(value, tuple):
+            # Both channels, in the order the tab shows them.
+            value = " | ".join("N/A" if part in (None, "") else str(part)
+                               for part in value)
+        elif value in (None, ""):
+            value = "N/A"
+        lines.append("  %-*s : %s" % (DUMP_NAME_WIDTH, name, value))
+    return "\n".join(lines) + "\n"
 
 
 class AdvancedWindow(ctk.CTkToplevel):
@@ -133,6 +194,16 @@ class AdvancedWindow(ctk.CTkToplevel):
         # Escape clears rather than closing: the window is meant to stay open
         # while you look several things up in a row.
         self._search.bind("<Escape>", self._clear_search)
+
+        # Beside the search rather than under it: the window is a long list
+        # and a control at the bottom would be scrolled away from.
+        self._dump_button = ctk.CTkButton(
+            header, text="Dump", command=self._dump, width=62, height=24,
+            corner_radius=0, font=theme["font"],
+            fg_color=theme["button"], hover_color=theme["button_hover"],
+            text_color=theme["text"],
+        )
+        self._dump_button.pack(side="left", padx=(6, 0))
 
         self._count = ctk.CTkLabel(
             self, text="", font=theme["font"], text_color=theme["muted"],
@@ -379,6 +450,22 @@ class AdvancedWindow(ctk.CTkToplevel):
         self._after_id = self.after(self._refresh_ms, self._poll)
 
     # -- lifecycle ------------------------------------------------------
+    def _dump(self):
+        """Write every row to RochViewer.txt on the desktop.
+
+        Reported in the count line under the search box rather than a dialog:
+        the window stays usable, and the path is the one thing worth saying.
+        """
+        path = os.path.join(desktop_directory(), DUMP_NAME)
+        try:
+            with open(path, "w", encoding="utf-8", newline="\r\n") as handle:
+                handle.write(format_dump(self._entries))
+        except Exception as exc:
+            self._count.configure(text="Could not write %s: %s" % (path, exc))
+            return
+        self._count.configure(text="Wrote %d rows to %s"
+                                   % (len(self._entries), path))
+
     def _set_icon(self, path):
         try:
             self.iconbitmap(path)
