@@ -1,5 +1,60 @@
 # Changelog
 
+## 1.0.1
+
+Read on a second Intel bench, an MSI Z790MPOWER (MS-7E01) with an i5-14600KF,
+which is where all three of these came from and is the point of the exercise:
+each one was invisible on the board the code was written against.
+
+**CA/CS/CK ODT Group B printed "RFU".** The ladder these rows decode is RZQ
+divided by 0.5, 1, 2, 3, 4, 5 and 6, and the table carried "RFU" where the 48
+ohm rung belongs: 480, 240, 120, 80, 60, RFU, 40, with every neighbour present
+and only that step missing. All three Group B rows sit on that code here, so
+all three reported a reserved setting where a real termination was programmed.
+Group A was untouched because none of its codes lands there. The rows now read
+RZQ/5 (48), matching Void Timings on both channels.
+
+**VDD2 was blank.** The Super I/O rail map was derived on a different MSI board
+and is board-specific by its own warning. On that board index 4 of the sensor
+window is the DRAM rail at 1.572 V; here it is CPU VDD2 at 1.380 V, matching
+HWiNFO exactly, with Vcore, CPU SA and CPU AUX matching it exactly too. Same
+chip, same address, different rail -- so the map is now selected by board model
+rather than assumed. Carrying the old map across unchanged would have printed
+VDD2's voltage under the name DRAM.
+
+**The Advanced window dumps.** Its new button writes every row to
+`RochViewer.txt` on the desktop, laid out to the same column as the reference
+tool's own dump so the two read side by side -- measured off that file rather
+than guessed. The desktop is asked of Windows rather than built from the home
+directory, which is wrong on any machine whose desktop is redirected.
+
+**Interface.** Every hairline is one pixel and carries the brand red, muted so
+a one-pixel line does not read heavier than it is; the dark surfaces all drop
+by the same six values, so the steps between them are unchanged and only the
+floor moved; the Summary's clock block gains the zebra shading the tables
+below it have; the window title is plain text rather than red, leaving the red
+to mark what is selected. The unit is spelled `MHz` throughout -- it was
+`Mhz` in fifteen places and `MHz` in twenty-three -- Gear Mode reads `2`
+rather than `Gear Mode 2` beside a label that already says it, the processor
+loses its `(R)` and `(TM)`, and the board revision moves out of the board name
+into its own System Info row.
+
+**Housekeeping.** A hardcode and eight dead symbols. The SMBIOS-only channel
+count assumed which `Physical Memory N` tags were channel A and which channel
+B; it reads the channel letter off the socket locator now, the same rule the
+primary path uses, because no board is obliged to number its tags that way and
+this one does not. The Arrow Lake memory reference was written twice, as
+`33.334` in one getter and `"133.33 Mhz"` in another, and is one named
+constant. Removed: `_wmi_live`, `driver_available`, `TEMPERATURE_BLOCK_START`,
+`DFE_TAP_FORMULA`, four unused bank-group constants and a duplicated
+`CA_ODT_FORMULA`.
+
+**VTT is gone on LGA 1700 DDR5.** It is a Skylake-era board rail. The DDR4 row
+list already said no LGA 1700 VRM or Super I/O channel reports one, which is a
+fact about the socket rather than about DDR4, so the DDR5 list was simply
+missing it.
+
+
 ## 1.0.0
 
 First public release.

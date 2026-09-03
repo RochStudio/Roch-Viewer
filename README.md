@@ -1,4 +1,4 @@
-# Roch Viewer 1.0.0
+# Roch Viewer 1.0.1
 
 Roch Viewer is a Windows memory-controller and timing viewer for Intel and AMD
 desktop platforms. It reads the memory controller, the modules, the board and the CPU
@@ -24,6 +24,14 @@ MCHBAR offsets at silicon they were not written for.
 The Intel side is validated on an ASUS ROG MAXIMUS Z790 APEX with an
 i9-14900KS at DDR5-8000 Gear 2, cross-checked against CPU-Z, HWiNFO,
 VoidTimings, ASRock Timing Configurator and MemTweakIt.
+
+Two further benches, and the reason both are named: every defect 1.0.1 fixes
+was invisible on the board the code was written against. A Gigabyte Z890
+AORUS TACHYON ICE with a Core Ultra 7 270K Plus at DDR5-8800 covers LGA1851,
+and an MSI Z790MPOWER with an i5-14600KF at DDR5-8200 covers a second LGA1700
+board -- where the Super I/O rail map derived on the first one turned out to
+name a different rail, which is why that map is now chosen by board model
+rather than assumed.
 
 The AMD side was developed and validated on an MSI B850MPOWER with a Ryzen
 9850X3D, against same-boot ZenTimings, and has not been re-run since it was
@@ -59,10 +67,10 @@ timings worth seeing at a glance, laid out in three columns with the signal
 levels beside them. It is sized to hold everything it shows, so it carries no
 scrollbar.
 
-**System Info** (49 rows) — the OS and platform, the processor with its CPUID
-code name and process node, the board with its chipset, southbridge and Super
-I/O, the clock chain, the memory with each module's SPD identity, and the
-graphics card.
+**System Info** (50 rows) — the OS and platform, the processor with its CPUID
+code name and process node, the board with its revision, chipset, southbridge
+and Super I/O, the clock chain, the memory with each module's SPD identity,
+and the graphics card.
 
 **Timings** (78 rows) — primary, secondary and tertiary timings, the refresh
 group, command timings, the power-down group, and the bus timings that belong
@@ -88,6 +96,11 @@ and a reset.
 
 **Advanced window** — every row from the four reading tabs in one searchable
 list, filtered as you type, for when you know the name of the field you want.
+Its **Dump** button writes the lot to `RochViewer.txt` on the desktop, one
+`name : value` per line, so a configuration can be kept or posted without
+screenshotting five tabs. A row that could not be read is written as `N/A`
+rather than dropped: a dump that quietly omits what it missed is one you
+cannot trust to be complete.
 
 ## How it reads
 
