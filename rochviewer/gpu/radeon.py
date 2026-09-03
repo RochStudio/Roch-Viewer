@@ -195,19 +195,6 @@ def _driver_details():
     return {}
 
 
-def gpu_text(key, reader=read_gpu):
-    """One field of the installed card, as display text, or None."""
-    found = reader() or {}
-    value = found.get(key)
-    if value is None:
-        return None
-    if key == "cores":
-        return "%d Unified" % value
-    if key == "rops_tmus":
-        return None
-    return str(value)
-
-
 def rops_tmus_text(reader=read_gpu):
     """ROP and TM unit counts as one row, the way GPU-Z pairs them."""
     found = reader() or {}

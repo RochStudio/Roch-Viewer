@@ -199,11 +199,10 @@ def pci_config_dword(device, function, offset, bus=0):
     table of what the identifiers mean.
     """
     try:
-        from rochviewer.hardware.pci_mcfg import ecam_address
-        from rochviewer.intel.intel_pch_smbus import default_ecam_allocation
+        from rochviewer.hardware.pci_mcfg import default_allocation, ecam_address
         from rochviewer.hardware.read import read_physical_memory_int
 
-        allocation = default_ecam_allocation()
+        allocation = default_allocation(0, bus)
         if allocation is None:
             return None
         return read_physical_memory_int(
@@ -381,7 +380,7 @@ def lpcio_name():
     from the chip name, which carries no vendor of its own.
     """
     try:
-        from rochviewer.intel.intel_board_sensors import board_sensor_profile
+        from rochviewer.sensors.board_sensors import board_sensor_profile
 
         profile = board_sensor_profile()
     except Exception:

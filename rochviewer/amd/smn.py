@@ -23,10 +23,7 @@ Port I/O is injected (``io``) so the decode/transport logic can be tested
 without ever touching hardware.
 """
 
-import ctypes
-import os
 import threading
-from ctypes import wintypes
 
 # -- PCI config mechanism constants -----------------------------------------
 CF8_PORT = 0xCF8              # config address port
@@ -57,8 +54,6 @@ RSMU_TABLE_VERSION_COMMAND = 0x05
 WAIT_OBJECT_0 = 0x00000000
 WAIT_ABANDONED = 0x00000080
 WAIT_TIMEOUT = 0x00000102
-WAIT_FAILED = 0xFFFFFFFF
-
 DEFAULT_MUTEX_NAME = "Global\\Access_PCI"
 
 def _config_address(reg):
@@ -71,7 +66,6 @@ def _config_address(reg):
 # mutexes sharing a name, which is the opposite of what the name is for.
 from rochviewer.hardware.lowlevel_io import (
     DEFAULT_MUTEX_NAME,
-    InpOutByteIO,
     InpOutPortIO,
     NamedMutex,
     _config_address,

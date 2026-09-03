@@ -96,7 +96,7 @@ def installed_generation():
     detection, so naming it at the top would be a cycle.
     """
     try:
-        from rochviewer.intel.intel_timings import detect_ddr_generation
+        from rochviewer.memory.ddr_generation import detect_ddr_generation
 
         return detect_ddr_generation()
     except Exception:

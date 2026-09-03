@@ -38,13 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rochviewer.amd.power_metrics import (  # noqa: F401  (re-exported for callers)
-    METRICS,
-    METRICS_BY_KEY,
-    PowerMetric,
-    format_power,
-    validate_power,
-)
+from rochviewer.amd.power_metrics import METRICS_BY_KEY, validate_power
 from rochviewer.amd.smu_clocks import (
     shared_rsmu_access,
     check_cpu_gate,

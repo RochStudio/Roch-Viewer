@@ -63,6 +63,11 @@ Roch Viewer began as a private tool validated on one bench and covering both
 Intel and AMD desktop platforms. This is the Intel half, published on its own:
 LGA1700 with DDR5 or DDR4, and LGA1851.
 
+Elevation relaunches through the windowed interpreter, so accepting the
+administrator prompt no longer leaves a console window sitting behind the
+viewer. Start from an already-elevated prompt when you want that console:
+there is no elevation step to pass through, so the process keeps it.
+
 Fixed before release, but after this repository was first pushed: the driver,
 the icon and the elevation relaunch were each looked for "beside my own
 module", which was the project root until the modules moved into packages.
@@ -80,10 +85,17 @@ in Gear 4 -- it read the two flags Raptor Lake uses, where this platform
 states the gear with one. tWRPDEN, tCKCKEH, tSR and tXSDLL read nothing at
 all: each spans or sits above the 32-bit boundary of a register that was being
 read four bytes at a time, so no bit position could reach them. tXPDLL was
-printing its neighbour's bits under its own name, DDR QCLK Ratio reported a
-quarter of its own quantity, and the channel count named the DDR5
-sub-channels where every tool it is read beside counts DIMM channels. If you
-pulled between those two dates, pull again.
+printing its neighbour's bits under its own name, and DDR QCLK Ratio reported
+a quarter of its own quantity. If you pulled between those two dates, pull
+again.
+
+The channel count is decided per platform, which took two boards to establish.
+Two DDR5 systems with two modules each, and the same reference tools report
+different numbers: a Z790 APEX reads Quad, a Z890 TACHYON reads Dual. Both
+descriptions are true of both boards -- two DIMM channels, four sub-channels --
+so the row follows the convention of the tools it is read beside rather than
+one rule for DDR5. A single rule in either direction was wrong for one of
+them.
 
 The AMD backend is here too, following ZenStates-Core and ZenTimings by
 irusanov. That was the reason this could not ship before: those are GPL-3.0,

@@ -205,7 +205,7 @@ class DecodeTest(unittest.TestCase):
         # channel, and the block's usual step was assumed to come with it.
         # At 8 mV the same raw reads 1.168 V against HWiNFO's 1.314.
         self.assertAlmostEqual(decode_volts(0x92, 0.008), 1.168, places=3)
-        from rochviewer.intel.intel_board_sensors import NCT6798D_RAILS
+        from rochviewer.sensors.board_sensors import NCT6798D_RAILS
 
         steps = {step for _address, step in NCT6798D_RAILS.values()}
         self.assertGreater(len(steps), 1)
@@ -240,7 +240,7 @@ class ConfirmedCaptureTest(unittest.TestCase):
     }
 
     def test_temperatures_decode_to_the_hwinfo_readings(self):
-        from rochviewer.intel.intel_board_sensors import NCT6798D_TEMPERATURES
+        from rochviewer.sensors.board_sensors import NCT6798D_TEMPERATURES
 
         expected = {"cpu": 33, "pch": 49, "system": 31}
         for key, address in NCT6798D_TEMPERATURES.items():
@@ -250,7 +250,7 @@ class ConfirmedCaptureTest(unittest.TestCase):
                 )
 
     def test_rails_decode_to_the_hwinfo_readings(self):
-        from rochviewer.intel.intel_board_sensors import NCT6798D_RAILS
+        from rochviewer.sensors.board_sensors import NCT6798D_RAILS
 
         expected = {
             "vcore": 1.314, "vtt": 1.040, "vdd2": 1.368,
@@ -264,7 +264,7 @@ class ConfirmedCaptureTest(unittest.TestCase):
                 )
 
     def test_every_mapped_reading_lands_inside_its_band(self):
-        from rochviewer.intel.intel_board_sensors import (
+        from rochviewer.sensors.board_sensors import (
             NCT6798D_RAILS, NCT6798D_TEMPERATURES, validate_rail,
             validate_temperature,
         )
@@ -283,7 +283,7 @@ class ConfirmedCaptureTest(unittest.TestCase):
         # for HWiNFO's "CPU Package 36 C", and it is still not a CPU sensor: it
         # did not move a degree across a full load cycle. Claiming it would be
         # the resemblance error this project keeps refusing to make.
-        from rochviewer.intel.intel_board_sensors import NCT6798D_TEMPERATURES
+        from rochviewer.sensors.board_sensors import NCT6798D_TEMPERATURES
 
         self.assertNotIn(0x0FB, NCT6798D_TEMPERATURES.values())
 
@@ -291,7 +291,7 @@ class ConfirmedCaptureTest(unittest.TestCase):
         # HWiNFO lists no VRM or socket sensor under this chip; its VR VCC
         # temperature is SVID telemetry on another transport. A blank row beats
         # a borrowed one.
-        from rochviewer.intel.intel_board_sensors import NCT6798D_RAILS, NCT6798D_TEMPERATURES
+        from rochviewer.sensors.board_sensors import NCT6798D_RAILS, NCT6798D_TEMPERATURES
 
         self.assertNotIn("vrm", NCT6798D_TEMPERATURES)
         self.assertNotIn("socket", NCT6798D_TEMPERATURES)

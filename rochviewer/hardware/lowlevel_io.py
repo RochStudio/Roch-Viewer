@@ -31,7 +31,6 @@ API beyond the port primitives the transports need for their own selectors.
 
 import ctypes
 import os
-import threading
 from ctypes import wintypes
 
 # -- PCI config mechanism constants -----------------------------------------
@@ -63,14 +62,9 @@ RSMU_TABLE_VERSION_COMMAND = 0x05
 WAIT_OBJECT_0 = 0x00000000
 WAIT_ABANDONED = 0x00000080
 WAIT_TIMEOUT = 0x00000102
-WAIT_FAILED = 0xFFFFFFFF
-
 DEFAULT_MUTEX_NAME = "Global\\Access_PCI"
 
 from rochviewer.hardware.driver_path import find_driver
-
-_DLL_PATH = find_driver()
-
 
 def _config_address(reg):
     """CF8 value selecting bus 0, device 0, function 0, register ``reg``."""

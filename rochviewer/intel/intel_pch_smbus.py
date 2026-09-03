@@ -200,10 +200,14 @@ def _default_read_dword():
 
 
 def default_ecam_allocation():
-    """Return the firmware's ECAM allocation covering the SMBus controller."""
-    from rochviewer.hardware.pci_mcfg import get_mcfg_table, parse_mcfg, select_allocation
+    """Return the firmware's ECAM allocation covering the SMBus controller.
 
-    return select_allocation(parse_mcfg(get_mcfg_table()), 0, SMBUS_BUS)
+    The lookup itself is platform-neutral and now lives with the rest of the
+    MCFG parsing; this keeps the name the SMBus code has always called.
+    """
+    from rochviewer.hardware.pci_mcfg import default_allocation
+
+    return default_allocation(0, SMBUS_BUS)
 
 
 def _config_dword(read_dword, allocation, function, offset):

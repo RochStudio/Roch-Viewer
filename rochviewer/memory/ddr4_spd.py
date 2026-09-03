@@ -51,8 +51,6 @@ registers along comes back perfectly from the same transaction.
 
 from rochviewer.memory.ddr5_spd import EM_DASH, decode_jep106_id, decode_manufacture_date
 
-# Register offsets within the upper window, i.e. SPD byte minus 256.
-SPD_WINDOW_BASE = 0x100
 SPD_MODULE_MFG_ID = 0x40          # byte 320, 2 bytes, JEP106
 SPD_MFG_LOCATION = 0x42           # byte 322
 SPD_MFG_YEAR = 0x43               # byte 323, BCD, years since 2000

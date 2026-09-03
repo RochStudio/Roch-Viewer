@@ -85,10 +85,6 @@ TEMPERATURE_MIN_C = 1
 TEMPERATURE_MAX_C = 125
 
 
-class IteUnavailable(RuntimeError):
-    """Raised when no ITE Super I/O responds."""
-
-
 WAIT_OBJECT_0 = 0x00000000
 WAIT_ABANDONED = 0x00000080
 MUTEX_TIMEOUT_MS = 500

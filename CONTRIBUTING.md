@@ -36,7 +36,7 @@ with the driver present, everything runs.
 
 ## Running the viewer
 
-You need `inpoutx64.dll` and `inpoutx64.sys` — see "Prerequisites" in the
+You need `inpoutx64.dll` — see "Prerequisites" in the
 README. They are not distributed with this project.
 
 ## Layout

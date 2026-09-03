@@ -37,7 +37,6 @@ import threading
 import tkinter
 import warnings
 import webbrowser
-import wmi
 
 
 # Termination and drive rows: their own Summary panel, never a timing column.
@@ -210,31 +209,37 @@ def summary_system_memory_blocks(available_names):
         # Identity first, packed tight so a long board name stays readable,
         # then a block that reads down the columns:
         #
-        #   what the DRAM runs at   what the firmware is   the clocks
-        #   DRAM Frequency          AGESA                  MCLK
-        #   DRAM Ratio              BCLK                   FCLK
-        #   UCLK:MCLK               Memory Capacity        UCLK
-        #   Power Down Mode         Refresh Mode           Nitro
-        #   Gear Down Mode
+        #   the kit and how it     the firmware and the    the clocks that
+        #   is being driven        policy applied to it    come out
+        #   DRAM Frequency         AGESA                   MCLK
+        #   Memory Capacity        BCLK                    FCLK
+        #   UCLK:MCLK              Refresh Mode            UCLK
+        #   Power Down Mode        Gear Down Mode          Nitro
         #
         # Each column starts where the timing section under it does, so the
         # memory picture sits over tCL, the firmware over tREFI, and the
         # clocks over RTT WR.
         #
-        # DRAM Ratio leads UCLK:MCLK because it is the coarser of the two: the
-        # ratio the kit is running at, then how the controller is geared to
-        # it. The first column is one row longer than the others as a result,
-        # and Gear Down Mode takes that row alone rather than the other two
-        # columns being padded to reach it.
+        # Four rows of three, every cell filled. The block used to run five
+        # rows with Gear Down Mode alone on the last one, because DRAM Ratio
+        # took a row in the first column that the other two had nothing to
+        # put beside. Gear Down Mode moved up next to Refresh Mode, which is
+        # the other controller policy on the strip, and the ragged row went
+        # with it.
+        #
+        # DRAM Ratio is not here. System Info still carries it, above
+        # UCLK:MCLK where it reads as the coarser of the two.
+        #
         # Model, the name System Info gives the board row. The vendor is
         # not carried here: the model names itself, and the two together
-        # spent a third of the strip on one fact.
-        add(("Model", "BIOS"))
+        # spent a third of the strip on one fact. Microcode joins it and the
+        # BIOS, as it does on the Intel strip: three firmware revisions
+        # reading as one fact about the board.
+        add(("Model", "BIOS", "Microcode"))
         add_aligned(("DRAM Frequency", "AGESA", "MCLK"))
-        add_aligned(("DRAM Ratio", "BCLK", "FCLK"))
-        add_aligned(("UCLK:MCLK", "Memory Capacity", "UCLK"))
-        add_aligned(("Power Down Mode", "Refresh Mode", "Nitro Rx/Tx/Ctrl"))
-        add_aligned(("Gear Down Mode", None, None))
+        add_aligned(("Memory Capacity", "BCLK", "FCLK"))
+        add_aligned(("UCLK:MCLK", "Refresh Mode", "UCLK"))
+        add_aligned(("Power Down Mode", "Gear Down Mode", "Nitro Rx/Tx/Ctrl"))
         return blocks
 
     # Three columns, each reading down as one kind of fact:
@@ -1470,6 +1475,7 @@ class TimingGUI:
         self.main_frame.pack(fill="both", expand=True, padx=5, pady=(2, 4))
 
         self.build_footer()
+        self.build_driver_notice()
 
         self.tabview = ctk.CTkTabview(
             self.main_frame,
@@ -1669,6 +1675,64 @@ class TimingGUI:
     TWITTER_HANDLE = "@MateoPCTech"
     FOOTER_HEIGHT = 24
     GRIP_SIZE = 14
+
+    # Shown only when the driver is missing, which is the state every new
+    # user starts in: it is not distributed with this project, so the first
+    # run has no way to read a register.
+    #
+    # Without this the window comes up looking healthy -- the CPU, the board,
+    # the BIOS and the module identity all arrive over WMI and need no driver
+    # at all -- while every register row reads N/A, and two read "Error".
+    # There is nothing on screen to say why, so the honest conclusions
+    # available to a user are "my hardware is not supported" or "this is
+    # broken", and neither is true.
+    #
+    # read.py already works out exactly what went wrong and leaves it in
+    # DRIVER_ERROR "for anything that wants to explain itself". Nothing did.
+    DRIVER_NOTICE_HEIGHT = 34
+
+    @staticmethod
+    def driver_notice_text(problem, missing):
+        """The notice for a driver problem, or None when there is not one.
+
+        Separate from the widget so it can be checked without a display,
+        which is what CI has.
+        """
+        if not problem:
+            return None
+        # read.py's message opens with the sentence that matters and follows
+        # it with the directories searched -- more than one line can hold. It
+        # is split on ". " rather than "." because the first sentence ends in
+        # a filename that has a dot of its own, and splitting there left the
+        # notice reading "inpoutx64".
+        headline = str(problem).split(". ")[0].strip().rstrip(".")
+        advice = ("Put it beside this program and restart." if missing else
+                  "Restart as administrator, or check it is the 64-bit build.")
+        return ("%s — the readings below come from the memory controller and "
+                "are unavailable without it. %s" % (headline, advice))
+
+    def build_driver_notice(self):
+        """Say why every reading is empty, when that is why."""
+        from rochviewer.hardware import read as hardware_read
+
+        problem = getattr(hardware_read, "DRIVER_ERROR", None)
+        if not problem:
+            return
+
+        notice = ctk.CTkFrame(self.main_frame, height=self.DRIVER_NOTICE_HEIGHT,
+                              corner_radius=6, fg_color=self.BG_COLOR2,
+                              border_width=1, border_color=self.BRAND_COLOR)
+        notice.pack(fill="x", side="top", padx=4, pady=(4, 0))
+        notice.pack_propagate(False)
+
+        ctk.CTkLabel(
+            notice,
+            text=self.driver_notice_text(
+                problem, getattr(hardware_read, "DLL_PATH", None) is None),
+            font=self.COMPACT_BOLD, text_color=self.BRAND_COLOR,
+            anchor="w", justify="left", wraplength=self.WINDOW_WIDTH - 40,
+        ).pack(side="left", padx=8)
+        self.driver_notice = notice
 
     def build_footer(self):
         footer = ctk.CTkFrame(self.main_frame, height=self.FOOTER_HEIGHT,
@@ -4024,9 +4088,41 @@ def launcher_path():
     return None
 
 
+WINDOWED_INTERPRETER = "pythonw.exe"
+
+
+def windowed_interpreter(executable=None):
+    """The interpreter to elevate into: windowed where one exists.
+
+    Elevation starts a brand new process, so whichever interpreter is named
+    here decides what the user ends up with for the rest of the session. A
+    console interpreter gives that process a console window, which sits behind
+    the viewer doing nothing -- and unlike the one the user started from, they
+    never asked for it. pythonw.exe is the same interpreter without it, beside
+    python.exe in every standard install.
+
+    The cost is that stdout goes nowhere under it, so the diagnostics this
+    tool prints when a register or a transport does not answer are lost. The
+    way back is to elevate first and start it yourself: an already-elevated
+    process never reaches this function, and keeps its console.
+
+    Falls back to the current interpreter when there is no windowed one --
+    an embedded or repackaged distribution may not ship pythonw, and a
+    console is worth much less than starting at all.
+    """
+    current = executable if executable is not None else sys.executable
+    current = current or ""
+    if os.path.basename(current).lower() == WINDOWED_INTERPRETER:
+        return current
+    windowed = os.path.join(os.path.dirname(current), WINDOWED_INTERPRETER)
+    return windowed if os.path.exists(windowed) else current
+
+
 def run_as_admin():
     """Relaunch with administrative privileges."""
     parameters = None
+    # Frozen already means a windowed executable; there is nothing to swap.
+    executable = sys.executable
     if not getattr(sys, "frozen", False):
         launcher = launcher_path()
         if launcher is None:
@@ -4036,8 +4132,9 @@ def run_as_admin():
             )
             sys.exit(1)
         parameters = f'"{launcher}"'
+        executable = windowed_interpreter()
     ctypes.windll.shell32.ShellExecuteW(
-        None, "runas", sys.executable, parameters, None, 1
+        None, "runas", executable, parameters, None, 1
     )
     sys.exit(0)
 

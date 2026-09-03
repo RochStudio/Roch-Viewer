@@ -16,11 +16,10 @@
 
 import wmi
 import winreg
-import os
+import importlib
 import sys
 import re
 from functools import lru_cache, partial, wraps
-from pathlib import Path
 from rochviewer.hardware.read import read_timing, read_physical_memory_int
 from rochviewer.ui.display_values import is_dual_timing, resolve_display_value
 # Classification only: this module performs no privileged access and is the
@@ -132,34 +131,49 @@ def ddr5_timing_label(platform, name):
     return name
 
 
-@lru_cache(maxsize=None)
+# The WMI connection, its per-class cache, and the generation detection that
+# uses them now live in rochviewer.memory.ddr_generation. Nothing about any
+# of the three is Intel: they read what SMBIOS already said. They moved
+# because the AM5 side needs the generation too, and reaching in here for it
+# imported this module -- whose body builds the table eagerly, against a
+# hardcoded MCHBAR that on an AMD board is somebody else's address space.
+#
+# Wrapped rather than imported by name, so that patching _wmi_static here
+# still steers the generation detection: the tests over the memory-type row
+# replace this module's accessor, and a plain import would have left the
+# moved function reading the real machine through its own copy.
+_DDR_GENERATION_MODULE = "rochviewer.memory.ddr_generation"
+
+
+def _ddr_generation():
+    """The generation module as it stands now, not as it stood at import.
+
+    Resolved per call through sys.modules rather than bound once: the test
+    fixture stubs wmi and re-imports this module to build the other
+    generation's table, and a name bound at import would have kept pointing
+    at the copy that had already read the real machine.
+    """
+    return importlib.import_module(_DDR_GENERATION_MODULE)
+
+
 def _wmi_connection():
-    """One WMI connection for the process.
+    """One WMI connection for the process. See ddr_generation."""
+    return _ddr_generation()._wmi_connection()
 
-    Building it is most of what a WMI lookup costs, and this file opened
-    thirteen of them while the table was being built.
-    """
-    return wmi.WMI()
+
+def _wmi_static(class_name):
+    """A WMI class's objects, queried once. See ddr_generation."""
+    return _ddr_generation()._wmi_static(class_name)
 
 
 @lru_cache(maxsize=None)
-def _wmi_static(class_name):
-    """Return a WMI class's objects, queried once.
+def detect_ddr_generation():
+    """DDR4, DDR5 or Unknown, through this module's own WMI accessor.
 
-    Only for classes describing identity or installed hardware, which cannot
-    change while the machine is running. Nine such classes were being queried
-    eighteen times between them.
-
-    Failure is cached too, deliberately: WMI being unavailable is not a
-    transient condition, and retrying it once per caller is how the startup
-    cost multiplied in the first place. dimm_inventory caches its own decode
-    the same way.
+    Cached, as it has always been: the installed generation cannot change
+    while the machine is running, and the table asks about twenty times.
     """
-    try:
-        return tuple(getattr(_wmi_connection(), class_name)())
-    except Exception as e:
-        print(f"Error querying {class_name}: {e}")
-        return ()
+    return _ddr_generation().detect_ddr_generation(wmi_static=_wmi_static)
 
 
 # Intel client CPUID models, and the process node each is built on. Family 6
@@ -358,7 +372,7 @@ def get_lpcio_name():
     The vendor comes from the reader that answered rather than from the chip
     name, which carries no vendor of its own.
     """
-    from rochviewer.intel.intel_board_sensors import board_sensor_profile
+    from rochviewer.sensors.board_sensors import board_sensor_profile
 
     profile = board_sensor_profile()
     reader = profile.get("reader") if profile else None
@@ -603,24 +617,40 @@ def get_tWTR_S(base=None):
 # latencies for them -- MC0/MC1 x CHA/CHB read 70, 65, 71 and 65, with rank 1
 # left at the unpopulated 25 on all four. Four sub-channels, one rank each.
 #
-# The row counts DIMM channels, and that is a reversal.
+# What this row counts is decided by the platform, because the tools it has to
+# agree with disagree with each other.
 #
-# It used to double the count on DDR5 to name the sub-channels, on a note
-# recording that ASRock's Timing Configurator showed "Channels # Quad" against
-# these same two populated slots. Timing Configurator 4.1.5 on this bench
-# shows "Channels # Dual" against exactly that configuration, so whatever the
-# earlier reading was, it is not what the tool reports now, and the doubling
-# was resting on it.
+# Two DDR5 boards, two modules in each, and the same two reference tools:
 #
-# Both numbers describe something real -- two DIMM channels, four sub-channels,
-# and the RTL block a tab away still trains four round-trip latencies. What
-# settles it is which one the row's name asks for: a channel count beside a
-# slot count is read as DIMMs, and every tool that shows the pair counts them
-# the same way.
+#   Z790 APEX    (LGA1700 DDR5)   ASRock Timing Configurator, HWiNFO: Quad / 4
+#   Z890 TACHYON (LGA1851)        the same two tools:                 Dual / 2
 #
-# Kept as a named constant rather than deleted. The sub-channel factor is a
-# fact about DDR5 whether or not this row multiplies by it.
+# Both numbers are true of both boards. Two DIMM channels, four sub-channels,
+# and the RTL block a tab away trains four round-trip latencies either way.
+# What differs is the convention each platform's tools follow, and a viewer
+# exists to agree with them -- so the factor is keyed on the platform, not on
+# the memory generation.
+#
+# This was DDR5-wide in both directions before, and both were wrong for one of
+# these boards: doubling everywhere made the Tachyon say Quad against a tool
+# showing Dual, and then doubling nowhere made the APEX say Dual against a
+# tool showing Quad. One board cannot settle the other.
+SUBCHANNEL_COUNTED_PLATFORMS = (LGA1700_DDR5,)
 DDR5_SUBCHANNELS_PER_CHANNEL = 2
+
+
+def reported_channel_count(populated_channels, platform=None):
+    """How many channels this platform's reference tools show for that many.
+
+    Pure, so the convention can be tested for a platform without standing in
+    front of one.
+    """
+    if not populated_channels:
+        return 0
+    if platform in SUBCHANNEL_COUNTED_PLATFORMS:
+        return populated_channels * DDR5_SUBCHANNELS_PER_CHANNEL
+    return populated_channels
+
 
 CHANNEL_LAYOUT_NAMES = {
     1: "Single Channel",
@@ -632,20 +662,21 @@ CHANNEL_LAYOUT_NAMES = {
 }
 
 
-def channel_layout_name(populated_channels, generation):
-    """Name the layout for a count of populated channels. Pure, so it can be
-    tested without a machine to read."""
-    if not populated_channels:
+def channel_layout_name(populated_channels, platform=None):
+    """Name the layout for a count of populated channels, as ``platform``
+    counts them. Pure, so it can be tested without a machine to read."""
+    count = reported_channel_count(populated_channels, platform)
+    if not count:
         return None
-    count = populated_channels
     return CHANNEL_LAYOUT_NAMES.get(count, "%d Channels" % count)
 
 
 def detect_dual_channel_memory():
     """How many channels the controller runs, named as the reference tools do.
 
-    Counts the channels the installed modules populate. See
-    DDR5_SUBCHANNELS_PER_CHANNEL for why that is not doubled on DDR5.
+    Counts the channels the installed modules populate, then names them the
+    way this platform's reference tools do. See SUBCHANNEL_COUNTED_PLATFORMS
+    for why that is not one rule for all of DDR5.
 
     Falls back to the slot-tag reading below when the module inventory is
     unavailable. Both paths now answer the same question, which they did not
@@ -658,7 +689,7 @@ def detect_dual_channel_memory():
             module.get("channel") for module in read_modules()
             if module.get("channel")
         }
-        named = channel_layout_name(len(channels), detect_ddr_generation())
+        named = channel_layout_name(len(channels), active_platform())
         if named:
             return named
     except Exception:
@@ -666,20 +697,70 @@ def detect_dual_channel_memory():
     return _channel_layout_from_slot_tags()
 
 
-def _channel_layout_from_slot_tags():
-    """Channel count from SMBIOS alone, for when the module inventory fails.
+# The board's own socket name carries the channel; a slot count does not.
+# "DIMMA2", "Controller0-DIMMB1" and "ChannelC-DIMM0" all name one, and
+# counting the distinct letters asks the same question the inventory path
+# asks, of the same SMBIOS records.
+_LOCATOR_CHANNEL = re.compile(r"(?:CHANNEL|CH|DIMM)[ _-]?([A-H])(?![A-Z])", re.I)
 
-    Reads the channel letter off each populated socket's locator -- DIMMA1,
-    Controller1-DIMMB1 -- the same rule the inventory uses, so both paths
-    answer the same question the same way. The previous version assumed which
-    "Physical Memory N" tags were channel A and which channel B, a numbering
-    no board is obliged to follow; on this one the tags are 0 and 1 and the
-    locators say A and B, which that assumption had no way to know.
+
+def _channels_from_locators(modules):
+    """The distinct channel letters the board names for its populated slots.
+
+    Capacity is checked rather than assumed. Most firmware lists only the
+    sockets that hold a module, but some emits an entry for every socket with
+    a capacity of zero, and counting those would report a channel the board
+    has nothing in. get_slots_used draws the same distinction.
     """
-    from rochviewer.memory.dimm_inventory import channel_of
+    letters = set()
+    for module in modules:
+        # Only a socket that says it is empty is skipped. A missing or
+        # unreadable capacity is not evidence of an empty slot, and treating
+        # it as one would drop a channel the board really has.
+        capacity = getattr(module, "Capacity", None)
+        try:
+            if capacity is not None and int(capacity) == 0:
+                continue
+        except (TypeError, ValueError):
+            pass
+        match = _LOCATOR_CHANNEL.search(
+            str(getattr(module, "DeviceLocator", "") or ""))
+        if match:
+            letters.add(match.group(1).upper())
+    return letters
 
+
+def _channel_layout_from_slot_tags():
+    """Channel layout from SMBIOS alone, when the module inventory is absent.
+
+    Reads the socket names first, because they state the channel. Counting
+    slots cannot: the reading below only ever separated one populated group
+    from two, so every four-slot board came back Dual -- correct for the
+    two-DIMM-per-channel consumer boards this tool runs on, and wrong for a
+    genuinely four-channel one, which it had no way to name at all.
+
+    A board whose sockets say nothing is now reported as unread rather than
+    called Dual. Two slots stays a real answer either way: two populated
+    sockets cannot be more than two channels.
+    """
     try:
-        sockets = _wmi_static("Win32_PhysicalMemory")
+        modules = _wmi_static("Win32_PhysicalMemory")
+        named = channel_layout_name(
+            len(_channels_from_locators(modules)), active_platform())
+        if named:
+            return named
+
+        memory_arrays = _wmi_static("Win32_PhysicalMemoryArray")
+        if not memory_arrays:
+            return "No memory array detected"
+        num_slots = memory_arrays[0].MemoryDevices
+        used_slots = {module.Tag for module in modules}
+
+        if len(used_slots) <= 1:
+            return "Single Channel"
+        if num_slots == 2:
+            return "Dual Channel"
+        return f"{num_slots} DIMM slots detected - Unknown Channel Layout"
     except Exception as e:
         print(f"Error detecting memory layout: {e}")
         return None
@@ -1200,51 +1281,6 @@ def get_psf0_pll():
         return "Unknown"
 
 
-@lru_cache(maxsize=None)
-def detect_ddr_generation():
-    """Return DDR4, DDR5, or Unknown using SMBIOS/WMI with board-name fallbacks."""
-    try:
-        detected = []
-        for memory in _wmi_static("Win32_PhysicalMemory"):
-            for field in ("SMBIOSMemoryType", "MemoryType"):
-                raw = getattr(memory, field, None)
-                try:
-                    code = int(raw)
-                except (TypeError, ValueError):
-                    continue
-                # SMBIOS type codes: DDR4/LPDDR4 and DDR5/LPDDR5.
-                if code in (26, 30):
-                    detected.append("DDR4")
-                elif code in (34, 35):
-                    detected.append("DDR5")
-
-        if "DDR5" in detected:
-            return "DDR5"
-        if "DDR4" in detected:
-            return "DDR4"
-
-        # Some systems do not populate SMBIOSMemoryType correctly. Check text fields.
-        text_fields = []
-        for memory in _wmi_static("Win32_PhysicalMemory"):
-            for field in ("PartNumber", "Description", "Caption"):
-                value = (getattr(memory, field, "") or "").upper()
-                if value:
-                    text_fields.append(value)
-        for board in _wmi_static("Win32_BaseBoard"):
-            text_fields.extend([
-                (getattr(board, "Product", "") or "").upper(),
-                (getattr(board, "Version", "") or "").upper(),
-            ])
-        joined = " ".join(text_fields)
-        if "DDR5" in joined:
-            return "DDR5"
-        if "DDR4" in joined:
-            return "DDR4"
-    except Exception as e:
-        print(f"Error detecting DDR generation: {e}")
-    return "Unknown"
-
-
 def _get_twr_from_controller(ddr_generation=None, base=None):
     """Derive active tWR from the platform-specific write-precharge and tCWL fields."""
     try:
@@ -1399,7 +1435,6 @@ def get_tmod_value():
         return "Error"
 
 
-# Column-to-column delays, from Intel's documented memory-controller fields.
 def _get_bank_group_timing(setup_name, register_offset, bit_start, base=None):
     """Return a live column-to-column timing in DRAM tCK cycles."""
     try:
@@ -5504,7 +5539,7 @@ SENSOR_TAB = "Sensors"
 def _board_rail(key):
     """Read one Super I/O rail, importing that path only when it is used."""
     try:
-        from rochviewer.intel.intel_board_sensors import rail_text
+        from rochviewer.sensors.board_sensors import rail_text
 
         return rail_text(key)
     except Exception:
@@ -5559,7 +5594,7 @@ def _board_temperature(key):
     the sensor.
     """
     try:
-        from rochviewer.intel.intel_board_sensors import temperature_text
+        from rochviewer.sensors.board_sensors import temperature_text
 
         text = temperature_text(key)
         if text:
@@ -6980,8 +7015,10 @@ MISC_FEATURE_FIELDS = (
 # 0x5E00, and the whole 0x5Exx block is dead silicon here -- zero to every
 # query, as is 0x5918 beside it. A zero from a dead register decodes to a
 # confident "Disabled" that means nothing, which is worse than N/A because it
-# does not look like an absence. Kept visible on request rather than hidden,
-# and recorded here so the row is not mistaken for a reading.
+# does not look like an absence. Kept visible on request rather than hidden;
+# this note is beside the row above so it is not mistaken for a reading. It
+# was also a constant naming that row, which nothing consulted -- an unread
+# list of untrusted rows enforces nothing and reads as though it does.
 
 # 2N Mode is MR2 bit 2, reached through the pointer path rather than by
 # indexing the table directly: an entry's data byte names the mode register

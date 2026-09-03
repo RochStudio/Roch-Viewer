@@ -77,7 +77,13 @@ TRAINING_FIELDS = frozenset({
     "ca_odt_b", "ck_odt_b", "cs_odt_b",
     "proc_odt_pu", "proc_odt_pd",
     "proc_ca_ds", "proc_ck_ds", "proc_cs_ds",
-    "proc_dq_ds_pu", "proc_dq_ds_pd",
+    # proc_dq_ds belongs here beside its own pull-up and pull-down: all three
+    # come out of the APOB training block. Leaving it off sent it to the UMC
+    # decode instead, which has no such field, so value() answered with an em
+    # dash for something that had been read correctly. The per-channel path
+    # reads the block directly and was never affected, which is why both
+    # Summary and Skew kept showing it and nothing looked wrong.
+    "proc_dq_ds", "proc_dq_ds_pu", "proc_dq_ds_pd",
     "dram_dq_ds_pu", "dram_dq_ds_pd",
 })
 
@@ -258,7 +264,7 @@ class Am5Runtime:
             # mutex traffic for one set of numbers.
             "board_temp": _LiveSource(
                 lambda: _import_call(
-                    "rochviewer.intel.intel_board_sensors", "read_board_temperatures"
+                    "rochviewer.sensors.board_sensors", "read_board_temperatures"
                 ),
                 lambda r: "Super I/O READ-ONLY — %d sensor(s)" % len(r),
                 "Board sensors", empty={},

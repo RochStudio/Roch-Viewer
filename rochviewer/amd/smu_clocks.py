@@ -116,35 +116,17 @@ class SmuClocks:
     mclk_mhz: float
 
 
-def _decode_cpuid_family_model(eax):
-    eax = int(eax) & 0xFFFFFFFF
-    base_family = (eax >> 8) & 0xF
-    base_model = (eax >> 4) & 0xF
-    ext_family = (eax >> 20) & 0xFF
-    ext_model = (eax >> 16) & 0xF
-    family = base_family + ext_family if base_family == 0xF else base_family
-    model = (ext_model << 4) | base_model if base_family in (0x6, 0xF) else base_model
-    return family, model
+def check_cpu_gate(cpu_name=""):
+    """Return "" if this CPU may be read, else the reason it may not.
 
-
-def _read_cpuid_eax1():
-    # Lightweight CPUID via Windows IsProcessorFeaturePresent is insufficient;
-    # use the existing WMI path for model gating and keep CPUID optional.
-    return None
-
-
-def check_cpu_gate(cpu_name="", family=None, model=None, core_count=None):
-    """Return \"\" if allowed, else a refusal reason."""
-    name = str(cpu_name or "")
-    if not is_granite_ridge_cpu(name):
+    The name is the whole gate. It also took family, model and core count,
+    each checked only when supplied and never supplied by anything -- so the
+    CPUID they needed was a stub returning None, and the gate that read as
+    "family 0x1A, model 0x44" was in fact the name test alone. Better one
+    check that runs than four that describe an intention.
+    """
+    if not is_granite_ridge_cpu(str(cpu_name or "")):
         return "CPU is not a validated desktop Ryzen 9000 Granite Ridge part"
-    if family is not None and int(family) != 0x1A:
-        return "CPU family 0x%X is not Granite Ridge (0x1A)" % int(family)
-    if model is not None and int(model) not in (0x44, 0x60, 0x61, 0x70, 0x78):
-        # 0x44 = 9850X3D/9800X3D class; keep a narrow desktop set.
-        return "CPU model 0x%X is outside the approved Granite Ridge set" % int(model)
-    if core_count is not None and int(core_count) not in (6, 8, 12, 16):
-        return "Unexpected core count %s" % core_count
     return ""
 
 
