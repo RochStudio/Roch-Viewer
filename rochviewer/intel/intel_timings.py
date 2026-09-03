@@ -388,21 +388,9 @@ def get_memory_type():
     return " / ".join(found) if found else None
 
 
-def _wmi_live(class_name):
-    """Query a class whose values move, reusing the shared connection.
-
-    Performance counters belong here rather than in _wmi_static: caching one
-    would pin a reading that is supposed to change.
-    """
-    try:
-        return tuple(getattr(_wmi_connection(), class_name)())
-    except Exception as e:
-        print(f"Error querying {class_name}: {e}")
-        return ()
-
 # The clock rows are read down one column, so they have to be written the same
 # way. Three of them were built by pasting the unit straight onto a rounded
-# float, which put "5000.0Mhz" next to "2000 Mhz": no space, and a decimal
+# float, which put "5000.0Mhz" next to "2000 MHz": no space, and a decimal
 # point on a whole number. Rounding to a fixed number of places and then
 # dropping what it added keeps a real fraction like 4987.5 and loses the ".0".
 MHZ_DECIMALS = 3
@@ -411,7 +399,7 @@ MHZ_DECIMALS = 3
 def _mhz(value, decimals=MHZ_DECIMALS):
     """A megahertz reading, written the way the rest of the column is."""
     text = f"{round(float(value), decimals):.{decimals}f}".rstrip("0")
-    return "%s Mhz" % text.rstrip(".")
+    return "%s MHz" % text.rstrip(".")
 
 
 def get_imc_freq():
@@ -679,34 +667,35 @@ def detect_dual_channel_memory():
 
 
 def _channel_layout_from_slot_tags():
+    """Channel count from SMBIOS alone, for when the module inventory fails.
+
+    Reads the channel letter off each populated socket's locator -- DIMMA1,
+    Controller1-DIMMB1 -- the same rule the inventory uses, so both paths
+    answer the same question the same way. The previous version assumed which
+    "Physical Memory N" tags were channel A and which channel B, a numbering
+    no board is obliged to follow; on this one the tags are 0 and 1 and the
+    locators say A and B, which that assumption had no way to know.
+    """
+    from rochviewer.memory.dimm_inventory import channel_of
+
     try:
-        # Get number of memory slots
-        memory_arrays = _wmi_static("Win32_PhysicalMemoryArray")
-        if not memory_arrays:
-            return "No memory array detected"
-        num_slots = memory_arrays[0].MemoryDevices
-
-        # Get used memory slots
-        used_slots = set(memory.Tag for memory in _wmi_static("Win32_PhysicalMemory"))
-
-        if num_slots == 2:
-            if {"Physical Memory 0", "Physical Memory 1"}.issubset(used_slots):
-                return "Dual Channel"
-            else:
-                return "Single Channel"
-        elif num_slots == 4:
-            a_slots = {"Physical Memory 3", "Physical Memory 2"}
-            b_slots = {"Physical Memory 1", "Physical Memory 0"}
-            a_used = a_slots & used_slots
-            b_used = b_slots & used_slots
-            if a_used and b_used:
-                return "Dual Channel"
-            else:
-                return "Single Channel"
-        else:
-            return f"{num_slots} DIMM slots detected - Unknown Channel Layout"
+        sockets = _wmi_static("Win32_PhysicalMemory")
     except Exception as e:
-        return f"Error detecting memory layout: {e}"
+        print(f"Error detecting memory layout: {e}")
+        return None
+    channels = set()
+    for socket in sockets:
+        if not int(getattr(socket, "Capacity", 0) or 0):
+            continue
+        locator = str(getattr(socket, "DeviceLocator", "") or "")
+        # The letter after the last "DIMM", or the leading letter.
+        tail = locator.upper().rsplit("DIMM", 1)[-1].lstrip("_-")
+        letter = channel_of(tail) if tail[:1].isalpha() else None
+        if letter:
+            channels.add(letter)
+    return channel_layout_name(len(channels), detect_ddr_generation())
+
+
 # Identity, not telemetry. None of the four functions below can return a
 # different answer while the machine is running, and each costs a WMI query of
 # roughly a second. Uncached, is_arrow_lake_platform alone was called 26 times
@@ -716,8 +705,13 @@ def _channel_layout_from_slot_tags():
 def get_cpu_name():
     try:
         cpu = _wmi_static("Win32_Processor")[0]
-        cpu_name = cpu.Name.replace("Processor", "").strip()
-        return cpu_name
+        # "Intel(R) Core(TM) i5-14600KF" is the registered form; the marks
+        # carry no information the reader wants and every other tool drops
+        # them. Collapsed afterwards so their removal leaves no double space.
+        cpu_name = cpu.Name
+        for mark in ("(R)", "(TM)", "Processor"):
+            cpu_name = cpu_name.replace(mark, "")
+        return " ".join(cpu_name.split())
     except Exception as e:
         print(f"Error retrieving CPU name: {e}")
         return "Error"
@@ -757,15 +751,22 @@ def get_motherboard_display():
         board = _wmi_static("Win32_BaseBoard")[0]
         manufacturer = (getattr(board, "Manufacturer", "") or "").strip()
         product = (getattr(board, "Product", "") or "").strip()
-        version = (getattr(board, "Version", "") or "").strip()
+        # The board revision used to be appended here as "(5.0)". It is a
+        # fact about the PCB, not the name, and in the one-line Summary strip
+        # it read as part of the model. It has its own System Info row now.
         parts = [p for p in [manufacturer, product] if p]
-        value = " ".join(parts).strip()
-        if version and version not in value:
-            value = f"{value} ({version})" if value else version
-        return value or "Unknown"
+        return " ".join(parts).strip() or "Unknown"
     except Exception as e:
         print(f"Error retrieving motherboard display name: {e}")
         return "Unknown"
+
+@lru_cache(maxsize=None)
+def get_motherboard_version():
+    """The board revision on its own -- "5.0" -- or None when firmware has
+    none. Lifted out of the display name, where it read as part of it."""
+    version = _baseboard("Version")
+    return version or None
+
 
 def _baseboard(attribute):
     """One stripped Win32_BaseBoard string, or "" when it is unavailable."""
@@ -930,7 +931,6 @@ def is_arrow_lake_platform():
         register_is_valid = qclk_ratio is not None and 1 <= int(qclk_ratio) <= 254
         return register_is_valid and (
             "Z890" in board_name
-            or "CORE(TM) ULTRA" in cpu_name
             or "CORE ULTRA" in cpu_name
         )
     except Exception as e:
@@ -966,6 +966,16 @@ def get_dram_ratio_value():
 # byte halved from 132 to 66. That also settles what the bit is: had the
 # ratio been a nine-bit field, bit 8 would be its top bit rather than a flag
 # of its own, and at ratio 132 nothing distinguished the two readings.
+# The memory PLL reference the Arrow Lake ratio counts in, and the one number
+# the DRAM Frequency and DDR QCLK Ratio rows share. It was written twice --
+# 33.334 in get_speed and "133.33 MHz" in get_qclk_ratio -- for one fact: the
+# ratio at 0x13D10 advances in quarter-reference steps, so 133.334 / 4 is the
+# multiplier. Pinned by two gears against SMBIOS: 132 x 33.334 x 2 and
+# 66 x 33.334 x 4 both land on 8800. Derived, since the selector register that
+# carries it on earlier platforms reads zero here; see get_qclk_ratio.
+ARROW_LAKE_QCLK_REFERENCE_MHZ = 133.334
+ARROW_LAKE_RATIO_STEPS_PER_REFERENCE = 4
+
 ARROW_LAKE_GEAR_REGISTER = 0x13D10
 ARROW_LAKE_GEAR_BIT = 8
 
@@ -993,7 +1003,7 @@ def get_gear_mode_value():
     try:
         if is_arrow_lake_platform():
             gear = arrow_lake_gear()
-            return "Unknown" if gear is None else "Gear Mode %d" % gear
+            return "Unknown" if gear is None else "%d" % gear
 
         raw_gear = read_timing(
             MCHBAR + 0x5E04,
@@ -1012,7 +1022,7 @@ def get_dram_frequency():
         freq = _parse_first_number(get_speed())
         if freq is None:
             return "Unknown"
-        return f"{freq:.0f} Mhz"
+        return f"{freq:.0f} MHz"
     except Exception as e:
         print(f"Error retrieving DRAM frequency: {e}")
         return "Unknown"
@@ -1023,7 +1033,7 @@ def get_mclk():
         if freq is None:
             return "Unknown"
         mclk = freq / 2
-        return f"{mclk:.0f} Mhz"
+        return f"{mclk:.0f} MHz"
     except Exception as e:
         print(f"Error retrieving MCLK: {e}")
         return "Unknown"
@@ -1031,10 +1041,13 @@ def get_mclk():
 # The memory controller clock runs at MCLK divided by the active gear ratio,
 # so Gear 2 at 4400 MCLK gives a 2200 UCLK.  Returning MCLK unchanged made
 # every geared configuration report UCLK too high.
+# Keyed by the row's display value, which is the bare gear number: the label
+# beside it already says "Gear Mode", and "Gear Mode  Gear Mode 2" read the
+# name twice.
 GEAR_DIVIDER = {
-    "Gear Mode 1": 1,
-    "Gear Mode 2": 2,
-    "Gear Mode 4": 4,
+    "1": 1,
+    "2": 2,
+    "4": 4,
 }
 
 def get_uclk():
@@ -1043,7 +1056,7 @@ def get_uclk():
         divider = GEAR_DIVIDER.get(str(get_gear_mode_value()))
         if mclk is None or divider is None:
             return "Unknown"
-        return f"{mclk / divider:.0f} Mhz"
+        return f"{mclk / divider:.0f} MHz"
     except Exception as e:
         print(f"Error retrieving UCLK: {e}")
         return "Unknown"
@@ -1143,7 +1156,7 @@ def get_qclk_ratio():
     """Report the memory PLL reference the QCLK ratio counts in.
 
     This row has two states everywhere else in the tool -- 133.33 MHz or
-    100.00 MHz -- selected by a bit. Arrow Lake used to return "33.33 Mhz"
+    100.00 MHz -- selected by a bit. Arrow Lake used to return "33.33 MHz"
     here, which is not one of them: 33.334 is the internal multiplier used by
     get_speed(), and the reference is four times that. The row was reporting a
     quarter of its own quantity.
@@ -1164,13 +1177,13 @@ def get_qclk_ratio():
     """
     try:
         if is_arrow_lake_platform():
-            return "133.33 Mhz"
+            return "%.2f MHz" % ARROW_LAKE_QCLK_REFERENCE_MHZ
 
         rawmul = read_timing(MCHBAR + 0x5E04, bit_start=8, bit_length=4)
         if rawmul == 0:
-            return "133.33 Mhz"
+            return "133.33 MHz"
         if rawmul == 1:
-            return "100.00 Mhz"
+            return "100.00 MHz"
         return str(rawmul)
     except Exception as e:
         print(f"Error retrieving DDR QCLK ratio: {e}")
@@ -1180,7 +1193,7 @@ def get_psf0_pll():
     try:
         bclk = get_bclk()
         if isinstance(bclk, (int, float)):
-            return f"{(bclk * 10.6666):.2f} Mhz"
+            return f"{(bclk * 10.6666):.2f} MHz"
         return "Unknown"
     except Exception as e:
         print(f"Error retrieving PSF0 PLL: {e}")
@@ -1387,15 +1400,6 @@ def get_tmod_value():
 
 
 # Column-to-column delays, from Intel's documented memory-controller fields.
-# TC_RDRD holds the read-to-read pair and TC_WRWR the write-to-write one; in
-# each, field .sg is the same-bank-group case and .dg the different-bank-group
-# one. Both are already in tCK and both exist on DDR4 and DDR5.
-TC_RDRD_OFFSET = 0xE00C
-TC_WRWR_OFFSET = 0xE018
-BANK_GROUP_SAME_BIT = 0
-BANK_GROUP_DIFFERENT_BIT = 8
-
-
 def _get_bank_group_timing(setup_name, register_offset, bit_start, base=None):
     """Return a live column-to-column timing in DRAM tCK cycles."""
     try:
@@ -1829,25 +1833,6 @@ DFE_GAIN_FORMULA ={
     15: "RFU"
 }
 
-DFE_TAP_FORMULA ={
-    0: "RZQ/7 (34)",
-    1: "RZQ/6 (40)",
-    2: "RZQ/5 (48)",
-    3: "RFU",
-    4: "RZQ/7 (34)",
-    5: "RZQ/6 (40)",
-    6: "RZQ/5 (48)",
-    7: "RFU",
-    8: "RZQ/7 (34)",
-    9: "RZQ/6 (40)",
-    10: "RZQ/5 (48)",
-    11: "RFU",
-    12: "RZQ/7 (34)",
-    13: "RZQ/6 (40)",
-    14: "RZQ/5 (48)",
-    15: "RFU"
-}
-
 RON_FORMULA ={
     0: "RZQ/7 (34)",
     1: "RZQ/6 (40)",
@@ -1855,9 +1840,9 @@ RON_FORMULA ={
     3: "RFU"
 }
 GEAR_MODE_FORMULA = {
-    0: "Gear Mode 1",
-    1: "Gear Mode 2",
-    2: "Gear Mode 4"
+    0: "1",
+    1: "2",
+    2: "4"
 }
 REFRESH_MODE_FORMULA = {
     0: "Normal Refresh (tRFC)",
@@ -1979,6 +1964,22 @@ DFE_TAP4_FORMULA = {
     120: "RFU", 121: "RFU", 122: "RFU", 123: "RFU", 124: "RFU", 125: "RFU", 126: "RFU", 127: "RFU",
 }
 
+# RZQ divided by 0.5, 1, 2, 3, 4, 5 and 6, and code 6 is the rung that was
+# missing. The table read 480, 240, 120, 80, 60, RFU, 40 -- a ladder with a
+# hole in it, where every neighbour is present and only the 48 ohm step is
+# absent. The RTT tables beside it carry the same progression with no gap.
+#
+# It surfaced as a Group B fault on MSI Z790MPOWER, where all three Group B
+# rows read code 6 and printed "RFU" against a reference tool reading 48 for
+# each. Group A was unaffected only because none of its codes lands on 6.
+#
+# Recorded because the first diagnosis was wrong: the byte's high nibble tags
+# the register and the low nibble holds the value, so Group B's 0x2E, 0x3E and
+# 0x4E look like a value of 14 if the field is read four bits wide. Widening it
+# made 14 visible and 14 is not a termination, which read as firmware leaving
+# the group unprogrammed -- plausible on a board with one DIMM per channel, and
+# wrong. The field is three bits, bit 3 belongs to something else, and the
+# reference tool's own map states bit_length 3 for all six rows.
 CA_ODT_FORMULA = {
     0: "RTT_OFF",
     1: "RZQ/0.5 (480)",
@@ -1986,17 +1987,7 @@ CA_ODT_FORMULA = {
     3: "RZQ/2 (120)",
     4: "RZQ/3 (80)",
     5: "RZQ/4 (60)",
-    6: "RFU",
-    7: "RZQ/6 (40)"
-}
-CA_ODT_FORMULA = {
-    0: "RTT_OFF",
-    1: "RZQ/0.5 (480)",
-    2: "RZQ/1 (240)",
-    3: "RZQ/2 (120)",
-    4: "RZQ/3 (80)",
-    5: "RZQ/4 (60)",
-    6: "RFU",
+    6: "RZQ/5 (48)",
     7: "RZQ/6 (40)"
 }
 CS_ODT_FORMULA = {
@@ -2006,7 +1997,7 @@ CS_ODT_FORMULA = {
     3: "RZQ/2 (120)",
     4: "RZQ/3 (80)",
     5: "RZQ/4 (60)",
-    6: "RFU",
+    6: "RZQ/5 (48)",
     7: "RZQ/6 (40)"
 }
 CK_ODT_FORMULA = {
@@ -2016,7 +2007,7 @@ CK_ODT_FORMULA = {
     3: "RZQ/2 (120)",
     4: "RZQ/3 (80)",
     5: "RZQ/4 (60)",
-    6: "RFU",
+    6: "RZQ/5 (48)",
     7: "RZQ/6 (40)"
 }
 DQS_RTT_PARK_FORMULA = {
@@ -3685,8 +3676,10 @@ def get_speed():
             gear = arrow_lake_gear()
             if gear is None:
                 return "Unknown"
-            effective_rate = float(ratio) * 33.334 * float(gear)
-            return f"{round(effective_rate, 0)} Mhz"
+            effective_rate = (float(ratio) * ARROW_LAKE_QCLK_REFERENCE_MHZ
+                              / ARROW_LAKE_RATIO_STEPS_PER_REFERENCE
+                              * float(gear))
+            return f"{round(effective_rate, 0)} MHz"
 
         bclk = get_bclk()
         if not isinstance(bclk, (int, float)):
@@ -3708,7 +3701,7 @@ def get_speed():
 
         gear_divider = {0: 1, 1: 2, 2: 4}.get(raw_gear, 1)
         speed = float(ratio) * (qclk_ratio / 100.0) * float(bclk) * float(gear_divider)
-        return f"{round(speed, 0)} Mhz"
+        return f"{round(speed, 0)} MHz"
     except Exception as e:
         print(f"Error calculating speed: {e}")
         return "Unknown"
@@ -4465,10 +4458,9 @@ def _read_slew_rate_field(offset, bit_start, bit_length):
 SKEW_FIXED_BY_SPECIFICATION = frozenset({"CA VREF", "CS VREF"})
 
 
-# The slew-rate rows read in five groups -- the four signal classes and the
-# common SComp block -- and the tab draws a category as its own heading, so
-# splitting them here is what puts those headings on screen. The row order
-# inside each group is unchanged; only the grouping is new.
+# The five categories the slew-rate rows are filed under -- the four signal
+# classes and the common SComp block. _install_slew_rate_rows assigns them by
+# row; this is the list the tests check that assignment against.
 SLEW_RATE_GROUPS = ("DATA", "CMD", "CLK", "CTL", "SComp")
 
 
@@ -5945,10 +5937,16 @@ ARROW_LAKE_ABSENT_SENSOR_ROWS = (
 #               the Super I/O or anywhere else.
 #   DRAM        the NCT6798D carries no VDIMM sense channel. The module's own
 #               PMIC is the only VDD measurement this board has.
+# VTT joins them for the reason the DDR4 list already gives at length: it is
+# a Skylake-era board rail, and no LGA 1700 VRM or Super I/O channel reports
+# one. That was written about DDR4 and is not a DDR4 fact -- it is about the
+# socket. Confirmed on MSI Z790MPOWER, where HWiNFO enumerates every channel
+# this board's NCT6687D answers on and none of them is a VTT.
 LGA1700_DDR5_ABSENT_SENSOR_ROWS = (
     "VCCIO",
     "CPU VNNAON",
     "DRAM",
+    "VTT",
 )
 
 # Rows that read correctly here and still come off the tab, which is a
@@ -6748,6 +6746,9 @@ def _install_system_info_identity_rows():
     _place_system_info_rows("BIOS", [
         _system_info_row("BIOS Date", get_bios_date),
     ])
+    _place_system_info_rows("Model", [
+        _system_info_row("Board Revision", get_motherboard_version),
+    ])
     _place_system_info_rows("Memory Capacity", [
         _system_info_row("Slots Used", get_slots_used),
     ])
@@ -6810,7 +6811,7 @@ SYSTEM_INFO_SECTIONS = (
     ("System", "Left", ("OS", "Platform")),
     ("Processor", "Left", ("CPU", "Code Name", "Technology",
                            "Cores / Threads", "Microcode")),
-    ("Motherboard", "Left", ("Manufacturer", "Model", "BIOS", "BIOS Date",
+    ("Motherboard", "Left", ("Manufacturer", "Model", "Board Revision", "BIOS", "BIOS Date",
                              "Chipset", "Southbridge", "LPCIO")),
     # The memory speed first, then the ratios that set it, then the
     # clocks themselves from the reference outwards.
@@ -6980,8 +6981,7 @@ MISC_FEATURE_FIELDS = (
 # query, as is 0x5918 beside it. A zero from a dead register decodes to a
 # confident "Disabled" that means nothing, which is worse than N/A because it
 # does not look like an absence. Kept visible on request rather than hidden,
-# and named here so the row is not mistaken for a reading.
-ARROW_LAKE_UNTRUSTED_FEATURES = ("Realtime Memory",)
+# and recorded here so the row is not mistaken for a reading.
 
 # 2N Mode is MR2 bit 2, reached through the pointer path rather than by
 # indexing the table directly: an entry's data byte names the mode register

@@ -100,6 +100,60 @@ CONFIRMED_RAILS = {
     "cpu_sa": (0x12A, 0.0000625),
 }
 
+# The same window on a second MSI board, and the reason the warning above is
+# not boilerplate: MSI Z790MPOWER (MS-7E01), NCT6687D, read against HWiNFO on
+# the same boot.
+#
+#   idx  addr    step   reads     HWiNFO
+#   2    0x0124  half   1.288 V   Vcore 1.284
+#   3    0x0126  half   0.764 V   VIN3 0.760
+#   4    0x0128  full   1.380 V   CPU VDD2 1.380      <- exact
+#   5    0x012A  half   1.216 V   CPU SA 1.216        <- exact
+#   6    0x012C  full   1.796 V   CPU AUX 1.796       <- exact
+#   7    0x012E  half   1.520 V   VIN7 1.520          <- exact
+#   8    0x0130  half   3.344 V   +3.3V 3.344         <- exact
+#
+# Index 4 is the entry that matters. On MS-7E06 it is the DRAM rail at
+# 1.572 V; here it is CPU VDD2 at 1.380 V, and HWiNFO names it so while
+# reporting this board's DIMM rails separately out of the module PMICs. Same
+# chip, same address, different rail -- the board decides what it wires to a
+# Super I/O input, and a map derived on one model is a claim about that model
+# only. Carrying MS-7E06's map here unchanged would have printed VDD2's
+# voltage under the name DRAM.
+#
+# vdimm is deliberately absent rather than pointed elsewhere: no index in this
+# window reads the 1.470 V this board's modules are at, because they are read
+# from the PMICs instead.
+NCT668X_BOARD_RAILS = {
+    "MS-7E01": {
+        "vdd2": (0x128, 0.000125),
+        "cpu_aux": (0x12C, 0.000125),
+        "vcore": (0x124, 0.0000625),
+        "cpu_sa": (0x12A, 0.0000625),
+    },
+}
+
+
+def _board_model_tag():
+    """The board's model code, for picking a rail map. Deferred import: the
+    Intel timing module reaches this one the same way, and only inside
+    functions, so neither is imported while the other is still loading."""
+    try:
+        from rochviewer.intel.intel_timings import get_motherboard_display
+
+        return (get_motherboard_display() or "").upper()
+    except Exception:
+        return ""
+
+
+def nct668x_rails():
+    """The rail map for this board, falling back to the derived default."""
+    model = _board_model_tag()
+    for tag, rails in NCT668X_BOARD_RAILS.items():
+        if tag in model:
+            return rails
+    return CONFIRMED_RAILS
+
 # Full capture kept for the record, since it is what the mapping was chosen
 # from and what a re-derivation on another board would be compared against.
 #
@@ -160,7 +214,6 @@ STEP_REFERENCE_CAPTURE = {
 # T0 and T1 are the board's external thermistor headers. They are read but not
 # displayed: T0's 11 C is a header with nothing attached, and a row that
 # reports an unconnected probe as a temperature is worse than no row.
-TEMPERATURE_BLOCK_START = 0x100
 TEMPERATURE_FRACTION = 256.0
 
 # key -> (row label, min C, max C).
@@ -345,7 +398,7 @@ def _nct668x_profile():
     return {
         "reader": reader,
         "temperatures": CONFIRMED_TEMPERATURES,
-        "rails": CONFIRMED_RAILS,
+        "rails": nct668x_rails(),
         "read_temperature": _nct668x_temperature,
         "read_rail": _nct668x_rail,
     }

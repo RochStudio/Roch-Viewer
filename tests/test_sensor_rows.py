@@ -175,6 +175,10 @@ class AbsentRowSelectionTest(unittest.TestCase):
         self.assertEqual(set(absent), {
             # no reading reaches this board
             "VCCIO", "CPU VNNAON", "DRAM",
+            # a Skylake-era board rail: no LGA 1700 VRM or Super I/O channel
+            # reports one, which is a fact about the socket rather than about
+            # the memory generation, so it is absent on both lists
+            "VTT",
             # reported per module in the Telemetry window
             "DRAM VDD", "DRAM VDDQ", "DRAM VPP",
             "DIMM A Temp", "DIMM B Temp",
