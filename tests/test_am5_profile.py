@@ -136,16 +136,18 @@ class Am5RuntimeTest(unittest.TestCase):
 
         self.assertEqual(by_name["Gear Down Mode"]["value"](), "Disabled")
         self.assertEqual(by_name["Nitro Rx/Tx/Ctrl"]["value"](), "1/3/1")
+        self.assertEqual(by_name["Nitro Rx/Tx/Ctrl"]["display_name"], "Nitro")
 
         regs[0x50200] |= 1 << 18
         enabled_runtime = Am5Runtime(reader_factory=lambda: FakeReader(regs))
         enabled = {row["name"]: row for row in build_timings(enabled_runtime)}
         self.assertEqual(enabled["Gear Down Mode"]["value"](), "Enabled")
 
-    def test_rtt_wr_precedes_rtt_nom_wr(self):
+    def test_rtt_nom_read_precedes_rtt_nom_write(self):
         runtime = Am5Runtime(reader_factory=lambda: FakeReader(_oracle_regs()))
         names = [row["name"] for row in build_timings(runtime)]
-        self.assertLess(names.index("RTT WR"), names.index("RTT Nom WR"))
+        self.assertLess(names.index("RTT WR"), names.index("RTT Nom RD"))
+        self.assertLess(names.index("RTT Nom RD"), names.index("RTT Nom WR"))
 
     def test_system_info_rows_follow_the_requested_order(self):
         runtime = Am5Runtime(reader_factory=lambda: FakeReader(_oracle_regs()))
@@ -374,8 +376,10 @@ class Am5RuntimeTest(unittest.TestCase):
         by_name = {row["name"]: row for row in build_timings(runtime)}
         self.assertEqual(by_name["Refresh Mode"]["value"](), "Mixed")
         # The unit is named once, after both values, rather than on each.
-        self.assertEqual(by_name["tRFCns"]["value"](), "117/95 (ns)")
+        self.assertEqual(by_name["tRFCns"]["value"](), "117/95 ns")
         self.assertTrue(by_name["tRFC"]["dim"]())
+        self.assertFalse(by_name["tRFC2"]["dim"]())
+        self.assertFalse(by_name["tRFCsb"]["dim"]())
 
     def test_trefins_is_whole_nanoseconds(self):
         # 65535 cycles at 4100 MHz is 15984.15 ns, and the hundredths came
@@ -397,9 +401,11 @@ class Am5RuntimeTest(unittest.TestCase):
         self.assertEqual(by_name["Refresh Mode"]["value"](), "Normal")
         # One interval in effect, so one number -- and the unit still reads
         # the same way it does when there are two.
-        self.assertEqual(by_name["tRFCns"]["value"](), "117 (ns)")
+        self.assertEqual(by_name["tRFCns"]["value"](), "117 ns")
         # tRFC is the interval in effect here, so it must not be dimmed.
         self.assertFalse(by_name["tRFC"]["dim"]())
+        self.assertTrue(by_name["tRFC2"]["dim"]())
+        self.assertTrue(by_name["tRFCsb"]["dim"]())
 
     def test_trfcns_reports_both_channels(self):
         regs = _oracle_regs()
@@ -413,8 +419,8 @@ class Am5RuntimeTest(unittest.TestCase):
 
         runtime = Am5Runtime(reader_factory=lambda: TwoChannelReader(regs))
         row = next(r for r in build_timings(runtime) if r["name"] == "tRFCns")
-        self.assertEqual(row["value_a"](), "117/95 (ns)")
-        self.assertEqual(row["value_b"](), "117/95 (ns)")
+        self.assertEqual(row["value_a"](), "117/95 ns")
+        self.assertEqual(row["value_b"](), "117/95 ns")
 
     def test_apob_termination_values_are_lazy_and_exposed_as_rows(self):
         training = FakeTrainingReader({
@@ -522,12 +528,18 @@ class Am5RuntimeTest(unittest.TestCase):
         self.assertIn("UMC0", runtime.status)
         self.assertIn("UMC1", runtime.status)
 
-    def test_trdpre_and_twrpre_rows_precede_tmod(self):
-        names = [row["name"] for row in build_timings(
-            Am5Runtime(reader_factory=lambda: FakeReader(_oracle_regs()))
-        )]
-        self.assertLess(names.index("tRDPRE"), names.index("tMOD"))
-        self.assertLess(names.index("tWRPRE"), names.index("tMOD"))
+    def test_preamble_rows_balance_the_right_timing_column(self):
+        by_name = {
+            row["name"]: row
+            for row in build_timings(
+                Am5Runtime(reader_factory=lambda: FakeReader(_oracle_regs()))
+            )
+        }
+        self.assertEqual(by_name["tRDPRE"]["Column"], "Right")
+        self.assertEqual(by_name["tRDPOST"]["Column"], "Right")
+        self.assertEqual(by_name["tWRPRE"]["Column"], "Right")
+        self.assertEqual(by_name["tWRPOST"]["Column"], "Right")
+        self.assertEqual(by_name["tMOD"]["Column"], "Left")
 
 
     def test_each_row_is_on_the_page_its_kind_belongs_to(self):
@@ -627,7 +639,8 @@ class Am5RuntimeTest(unittest.TestCase):
         # or the DIMM PMIC, either of which returns live rails on real hardware.
         with mock.patch.object(amd_smu_voltages, "CONFIRMED_VOLTAGE_OFFSETS", {}), \
                 mock.patch.object(ddr5_pmic, "CONFIRMED_PMIC_RAILS", {}), \
-                mock.patch.object(superio_lpc, "CONFIRMED_SENSORS", {}):
+                mock.patch.object(superio_lpc, "CONFIRMED_SENSORS", {}), \
+                mock.patch("rochviewer.sensors.am5_board_rails.read_board_rails", return_value={}):
             runtime = Am5Runtime(
                 reader_factory=lambda: FakeReader(_oracle_regs()),
                 cpu_name_factory=lambda: "AMD Ryzen 7 9850X3D 8-Core Processor",

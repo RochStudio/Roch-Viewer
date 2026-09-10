@@ -27,7 +27,7 @@ import types
 import inspect
 import unittest
 
-from rochviewer.ui.main import TimingGUI
+from rochviewer.ui.main import TimingGUI, VIEWPORT_SHADED_TABS
 
 
 def icon_widths():
@@ -102,7 +102,8 @@ class ChromeTest(unittest.TestCase):
         # window rather than in a frame around it, so 850 has to carry them
         # as well as the tabs: the two take 54px, and Summary needs 644.
         self.assertEqual(TimingGUI.WINDOW_WIDTH, 710)
-        self.assertEqual(TimingGUI.WINDOW_HEIGHT, 790)
+        self.assertEqual(TimingGUI.WINDOW_HEIGHT, 780)
+        self.assertIn("Timings", TimingGUI.UNSCROLLED_TABS)
         chrome = TimingGUI.TITLE_BAR_HEIGHT + TimingGUI.FOOTER_HEIGHT
         self.assertEqual(chrome, 54)
         # No assertion that Summary clears its 644px here any more: at this
@@ -214,12 +215,39 @@ class ChromeTest(unittest.TestCase):
         self.assertIn("right.grid_remove()", source)
         self.assertIn("grid_columnconfigure(1, minsize=0, weight=0)", source)
 
-    def test_summary_is_the_tab_drawn_without_a_scrollbar(self):
-        # It gives up no width to a gutter it never uses. The other four are
-        # longer than any window and keep theirs. Whether it still fits is
+    def test_compact_data_tabs_are_drawn_without_scrollbars(self):
+        # They give up no width to gutters they do not use. Whether they fit is
         # measured against the drawn window in test_unscrolled_fit_live --
         # without a scrollbar, content past the bottom is not reachable.
-        self.assertEqual(TimingGUI.UNSCROLLED_TABS, ("Summary",))
+        self.assertEqual(
+            TimingGUI.UNSCROLLED_TABS,
+            ("Summary", "Timings", "Skew", "Misc", "Voltages"),
+        )
+
+    def test_the_module_selector_is_built_for_summary_only(self):
+        source = inspect.getsource(TimingGUI.create_widgets)
+        self.assertNotIn("bottom_part_number_frame", source)
+        summary_branch = source[
+            source.index('if name == "Summary"'):
+            source.index('if name == "System Info"')
+        ]
+        self.assertIn("_build_summary_module_selector", summary_branch)
+        self.assertEqual(source.count("_build_summary_module_selector"), 1)
+        selector = inspect.getsource(TimingGUI._build_summary_module_selector)
+        self.assertIn("CTkOptionMenu", selector)
+        self.assertIn('{"All modules": None}', selector)
+        self.assertIn("fg_color=self.BRAND_COLOR", selector)
+
+    def test_short_banded_tabs_extend_their_shading_when_selected(self):
+        self.assertEqual(
+            VIEWPORT_SHADED_TABS,
+            frozenset({"Timings", "Skew", "Misc", "Voltages"}),
+        )
+        source = inspect.getsource(TimingGUI._on_tab_changed)
+        self.assertIn("_extend_tab_shading_to_viewport", source)
+        self.assertIn("after_idle", source)
+        extension = inspect.getsource(TimingGUI._extend_tab_shading_to_viewport)
+        self.assertIn("self.tabview.tab(tab_name)", extension)
 
     def test_the_footer_links_to_the_handle_it_names(self):
         self.assertEqual(TimingGUI.TWITTER_URL,
@@ -228,6 +256,22 @@ class ChromeTest(unittest.TestCase):
             TimingGUI.TWITTER_URL.endswith(
                 TimingGUI.TWITTER_HANDLE.lstrip("@")),
             "the link and the text it shows have to name the same account")
+        self.assertEqual(
+            TimingGUI.YOUTUBE_URL,
+            "https://www.youtube.com/@MateoPcTech",
+        )
+        self.assertEqual(TimingGUI.YOUTUBE_LABEL, "YouTube")
+        self.assertEqual(TimingGUI.TWITTER_LABEL, "X")
+        self.assertEqual(
+            TimingGUI.DISCORD_URL,
+            "https://discord.gg/KfzExpKQHB",
+        )
+        self.assertEqual(TimingGUI.DISCORD_LABEL, "Discord")
+        footer = inspect.getsource(TimingGUI.build_footer)
+        self.assertIn("self.open_youtube", footer)
+        self.assertIn("self.open_twitter", footer)
+        self.assertIn("self.open_discord", footer)
+        self.assertEqual(footer.count('text="|"'), 2)
 
     def test_the_footer_is_packed_before_the_tabs_claim_the_height(self):
         # Packed after the expanding tabview, a bottom-side footer is pushed

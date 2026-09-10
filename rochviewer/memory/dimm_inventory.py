@@ -60,13 +60,19 @@ _SLOT_CONTROLLER_INDEX = re.compile(
 )
 
 
-def parse_slot(device_locator):
+def parse_slot(device_locator, bank_label=None):
     """Return the board's name for a slot, like "A2", or None when unreadable.
 
     None rather than a guess: a wrong slot name points a tuner at the wrong
     stick, which is worse than admitting the board did not say.
     """
     text = str(device_locator or "")
+    # Gigabyte AM5 separates the channel and socket into BankLabel and
+    # DeviceLocator. Preserve the firmware's DIMM number, not query order.
+    bank_channel = re.fullmatch(r"P\d+\s+CHANNEL\s+([A-Z])", str(bank_label or "").strip(), re.IGNORECASE)
+    bank_dimm = re.fullmatch(r"DIMM\s+(\d+)", text.strip(), re.IGNORECASE)
+    if bank_channel and bank_dimm:
+        return "%s%d" % (bank_channel.group(1).upper(), int(bank_dimm.group(1)))
     match = _SLOT_LETTER_NUMBER.search(text)
     if match:
         return "%s%d" % (match.group(1).upper(), int(match.group(2)))
@@ -233,7 +239,7 @@ def _decode(connection):
         device_locator = (
             getattr(memory, "DeviceLocator", "") or ""
         ).strip()
-        slot = parse_slot(device_locator)
+        slot = parse_slot(device_locator, getattr(memory, "BankLabel", ""))
 
         # Firmware reads this off the module at POST. It is the one identity
         # field SMBIOS carries that no table can be derived from, and on DDR4

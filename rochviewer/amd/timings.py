@@ -41,6 +41,7 @@ REG_BGS1 = 0x50058        # bank-group-swap pattern register 1
 REG_BGSA0 = 0x500D0       # bank-group-swap-alt register 0
 REG_BGSA1 = 0x500D4       # bank-group-swap-alt register 1
 REG_CONFIG = 0x50200      # ratio[15:0], Cmd2T bit17, GDM bit18
+REG_DRAM_CONFIG = 0x50100  # DimmEccEn bit12 (ZenStates-Core DDR5Dictionary)
 REG_RCD = 0x50204         # CL[5:0], RAS[14:8], RCDRD[21:16], RCDWR[29:24]
 REG_RP_RC = 0x50208       # RP[21:16], RC[7:0]
 REG_RTP_RRD = 0x5020C     # RTP[28:24], RRDL[12:8], RRDS[4:0]
@@ -78,7 +79,7 @@ RFCSB_OFFSETS = (0x502C0, 0x502C4, 0x502C8, 0x502CC)
 # Every offset read for a live snapshot.
 ALL_OFFSETS = (
     REG_BGS0, REG_BGS1, REG_BGSA0, REG_BGSA1,
-    REG_CONFIG, REG_RCD, REG_RP_RC, REG_RTP_RRD,
+    REG_CONFIG, REG_DRAM_CONFIG, REG_RCD, REG_RP_RC, REG_RTP_RRD,
     REG_FAW, REG_WTR_CWL,
     REG_WR, REG_RDRD, REG_WRWR, REG_RDWR, REG_REFI, REG_MOD, REG_STAG,
     REG_CKE_XP, REG_PHY, REG_NITRO, REG_PRE, REG_PD,
@@ -310,7 +311,50 @@ def decode_channel(regs):
 
         "powerdown": bool(_bits(pd, 28, 1)),
     }
+    decoded.update(decode_misc_settings(regs))
     return decoded
+
+
+def decode_misc_settings(regs):
+    """UMC settings, not constants inferred from module type or another app.
+
+    Field locations follow ZenStates-Core Dictionaries/DDR5Dictionary.cs;
+    preamble count corrections follow Hardware/DRAM/BaseDramTimings.cs.
+    Postamble code/duration mappings were checked against the supplied
+    reference 1.0.0's UMC field descriptors and read/write formatter tables.
+    Unknown encodings remain explicit rather than extrapolating a duration.
+    DimmEccEn is controller ECC, not DDR5's internal on-die ECC.
+    """
+    result = dict.fromkeys(("read_preamble", "write_preamble",
+                            "read_postamble", "write_postamble", "ecc"))
+    raw = regs.get(REG_PRE)
+    if raw is not None and raw != _INVALID:
+        rd, wr = _bits(raw, 0, 3), _bits(raw, 8, 3)
+        rd_count = rd + 1 if rd < 2 else rd
+        wr_count = wr + 1
+        result["read_preamble"] = (f"{rd_count} tCK" if 1 <= rd_count <= 4
+                                    else f"Reserved (UMC {rd})")
+        result["write_preamble"] = (f"{wr_count} tCK" if 1 <= wr_count <= 4
+                                     else f"Reserved (UMC {wr})")
+        # Preserve the two distinct read-preamble encodings for 2 tCK.
+        # Patterns follow the DDR5 reference formatter, not the cycle count.
+        rd_pattern = {0: "10", 1: "0010", 2: "1110",
+                      3: "000010", 4: "00001010"}.get(rd)
+        wr_pattern = {1: "0010", 2: "000010", 3: "00001010"}.get(wr)
+        if rd_pattern is not None:
+            result["read_preamble"] += f" - {rd_pattern} Pattern"
+        if wr_pattern is not None:
+            result["write_preamble"] += f" - {wr_pattern} Pattern"
+        for name, shift, long_pattern in (("read_postamble", 4, "010"),
+                                           ("write_postamble", 12, "000")):
+            code = _bits(raw, shift, 3)
+            result[name] = {0: "0.5 tCK - 0 Pattern",
+                            1: f"1.5 tCK - {long_pattern} Pattern"}.get(
+                                code, f"Reserved (UMC {code})")
+    config = regs.get(REG_DRAM_CONFIG)
+    if config is not None and config != _INVALID:
+        result["ecc"] = "Enabled" if _bits(config, 12, 1) else "Disabled"
+    return result
 
 
 def read_channel(reader, base):

@@ -54,6 +54,7 @@ hiddenimports = [
     'rochviewer.hardware.lowlevel_io',
     'rochviewer.hardware.pci_mcfg',
     'rochviewer.sensors.voltage_rails',
+    'rochviewer.sensors.am5_board_rails',
     # The card's own readings, its power limit and the error counter.
     #
     # Belt and braces, not a fix: PyInstaller scans bytecode and finds a

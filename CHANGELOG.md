@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.2 (unreleased)
+
+- Added native per-channel AMD preamble, decoded read/write postamble duration/pattern and ECC status to Misc. Unavailable reads remain blank and reserved encodings stay explicit.
+- Added eight native raw Granite Ridge APOB training codes under explicitly qualified reference compatibility labels; these are not claimed as verified VREF/DFE measurements.
+- Added a red-bordered module selector, matching rounded toolbar buttons, and YouTube | X | Discord footer links.
+- Added DRAM Ratio below BCLK, snapshot voltages, spaced resistance units and shared-value collapsing in Summary.
+- Improved compact Timings layout and continuous row shading across data tabs.
+- Fixed Gigabyte split DIMM labels, empty footer spacing and native VDDIO on the tested X870 AORUS TACHYON ICE.
+- Removed Graphics from telemetry; kept GPU identity in System Info.
+
 ## 1.0.1
 
 Read on a second Intel bench, an MSI Z790MPOWER (MS-7E01) with an i5-14600KF,

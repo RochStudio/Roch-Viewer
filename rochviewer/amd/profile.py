@@ -29,6 +29,7 @@ import time
 from rochviewer.amd.smn_mcfg import McfgSmnReader
 from rochviewer.amd.apob import (
     GraniteRidgeApobReader,
+    RAW_TRAINING_FIELDS,
     find_ccdl_run,
     find_ccdl_wr,
 )
@@ -71,7 +72,7 @@ LAZY_READ_ATTEMPTS = 3
 # reused briefly. Timings are not covered by this: they cannot change without
 # a reboot, and re-reading them would burn privileged transactions for nothing.
 LIVE_CACHE_SECONDS = 0.75
-TRAINING_FIELDS = frozenset({
+TRAINING_FIELDS = frozenset(RAW_TRAINING_FIELDS) | frozenset({
     "rtt_nom_wr", "rtt_nom_rd", "rtt_wr", "rtt_park", "rtt_park_dqs",
     "ca_odt_a", "ck_odt_a", "cs_odt_a",
     "ca_odt_b", "ck_odt_b", "cs_odt_b",
@@ -254,7 +255,7 @@ class Am5Runtime:
                 "DDR5 PMIC", empty={},
             ),
             "board": _LiveSource(
-                lambda: _import_call("rochviewer.sensors.superio_lpc", "read_board_rails"),
+                lambda: _import_call("rochviewer.sensors.am5_board_rails", "read_board_rails"),
                 lambda r: "Super I/O READ-ONLY — %d rail(s)" % len(r),
                 "Super I/O", empty={},
             ),
@@ -677,6 +678,18 @@ def _enabled(runtime, name):
             return value
         return "Enabled" if value else "Disabled"
 
+    return getter
+
+
+def _misc_channels(runtime, name, training=False):
+    def getter():
+        read = (runtime.channel_training_value if training
+                else runtime.channel_umc_value)
+        a = read(name, "cha")
+        b = read(name, "chb")
+        if a == b:
+            return a
+        return f"A: {a} | B: {b}"
     return getter
 
 
@@ -1147,11 +1160,11 @@ def _uclk_ratio(runtime):
 
 
 def _dram_ratio(runtime):
-    """The memory multiplier: how many times BCLK the controller clock is.
+    """The effective DDR data-rate multiplier relative to BCLK.
 
     Derived from two rows already on the tab rather than read, because the
     firmware sets AM5 memory speed in MT/s and the multiplier is what that
-    works out to. 4100 MHz over a 100 MHz base is 41.
+    works out to. DDR5-6000 over a 100 MHz base is 60.
     """
     mclk = runtime.value("mclk_mhz")
     if mclk == EM_DASH:
@@ -1160,7 +1173,7 @@ def _dram_ratio(runtime):
         base = float(_processor_facts().get("ext_clock") or 0)
         if not base:
             return EM_DASH
-        return "%.2f" % (float(mclk) / base)
+        return "%.2f" % (2.0 * float(mclk) / base)
     except Exception:
         return EM_DASH
 
@@ -1231,7 +1244,7 @@ def _format_rfc_ns(runtime, channel=None):
     (tRFCsb) intervals, so both are shown — the decoder already switches
     tRFC_ns to tRFC2 outside Normal mode.
 
-    The unit is named once, after the values: "117/95 (ns)" rather than
+    The unit is named once, after the values: "117/95 ns" rather than
     "117 ns / 95 ns". Both intervals are in the same unit, so saying it twice
     spent a third of the column on repeating it.
     """
@@ -1245,11 +1258,11 @@ def _format_rfc_ns(runtime, channel=None):
         if primary == EM_DASH:
             return EM_DASH
         if _refresh_is_normal(runtime, channel):
-            return "%.0f (ns)" % float(primary)
+            return "%.0f ns" % float(primary)
         same_bank = read("tRFCsb_ns")
         if same_bank == EM_DASH:
-            return "%.0f (ns)" % float(primary)
-        return "%.0f/%.0f (ns)" % (float(primary), float(same_bank))
+            return "%.0f ns" % float(primary)
+        return "%.0f/%.0f ns" % (float(primary), float(same_bank))
 
     return getter
 
@@ -1368,6 +1381,49 @@ def _voltage_rows(runtime):
         for rail in RAILS
         if rail.key not in PER_MODULE_RAILS
     ]
+
+
+def _voltage_snapshot_rows(runtime):
+    """One native voltage snapshot per app session, independent of telemetry."""
+    from functools import lru_cache
+
+    @lru_cache(maxsize=1)
+    def snapshot():
+        values = {}
+        for rail in RAILS:
+            if rail.key not in PER_MODULE_RAILS:
+                try:
+                    values[rail.key] = _format_voltage(runtime, rail.key)()
+                except Exception:
+                    values[rail.key] = EM_DASH
+        try:
+            modules = _import_call("rochviewer.memory.ddr5_telemetry", "read_dimm_telemetry")
+        except Exception:
+            modules = []
+        for channel in ("cha", "chb"):
+            entries = [m for m in modules if m.get("channel") == channel[-1]]
+            for key in ("vdd", "vddq", "vpp", "vin_bulk", "vout_1v8", "vout_1v0"):
+                # Do not arbitrarily pick a stick when a channel has several.
+                raw = entries[0].get(key) if len(entries) == 1 else None
+                values[channel + key] = (f"{raw / 1000:.3f} V"
+                                         if isinstance(raw, (int, float)) else EM_DASH)
+        return values
+
+    rows = [_row("Reading mode", "Snapshot at startup — reopen app to update",
+                 "Snapshot", "Voltages")]
+    for rail in RAILS:
+        if rail.key not in PER_MODULE_RAILS:
+            rows.append(_row(rail.label + " snapshot",
+                             lambda key=rail.key: snapshot().get(key, EM_DASH),
+                             "CPU and motherboard", "Voltages", display_name=rail.label))
+    for channel, label in (("cha", "CHA"), ("chb", "CHB")):
+        for key, name in (("vdd", "VDD"), ("vddq", "VDDQ"), ("vpp", "VPP"),
+                          ("vin_bulk", "VIN"), ("vout_1v8", "1.8V output"),
+                          ("vout_1v0", "1.0V output")):
+            rows.append(_row(label + " " + name,
+                             lambda k=channel + key: snapshot().get(k, EM_DASH),
+                             label + " memory", "Voltages", column="Right"))
+    return rows
 
 
 def _status_tail(text, prefix, ok="ok"):
@@ -1848,7 +1904,10 @@ def build_timings(runtime):
     ]
 
     def misc(name, value, **extra):
-        return _row(name, value, "Controller", MISC_TAB, **extra)
+        category = ("Preamble / postamble" if "Preamble" in name or "Postamble" in name
+                    else "Refresh" if name in ("Refresh Mode", "FGR")
+                    else "Memory controller")
+        return _row(name, value, category, MISC_TAB, **extra)
 
     # The controller settings, on their own page. They are neither identity
     # nor timing: what the controller was configured to do, which is a third
@@ -1861,12 +1920,21 @@ def build_timings(runtime):
         # explains rather than in ZenTimings' position, which has no Misc tab
         # to put it on.
         misc("FGR", _format(runtime, "fgr")),
+        misc("Read Preamble", _misc_channels(runtime, "read_preamble")),
+        misc("Write Preamble", _misc_channels(runtime, "write_preamble")),
+        misc("Read Postamble", _misc_channels(runtime, "read_postamble")),
+        misc("Write Postamble", _misc_channels(runtime, "write_postamble")),
+        misc("ECC", _misc_channels(runtime, "ecc")),
         misc("Gear Down Mode", _enabled(runtime, "gdm")),
         misc("Power Down Mode", _enabled(runtime, "powerdown")),
         misc("BGS", _enabled(runtime, "bgs")),
         misc("BGS Alt", _enabled(runtime, "bgs_alt")),
-        misc("Nitro Rx/Tx/Ctrl", lambda: _nitro(runtime)),
+        misc("Nitro Rx/Tx/Ctrl", lambda: _nitro(runtime), display_name="Nitro"),
     ])
+
+    rows.extend(_row(name, _misc_channels(runtime, name, training=True),
+                     "Raw training codes", MISC_TAB)
+                for name in RAW_TRAINING_FIELDS)
 
     # What the processor was configured to allow, as opposed to what it is
     # drawing. The live halves stay on Telemetry, which keeps a maximum and
@@ -1898,6 +1966,7 @@ def build_timings(runtime):
     rows.extend(_board_temperature_rows(runtime))
     rows.extend(_power_rows(runtime))
     rows.extend(_voltage_rows(runtime))
+    rows.extend(_voltage_snapshot_rows(runtime))
     rows.extend(_graphics_rows())
     rows.extend(_error_rows())
 
@@ -1930,7 +1999,6 @@ def build_timings(runtime):
         ("CAS to CAS", ("tCCD_L", "tCCD_L_WR", "tCCD_L_WR2")),
         ("Power down", ("tCKE", "tXP")),
         ("Stagger", ("tSTAG", "tSTAGsb")),
-        ("Preamble / postamble", ("tRDPRE", "tRDPOST", "tWRPRE", "tWRPOST")),
         ("Mode register", ("tMRD", "tMOD", "tMRDPDA", "tMODPDA")),
     )
     tertiary_right = (
@@ -1938,6 +2006,7 @@ def build_timings(runtime):
         ("Read to read", ("tRDRDSCL", "tRDRDSC", "tRDRDSD", "tRDRDDD")),
         ("Write to write", ("tWRWRSCL", "tWRWRSC", "tWRWRSD", "tWRWRDD")),
         ("PHY", ("tPHYWRD", "tPHYRDL", "tPHYWRL")),
+        ("Preamble / postamble", ("tRDPRE", "tRDPOST", "tWRPRE", "tWRPOST")),
     )
 
     def tertiary_rows(groups, column):
@@ -2006,6 +2075,11 @@ def build_timings(runtime):
                 runtime, name, "Refresh timings", "Right",
                 dim=lambda: not _refresh_is_normal(runtime),
             ))
+        elif name in ("tRFC2", "tRFCsb"):
+            rows.append(_umc_row(
+                runtime, name, "Refresh timings", "Right",
+                dim=lambda: _refresh_is_normal(runtime),
+            ))
         else:
             rows.append(
                 _umc_row(runtime, name, "Refresh timings", "Right")
@@ -2014,8 +2088,8 @@ def build_timings(runtime):
 
     rtt_rows = (
         ("RTT WR", "rtt_wr"),
-        ("RTT Nom WR", "rtt_nom_wr"),
         ("RTT Nom RD", "rtt_nom_rd"),
+        ("RTT Nom WR", "rtt_nom_wr"),
         ("RTT Park", "rtt_park"),
         ("RTT Park DQS", "rtt_park_dqs"),
     )

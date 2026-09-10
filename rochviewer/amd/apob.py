@@ -51,6 +51,16 @@ _PROC_ODT_OHMS = {
 _DRAM_DQ_DS_OHMS = {0: 34, 1: 40, 2: 48}
 _DIRECT_DS_OHMS = {0: None, 30: 30, 40: 40, 60: 60, 120: 120}
 
+# Compatibility labels from the supplied reference 1.0.0 descriptor table.
+# These are raw APOB bytes, NOT verified physical VREF/DFE measurements.
+# In particular 0x11..0x13 also back the known CA/CK/CS drive strengths below;
+# ALERT_PU and CA_DRV deliberately share the reference tool's 0x10 source.
+RAW_TRAINING_FIELDS = {
+    "ALERT_PU": 0x10, "CA_DRV": 0x10,
+    "PHY_VREF": 0x11, "DQ_VREF": 0x12, "CA_VREF": 0x13,
+    "CS_VREF": 0x14, "RX_DFE": 0x15, "TX_DFE": 0x16,
+}
+
 
 @dataclass(frozen=True)
 class ParsedApobTraining:
@@ -176,7 +186,11 @@ def decode_granite_ridge_training_block(block):
         "proc_dq_ds_pu": _proc_odt(data[0x23]),
         "proc_dq_ds_pd": _proc_odt(data[0x24]),
     }
-    return decoded if all(value is not None for value in decoded.values()) else None
+    if any(value is None for value in decoded.values()):
+        return None
+    decoded.update({name: data[offset]
+                    for name, offset in RAW_TRAINING_FIELDS.items()})
+    return decoded
 
 
 def _u32(data, offset):

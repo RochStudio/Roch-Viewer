@@ -100,66 +100,55 @@ class DualTimingDefinitionTest(unittest.TestCase):
 
     def _am5_names(self):
         return {
-            "CPU", "Cores / Threads", "Model", "BIOS", "Microcode",
+            "CPU", "Cores / Threads", "Microcode", "Manufacturer", "Model", "BIOS",
             "AGESA", "BCLK", "MCLK", "UCLK", "FCLK", "DRAM Frequency",
             "UCLK:MCLK", "DRAM Ratio", "CR", "Refresh Mode",
             "Memory Capacity",
             "Gear Down Mode", "Power Down Mode", "Nitro Rx/Tx/Ctrl",
         }
 
-    def test_am5_summary_reads_down_three_aligned_columns(self):
+    def test_am5_summary_reads_down_four_aligned_columns(self):
         layout = summary_system_memory_layout(self._am5_names())
         self.assertEqual(layout, [
-            ["CPU", "Cores / Threads"],
-            # Microcode joins the firmware pair, as it does on Intel.
-            ["Model", "BIOS", "Microcode"],
-            ["DRAM Frequency", "AGESA", "MCLK"],
-            ["Memory Capacity", "BCLK", "FCLK"],
-            ["UCLK:MCLK", "Refresh Mode", "UCLK"],
-            # Four rows of three with no hole: Gear Down Mode sits beside
-            # Refresh Mode, the other controller policy on the strip, rather
-            # than trailing alone on a fifth row.
-            ["Power Down Mode", "Gear Down Mode", "Nitro Rx/Tx/Ctrl"],
+            ["CPU", "Cores / Threads", "Microcode"],
+            ["Manufacturer", "Model", "BIOS"],
+            ["AGESA"],
+            ["DRAM Frequency", "BCLK", "MCLK", "Refresh Mode"],
+            ["Memory Capacity", "DRAM Ratio", "FCLK", "Power Down Mode"],
+            ["UCLK:MCLK", "Nitro Rx/Tx/Ctrl", "UCLK", "Gear Down Mode"],
         ])
 
-    def test_dram_ratio_is_not_on_the_summary_strip(self):
-        # It was dropped from the strip when the block was squared off. Named
-        # here so its absence reads as the decision it was rather than as a
-        # name that quietly stopped resolving -- System Info still carries it.
+    def test_dram_ratio_is_on_the_summary_strip(self):
         layout = summary_system_memory_layout(self._am5_names())
         placed = [name for row in layout for name in row]
-        self.assertNotIn("DRAM Ratio", placed)
+        self.assertIn("DRAM Ratio", placed)
 
     def test_the_memory_block_is_aligned_and_the_identity_rows_are_not(self):
         # Only an aligned row lands on the Summary columns; identity packs
         # tight so a long board name is not chopped into a narrow cell.
         blocks = summary_system_memory_blocks(self._am5_names())
         aligned = {tuple(names): flag for names, flag in blocks}
-        self.assertFalse(aligned[("CPU", "Cores / Threads")])
-        self.assertFalse(aligned[("Model", "BIOS", "Microcode")])
-        self.assertTrue(aligned[("DRAM Frequency", "AGESA", "MCLK")])
-        self.assertTrue(aligned[("Power Down Mode", "Gear Down Mode",
-                                 "Nitro Rx/Tx/Ctrl")])
+        self.assertFalse(aligned[("CPU", "Cores / Threads", "Microcode")])
+        self.assertFalse(aligned[("Manufacturer", "Model", "BIOS")])
+        self.assertTrue(aligned[("DRAM Frequency", "BCLK", "MCLK", "Refresh Mode")])
+        self.assertTrue(aligned[("UCLK:MCLK", "Nitro Rx/Tx/Ctrl", "UCLK", "Gear Down Mode")])
 
     def test_an_aligned_row_keeps_a_hole_for_a_missing_name(self):
         # Dropping it would slide BCLK and FCLK one column to the left, under
         # the wrong timing section.
         blocks = summary_system_memory_blocks(
             self._am5_names() - {"Memory Capacity"})
-        row = next(names for names, _ in blocks if "BCLK" in names)
-        self.assertEqual(row, [None, "BCLK", "FCLK"])
-        self.assertEqual(row.index("BCLK"), 1)
+        row = next(names for names, _ in blocks if "DRAM Ratio" in names)
+        self.assertEqual(row, [None, "DRAM Ratio", "FCLK", "Power Down Mode"])
+        self.assertEqual(row.index("DRAM Ratio"), 1)
 
-    def test_a_row_that_is_alone_still_holds_the_first_column(self):
-        # No row is alone in the arrangement above, so one is made: a machine
-        # reporting neither Gear Down Mode nor Nitro leaves Power Down Mode
-        # by itself, and packing it tight would let it drift off the column
-        # the rows above it sit on.
+    def test_a_row_that_is_alone_still_holds_the_last_column(self):
+        # Missing readings must not move the controller policy to the left.
         blocks = summary_system_memory_blocks(
-            self._am5_names() - {"Gear Down Mode", "Nitro Rx/Tx/Ctrl"})
+            self._am5_names() - {"Memory Capacity", "DRAM Ratio", "FCLK"})
         row, aligned = next((names, flag) for names, flag in blocks
                             if "Power Down Mode" in names)
-        self.assertEqual(row, ["Power Down Mode", None, None])
+        self.assertEqual(row, [None, None, None, "Power Down Mode"])
         self.assertTrue(aligned)
 
     def test_channel_columns_take_the_slot_name(self):
@@ -190,17 +179,17 @@ class DualTimingDefinitionTest(unittest.TestCase):
 
     def test_intel_summary_matches_the_requested_arrangement(self):
         layout = summary_system_memory_layout({
-            "CPU", "Cores / Threads", "Model", "BIOS",
+            "CPU", "Cores / Threads", "Microcode", "Manufacturer", "Model", "BIOS",
             "Microcode", "BCLK", "DDR QCLK Ratio", "Uncore", "MCLK", "UCLK",
             "DRAM Frequency", "Gear Mode", "Power Down", "Memory Capacity",
         })
         self.assertEqual(layout, [
-            ["CPU", "Cores / Threads"],
+            ["CPU", "Cores / Threads", "Microcode"],
             # System Info splits the board the way CPU-Z does, so Summary
             # names both halves -- the same shape the AM5 block already used.
             # Microcode joins them: it is a firmware revision like the BIOS
             # beside it, rather than a CPU fact stranded mid memory block.
-            ["Model", "BIOS", "Microcode"],
+            ["Manufacturer", "Model", "BIOS"],
             # Down the columns: what the kit is, what clocks it, what it
             # yields. Every cell filled, so no column carries a hole.
             ["DRAM Frequency", "BCLK", "MCLK"],
@@ -213,7 +202,7 @@ class DualTimingDefinitionTest(unittest.TestCase):
         # tight these rows each chose their own column positions and stepped
         # in and out against the timing grid below them.
         blocks = summary_system_memory_blocks({
-            "CPU", "Cores / Threads", "Model", "BIOS", "Microcode",
+            "CPU", "Cores / Threads", "Microcode", "Manufacturer", "Model", "BIOS",
             "BCLK", "DDR QCLK Ratio", "Uncore", "MCLK", "UCLK",
             "DRAM Frequency", "Gear Mode", "Power Down", "Memory Capacity",
         })
@@ -238,14 +227,13 @@ class DualTimingDefinitionTest(unittest.TestCase):
         self.assertIn(("Gear Mode", None, "UCLK"), aligned)
 
     def test_no_summary_row_exceeds_the_configured_column_pairs(self):
-        # The panel only configures SUMMARY_PAIRS_PER_ROW column pairs; a
-        # longer row spills its last entry against the right edge.
+        # AM5 has four columns, including voltage snapshots; Intel has three.
         every_name = set(summary_system_memory_names())
         for layout in (summary_system_memory_layout(every_name),
                        summary_system_memory_layout(every_name - {"AGESA"})):
             for row in layout:
                 with self.subTest(row=row):
-                    self.assertLessEqual(len(row), SUMMARY_PAIRS_PER_ROW)
+                    self.assertLessEqual(len(row), 4 if "AGESA" in layout[2] else SUMMARY_PAIRS_PER_ROW)
 
     def test_summary_allowlist_includes_fclk(self):
         self.assertIn("FCLK", summary_system_memory_names())
@@ -299,7 +287,7 @@ class DualTimingDefinitionTest(unittest.TestCase):
             "tCL", "tRCDRD", "tRCDWR", "tRP", "tRAS", "tRC", "tWR",
             "tRFCns", "tRFC", "tRFC2", "tRFCsb", "tRRD_L", "tRRD_S", "tWTR_L",
             "tWTR_S", "tRTP", "tFAW", "tCWL",
-            "tRDPRE", "tWRPRE", "tMOD", "tCKE", "tXP",
+            "tMOD", "tRDPRE", "tWRPRE", "tCKE", "tXP",
         ]
         rows = [
             {"name": "tRCDRD", "Category": "Primary"},
@@ -369,14 +357,11 @@ class DualTimingDefinitionTest(unittest.TestCase):
         self.assertEqual(leftover, ["tRDRDSCL", "tRDWR"])  # tREFI absent here
 
 
-    def test_the_board_row_is_the_model_alone(self):
-        # It was Manufacturer and Model. The vendor is not carried on the
-        # strip any more -- the model names itself -- so the row is the
-        # model and nothing else, and no placement asks for the vendor.
+    def test_the_board_row_contains_manufacturer_model_and_bios(self):
         layout = summary_system_memory_layout({"Manufacturer", "Model", "CPU"})
         row = next(row for row in layout if "Model" in row)
-        self.assertEqual(row, ["Model"])
-        self.assertNotIn("Manufacturer", summary_system_memory_names())
+        self.assertEqual(row, ["Manufacturer", "Model"])
+        self.assertIn("Manufacturer", summary_system_memory_names())
 
     def test_the_board_row_survives_a_missing_manufacturer(self):
         # A platform that reports only half the board identity still gets a
@@ -436,24 +421,24 @@ class DualTimingDefinitionTest(unittest.TestCase):
         # pair closes the column.
         self.assertEqual(
             first[-5:],
-            ["tRDPRE", "tWRPRE", "tMOD", "tCKE", "tXP"],
+            ["tMOD", "tRDPRE", "tWRPRE", "tCKE", "tXP"],
         )
         self.assertNotIn("tPHYRDL", first)
         self.assertNotIn("tPHYRDL", leftover)
         self.assertNotIn("tPHYWRL", leftover)
         self.assertNotIn("tPHYWRD", leftover)
 
-    def test_summary_rtt_display_shows_the_ohms_as_a_bare_number(self):
+    def test_summary_rtt_display_shows_compact_resistances_with_units(self):
         # Every row in the block is a resistance, so the column reads as
         # numbers rather than as RZQ ratios with the figure in brackets.
-        self.assertEqual(summary_rtt_display("RZQ/6 (40 Ω)"), "40")
-        self.assertEqual(summary_rtt_display("RZQ/5 (48 Ω)"), "48")
-        self.assertEqual(summary_rtt_display("RZQ/4 (60)"), "60")
-        self.assertEqual(summary_rtt_display("RZQ (240)"), "240")
-        self.assertEqual(summary_rtt_display("RZQ/0.5 (480)"), "480")
-        self.assertEqual(summary_rtt_display("40 Ω"), "40")
+        self.assertEqual(summary_rtt_display("RZQ/6 (40 Ω)"), "40 Ω")
+        self.assertEqual(summary_rtt_display("RZQ/5 (48 Ω)"), "48 Ω")
+        self.assertEqual(summary_rtt_display("RZQ/4 (60)"), "60 Ω")
+        self.assertEqual(summary_rtt_display("RZQ (240)"), "240 Ω")
+        self.assertEqual(summary_rtt_display("RZQ/0.5 (480)"), "480 Ω")
+        self.assertEqual(summary_rtt_display("40 Ω"), "40 Ω")
 
-    def test_a_termination_that_is_off_reads_as_zero_ohms(self):
+    def test_a_termination_that_is_off_reads_as_off(self):
         # An unterminated line belongs in the same column as the numbers.
         # "Disabled" is in here because it is the word the DDR4 RTT tables
         # use for code 0; without it the Summary printed "Disabled/Disabled",
@@ -461,8 +446,8 @@ class DualTimingDefinitionTest(unittest.TestCase):
         # says in one.
         for text in ("RTT_OFF", "Off", "OFF", "Hi-Z", "Disabled", "DISABLED"):
             with self.subTest(text=text):
-                self.assertEqual(summary_rtt_display(text, "RTT"), "0")
-                self.assertEqual(summary_rtt_display(text, "ODT"), "0")
+                self.assertEqual(summary_rtt_display(text, "RTT"), "Off")
+                self.assertEqual(summary_rtt_display(text, "ODT"), "Off")
 
     def test_a_driver_that_is_off_reads_as_hi_z(self):
         # The opposite state to a termination being off, and it was printing
@@ -477,14 +462,14 @@ class DualTimingDefinitionTest(unittest.TestCase):
     def test_a_driver_with_a_real_impedance_still_reads_as_a_number(self):
         # Only the off state changes; the column stays numeric otherwise.
         self.assertEqual(summary_rtt_display("34.3 Ω", "Drive Strength"),
-                         "34.3")
-        self.assertEqual(summary_rtt_display("120 Ω", "Drive Strength"), "120")
+                         "34.3 Ω")
+        self.assertEqual(summary_rtt_display("120 Ω", "Drive Strength"), "120 Ω")
 
     def test_an_unknown_category_keeps_the_old_reading(self):
         # The default matters: a row whose category is not passed must not
         # silently change meaning.
-        self.assertEqual(summary_rtt_display("Off"), "0")
-        self.assertEqual(summary_rtt_display("Off", None), "0")
+        self.assertEqual(summary_rtt_display("Off"), "Off")
+        self.assertEqual(summary_rtt_display("Off", None), "Off")
 
     def test_a_reserved_code_is_not_turned_into_a_number(self):
         # RFU is not a resistance, so it stays as it is rather than becoming
@@ -493,22 +478,22 @@ class DualTimingDefinitionTest(unittest.TestCase):
         self.assertEqual(summary_rtt_display("—"), "—")
         self.assertEqual(summary_rtt_display(None), "")
 
-    def test_summary_slash_pair_uses_cha_chb_style(self):
-        self.assertEqual(summary_compact_ohm("40 Ω"), "40Ω")
-        self.assertEqual(summary_slash_pair("40 Ω", "40 Ω"), "40Ω/40Ω")
+    def test_summary_slash_pair_only_exposes_channel_differences(self):
+        self.assertEqual(summary_compact_ohm("40Ω"), "40 Ω")
+        self.assertEqual(summary_slash_pair("40 Ω", "40 Ω"), "40 Ω")
         self.assertEqual(summary_slash_pair("35", "37"), "35/37")
-        self.assertEqual(summary_slash_pair("Off", "60 Ω"), "Off/60Ω")
+        self.assertEqual(summary_slash_pair("Off", "60 Ω"), "Off/60 Ω")
         # The two together are what the signal panel draws: both sides go
         # through the display helper first, so the pair is bare numbers.
         self.assertEqual(
             summary_slash_pair(summary_rtt_display("RZQ/6 (40 Ω)"),
                                summary_rtt_display("RZQ/6 (40)")),
-            "40/40",
+            "40 Ω",
         )
         self.assertEqual(
             summary_slash_pair(summary_rtt_display("RTT_OFF"),
                                summary_rtt_display("RTT_OFF")),
-            "0/0",
+            "Off",
         )
 
     def test_summary_allowlist_includes_agesa_and_bclk(self):
@@ -727,7 +712,7 @@ class TimingsSectionOrderTest(unittest.TestCase):
         from rochviewer.ui.main import CONTINUOUS_SECTION_TABS
 
         self.assertEqual(CONTINUOUS_SECTION_TABS,
-                         frozenset({"Timings", "Skew", "Misc"}))
+                     frozenset({"Timings", "Skew", "Misc", "Voltages"}))
 
     def test_the_signal_tail_follows_the_last_vref_level(self):
         from rochviewer.ui.main import (SUMMARY_SIGNAL_TAIL_ANCHOR, SUMMARY_SIGNAL_TAIL_ROWS,
@@ -1019,7 +1004,7 @@ class SummaryColumnTailTest(unittest.TestCase):
         ordered = [name for name in AM5_SUMMARY_TIMING_PRIORITY
                    if name in SUMMARY_COLUMN_TAIL]
         self.assertEqual(
-            ordered, ["tRDPRE", "tWRPRE", "tMOD", "tCKE", "tXP"]
+            ordered, ["tMOD", "tRDPRE", "tWRPRE", "tCKE", "tXP"]
         )
         self.assertEqual(list(AM5_SUMMARY_TIMING_PRIORITY)[-len(ordered):],
                          ordered)
