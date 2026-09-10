@@ -34,7 +34,9 @@ Version 1.0.2 source includes the red-bordered module selector, consistent round
 
 <img src="assets/screenshots/amd-summary.png" alt="AMD Summary with per-stick RAM details" width="700">
 
-<img src="assets/screenshots/amd-telemetry.png" alt="Native AMD VDDIO and per-DIMM telemetry" width="550">
+<img src="assets/screenshots/amd-telemetry.png" alt="Native AMD clocks, temperatures, power and voltages" width="550">
+
+<img src="assets/screenshots/amd-memory-telemetry.png" alt="AMD VDDIO and per-DIMM identity, temperatures and PMIC rails" width="550">
 
 Actual updated local-build screenshots, not UI concepts. Values shown are examples, not tuning recommendations.
 
@@ -61,7 +63,6 @@ Tests: `py -3.13 -m unittest discover -s tests -t .`
 - **Highresolution Enterprises / Logix4u — InpOut32/64:** separately supplied low-level access component.
 - **[LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor):** board-sensor register and mapping references.
 - **Zorko — gnr-smu:** independent Granite Ridge SMU mailbox research.
-- CPU-Z, HWiNFO, VoidTimings, ASRock Timing Configurator and MemTweakIt were comparison tools during development; none is required to run Viewer.
 
 Created by **Roch Studio / MateoPCTech**.
 
