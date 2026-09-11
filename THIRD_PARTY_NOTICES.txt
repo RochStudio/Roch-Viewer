@@ -55,7 +55,7 @@ is bundled, and the diagnostics that used it are not in this repository.
 
 Reference tools
 ---------------
-CPU-Z, HWiNFO, VoidTimings, ASRock Timing Configurator and MemTweakIt were
+CPU-Z, HWiNFO, the reference timing tool, ASRock Timing Configurator and MemTweakIt were
 used as reference instruments: their readings were compared against this
 project's on the same machine at the same moment to confirm that a register
 had been located correctly. No source, header or data file from any of them

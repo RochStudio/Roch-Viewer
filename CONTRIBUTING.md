@@ -73,6 +73,6 @@ are bench instruments rather than anything a viewer needs. Patches adding a
 generic mailbox sender will not be merged.
 
 Reports of a register being wrong are more valuable than most features. If a
-reading here disagrees with CPU-Z, HWiNFO, VoidTimings or the ASRock Timing
+reading here disagrees with CPU-Z, HWiNFO, the reference timing tool or the ASRock Timing
 Configurator on your machine, that is worth an issue — say which tool, which
 row, both values, and your board and CPU.

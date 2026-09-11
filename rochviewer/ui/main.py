@@ -1622,7 +1622,7 @@ class TimingGUI:
 
             # Not uniform on a shaded tab: each half is sized to its own
             # content by _stretch_tab_halves, with COLUMN_GAP between
-            # them. Held equal, the narrower half carried a void the
+            # them. Held equal, the narrower half carried an empty area the
             # width of the difference before the other one started.
             uniform = None if name in SHADED_TABS else "equal"
             frame.grid_columnconfigure(0, weight=1, uniform=uniform)

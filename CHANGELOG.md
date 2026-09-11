@@ -22,7 +22,7 @@ ohm rung belongs: 480, 240, 120, 80, 60, RFU, 40, with every neighbour present
 and only that step missing. All three Group B rows sit on that code here, so
 all three reported a reserved setting where a real termination was programmed.
 Group A was untouched because none of its codes lands there. The rows now read
-RZQ/5 (48), matching Void Timings on both channels.
+RZQ/5 (48), matching the reference timing tool on both channels.
 
 **VDD2 was blank.** The Super I/O rail map was derived on a different MSI board
 and is board-specific by its own warning. On that board index 4 of the sensor
@@ -139,7 +139,7 @@ simply has no use for them.
 - The low-level driver is not distributed with this project. See
   `THIRD_PARTY_NOTICES.txt` and the README's Prerequisites.
 - Validated on an ASUS ROG MAXIMUS Z790 APEX with an i9-14900KS at DDR5-8000
-  Gear 2, cross-checked against CPU-Z, HWiNFO, VoidTimings, ASRock Timing
+  Gear 2, cross-checked against CPU-Z, HWiNFO, the reference timing tool, ASRock Timing
   Configurator and MemTweakIt.
 - Per-core temperatures and VR current are not shown. Both need RDMSR, which
   the driver this project uses does not offer; the code says so where the

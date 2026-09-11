@@ -1380,7 +1380,7 @@ def get_twr_value(base=None):
 
     Measured on a Z890 bench at DDR5-8800, all four readings from the same
     boot: tWRPRE 92, tCWL 34, giving 92 - 34 - 8 = 50, which is what BIOS was
-    set to. MR0 read 48, being the nearest step below, and Void Timings --
+    set to. MR0 read 48, being the nearest step below, and the reference timing tool --
     which reports the mode register here -- showed 48 as well. Reading 50 as
     two clocks of error and "fixing" the burst constant to 10 would reproduce
     the DRAM-side number and lose the configured one.
@@ -6951,7 +6951,7 @@ _install_system_info_sections()
 # --- Misc tab.
 #
 # The CKE/power-down control block, the two SC_GS_CFG command fields and the
-# controller feature switches. Sources are VoidTimings' register map, checked
+# controller feature switches. Sources are the reference timing tool' register map, checked
 # against live reads on the Z790 bench; the addresses below are the ones its
 # map names, not guesses. That map has been wrong before (see the CLK Drv Dn
 # note in the slew block), so anything not confirmed against a second source
@@ -6959,7 +6959,7 @@ _install_system_info_sections()
 MISC_TAB = "Misc"
 RTL_TAB = "RTL"
 
-# One register holds all ten CKE fields. VoidTimings lists them in this order
+# One register holds all ten CKE fields. the reference timing tool lists them in this order
 # and shows them as plain numbers, so they are reported the same way rather
 # than being decoded into cycles -- the units are not documented anywhere
 # reachable, and a wrong unit is worse than a raw count.
@@ -7437,7 +7437,7 @@ def _install_misc_tab():
     Rows read through the mode-register pointer path are installed on every
     platform. That path resolves the payload at 0xE200 instead of naming a
     fixed offset, it is the one the DFE rows already use on Arrow Lake, and
-    on a Z890 bench all five of its display rows matched Void Timings on the
+    on a Z890 bench all five of its display rows matched the reference timing tool on the
     same boot: read and write preamble 4 tCK, read postamble 0.5 tCK, write
     postamble 1.5 tCK, burst length BC8 OTF.
 

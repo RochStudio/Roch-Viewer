@@ -34,7 +34,7 @@ MCHBAR offsets at silicon they were not written for.
 
 The Intel side is validated on an ASUS ROG MAXIMUS Z790 APEX with an
 i9-14900KS at DDR5-8000 Gear 2, cross-checked against CPU-Z, HWiNFO,
-VoidTimings, ASRock Timing Configurator and MemTweakIt.
+the reference timing tool, ASRock Timing Configurator and MemTweakIt.
 
 It has also been exercised on a Gigabyte Z890 AORUS TACHYON ICE with a Core
 Ultra 7 270K Plus, an MSI Z790MPOWER with an i5-14600KF, and an LGA1700 DDR4
