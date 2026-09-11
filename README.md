@@ -1,6 +1,6 @@
 # Roch Viewer 1.0.2
 
-Version 1.0.2 is an unreleased source build.
+Download version 1.0.2 from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/tag/v1.0.2).
 
 A read-only Windows memory-timing and hardware-monitoring tool for supported Intel and AMD systems. View clocks, timings, per-channel settings, RAM details and native CPU/memory telemetry in a compact light/dark interface. No HWiNFO dependency.
 
@@ -29,7 +29,7 @@ The InpOut DLL contains a kernel driver and can install a persistent Windows ser
 - **Advanced view:** searchable fields and a text dump for comparing configurations or reporting issues.
 - **Read-only:** no overclocking controls or voltage writes. Low-level selectors and query transactions retrieve readings only.
 
-Version 1.0.2 source includes the red-bordered module selector, consistent rounded toolbar buttons, resistance units and explicit Off states, improved row shading, Gigabyte split channel/socket labels, and VDDIO on the tested X870 AORUS TACHYON ICE. Graphics was removed from telemetry; GPU identity remains in System Info. These changes are not in the published 1.0.1 download yet.
+Version 1.0.2 includes the red-bordered module selector, consistent rounded toolbar buttons, resistance units and explicit Off states, improved row shading, Gigabyte split channel/socket labels, and VDDIO on the tested X870 AORUS TACHYON ICE. Graphics was removed from telemetry; GPU identity remains in System Info.
 
 ## Screenshots
 

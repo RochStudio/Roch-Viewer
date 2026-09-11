@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.2 (unreleased)
+## 1.0.2 (2026-09-11)
 
 - Added native per-channel AMD preamble, decoded read/write postamble duration/pattern and ECC status to Misc. Unavailable reads remain blank and reserved encodings stay explicit.
 - Added eight native raw Granite Ridge APOB training codes under explicitly qualified reference compatibility labels; these are not claimed as verified VREF/DFE measurements.
