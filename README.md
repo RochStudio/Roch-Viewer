@@ -25,6 +25,7 @@ The InpOut DLL contains a kernel driver and can install a persistent Windows ser
 - **Skew and Misc:** supported RTT/ODT, drive strengths, VREF, training and controller configuration fields. AMD Misc includes native preamble/postamble and ECC status (memory-controller ECC, not DDR5 on-die ECC). Granite Ridge also exposes eight raw training codes using the reference tool's labels; those labels are not verified physical VREF/DFE readings. Unavailable reads stay blank.
 - **Native telemetry:** CPU/effective clocks, temperatures, power and supported board voltages, plus each DIMM's temperature and PMIC rails. Current/minimum/maximum/average statistics and reset controls are included.
 - **Per-stick RAM details:** part number, capacity, rank and available IC information in the footer and telemetry.
+- **Shared Roch interface:** light/dark themes, consistent toolbar buttons, and YouTube | X | Discord links at the bottom-left.
 - **Advanced view:** searchable fields and a text dump for comparing configurations or reporting issues.
 - **Read-only:** no overclocking controls or voltage writes. Low-level selectors and query transactions retrieve readings only.
 
