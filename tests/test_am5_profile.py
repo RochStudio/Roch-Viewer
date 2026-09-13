@@ -176,13 +176,16 @@ class Am5RuntimeTest(unittest.TestCase):
             "Part Number", "Module Manufacturer",
             "IC Manufacturer", "DRAM Die",
             "Serial Number", "Manufactured",
+            "Status", "Read Status", "Training Status",
+            "Voltage Status", "Power Status",
             "GPU", "Board Manufacturer", "GPU Code Name", "GPU Revision",
             "GPU Technology", "Cores", "ROPs / TMUs",
             "Memory Size", "Memory Type", "Memory Vendor",
             "Bus Width", "Resizable BAR", "Driver Version", "Driver Date",
-            "Status", "Read Status", "Training Status",
-            "Voltage Status", "Power Status",
         ])
+
+    def test_graphics_is_the_final_system_info_section(self):
+        self.assertEqual(am5_profile.SYSTEM_INFO_SECTIONS[-1][0], "Graphics")
 
     def test_every_system_info_row_is_placed_in_a_section(self):
         # A row nobody placed would have no heading at all. Failing here is
@@ -557,8 +560,8 @@ class Am5RuntimeTest(unittest.TestCase):
         self.assertEqual(by_name["CR"]["Tab"], "Timings")
         self.assertEqual(by_name["CR"]["Category"], "Primary")
         # What training settled on, rather than what it was told.
-        self.assertEqual(by_name["RTT WR"]["Tab"], "Skew")
-        self.assertEqual(by_name["Proc ODT Pu"]["Tab"], "Skew")
+        self.assertEqual(by_name["RTT WR"]["Tab"], "Training")
+        self.assertEqual(by_name["Proc ODT Pu"]["Tab"], "Training")
         self.assertEqual(by_name["MCLK"]["Tab"], "System Info")
 
     def test_cr_closes_the_primary_group(self):

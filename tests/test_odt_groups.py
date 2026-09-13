@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""The CA/CS/CK ODT ladder has no gap in it.
+"""The CA/CS/CK ODT ladder has no gap and uses resistance-first presentation.
 
 RZQ divided by 0.5, 1, 2, 3, 4, 5 and 6. Code 6 is the 48 ohm rung and the
 table carried "RFU" there, so all three Group B rows -- which sit on that code
@@ -28,8 +28,8 @@ from tests.intel_stub import install, restore
 
 intel_timings = None
 
-GROUP_ROWS = ("CA ODT GROUP A", "CS ODT GROUP A", "CK ODT GROUP A",
-              "CA ODT GROUP B", "CS ODT GROUP B", "CK ODT GROUP B")
+GROUP_ROWS = ("CA ODT Group A", "CS ODT Group A", "CK ODT Group A",
+              "CA ODT Group B", "CS ODT Group B", "CK ODT Group B")
 TABLES = ("CA_ODT_FORMULA", "CS_ODT_FORMULA", "CK_ODT_FORMULA")
 
 # What each code means, as a resistance in ohms. RZQ is 240.
@@ -65,9 +65,9 @@ class OdtTableTest(unittest.TestCase):
             for code, ohms in LADDER.items():
                 with self.subTest(table=name, code=code):
                     if ohms is None:
-                        self.assertEqual(table[code], "RTT_OFF")
+                        self.assertEqual(table[code], "0 RZQ OFF")
                     else:
-                        self.assertIn("(%d)" % ohms, table[code])
+                        self.assertTrue(table[code].startswith("%d RZQ" % ohms))
                         self.assertNotIn("RFU", table[code])
 
     def test_the_ladder_descends(self):
@@ -75,6 +75,13 @@ class OdtTableTest(unittest.TestCase):
         # A transposed pair would still pass the test above.
         ohms = [LADDER[c] for c in range(1, 8)]
         self.assertEqual(ohms, sorted(ohms, reverse=True))
+
+    def test_resistance_first_notation(self):
+        self.assertEqual(intel_timings.CA_ODT_FORMULA[0], "0 RZQ OFF")
+        self.assertEqual(intel_timings.CA_ODT_FORMULA[1], "480 RZQ/0.5")
+        self.assertEqual(intel_timings.CA_ODT_FORMULA[6], "48 RZQ/5")
+        self.assertEqual(intel_timings.RTT_WR_FORMULA[6], "40 RZQ/6")
+        self.assertEqual(intel_timings.RON_FORMULA[0], "34 RZQ/7")
 
 
 class OdtRowTest(unittest.TestCase):

@@ -104,6 +104,21 @@ class Ddr5LabelTest(unittest.TestCase):
         self.assertIn("tRFCns", names)
         self.assertNotIn("tRFC", names)
 
+    def test_a_ddr5_table_places_tcl_mr_directly_under_tcl(self):
+        with table_for(LGA1700_DDR5) as built:
+            timings = [
+                row for row in built.TIMINGS if row.get("Tab") == "Timings"
+            ]
+        names = [row.get("name") for row in timings]
+        self.assertEqual(names[names.index("tCL") + 1], "tCL_MR")
+        by_name = {row.get("name"): row for row in timings}
+        self.assertTrue(built.is_dual_timing(by_name["tCL_MR"]))
+
+    def test_a_ddr4_table_does_not_use_the_ddr5_tcl_encoding(self):
+        with table_for(LGA1700_DDR4) as built:
+            names = {t.get("name") for t in built.TIMINGS}
+        self.assertNotIn("tCL_MR", names)
+
     def test_a_ddr4_table_keeps_the_original_rows(self):
         with table_for(LGA1700_DDR4) as built:
             names = {t.get("name") for t in built.TIMINGS}

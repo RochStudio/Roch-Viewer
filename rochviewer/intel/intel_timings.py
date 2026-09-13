@@ -443,6 +443,32 @@ def get_bclk_rd():
     except Exception:
         return "Error"
 
+
+def _core_clock_mhz():
+    """Fastest current logical-core clock from Windows' CPU counters."""
+    try:
+        from rochviewer.sensors.cpu_clocks import read_clocks
+
+        value = read_clocks().get("core_max")
+        return value if isinstance(value, (int, float)) and value > 0 else None
+    except Exception:
+        return None
+
+
+def get_core_clock():
+    """Current fastest core clock, without claiming an unreadable MSR."""
+    value = _core_clock_mhz()
+    return _mhz(value) if value is not None else None
+
+
+def get_core_ratio():
+    """Current fastest core clock divided by the measured bus clock."""
+    clock = _core_clock_mhz()
+    bclk = get_bclk()
+    if clock is None or not isinstance(bclk, (int, float)) or bclk <= 0:
+        return None
+    return "%.1f x" % (clock / bclk)
+
 def get_tx():
     try:
         tx = read_timing(MCHBAR + 0x5E00, bit_start=17, bit_length=10) / 200
@@ -464,16 +490,32 @@ def get_sa():
 LEGACY_RING_RATIO = (0x5918, 24, 8)
 ARROW_LAKE_RING_RATIO = (0x15918, 24, 8)
 
+
+def _ring_ratio_value():
+    """The confirmed ring/uncore ratio field for the active platform."""
+    offset, bit_start, bit_length = (
+        ARROW_LAKE_RING_RATIO if is_arrow_lake_platform()
+        else LEGACY_RING_RATIO
+    )
+    ratio = read_timing(
+        MCHBAR + offset, bit_start=bit_start, bit_length=bit_length
+    )
+    return ratio if isinstance(ratio, (int, float)) and ratio > 0 else None
+
+
+def get_uncore_ratio():
+    """Ring/uncore multiplier read directly from the controller field."""
+    try:
+        ratio = _ring_ratio_value()
+        return None if ratio is None else "%.1f x" % ratio
+    except Exception:
+        return None
+
+
 def get_ring_freq():
     """Ring/uncore clock: the ring ratio multiplied by BCLK."""
     try:
-        offset, bit_start, bit_length = (
-            ARROW_LAKE_RING_RATIO if is_arrow_lake_platform()
-            else LEGACY_RING_RATIO
-        )
-        ratio = read_timing(
-            MCHBAR + offset, bit_start=bit_start, bit_length=bit_length
-        )
+        ratio = _ring_ratio_value()
         bclk_khz = read_timing(MCHBAR + 0x5F60, bit_start=0, bit_length=32)
         if not ratio or not bclk_khz:
             return "N/A"
@@ -1048,7 +1090,7 @@ def get_dram_ratio_value():
 # ratio been a nine-bit field, bit 8 would be its top bit rather than a flag
 # of its own, and at ratio 132 nothing distinguished the two readings.
 # The memory PLL reference the Arrow Lake ratio counts in, and the one number
-# the DRAM Frequency and DDR QCLK Ratio rows share. It was written twice --
+# the DRAM Frequency and QCLK Ratio rows share. It was written twice --
 # 33.334 in get_speed and "133.33 MHz" in get_qclk_ratio -- for one fact: the
 # ratio at 0x13D10 advances in quarter-reference steps, so 133.334 / 4 is the
 # multiplier. Pinned by two gears against SMBIOS: 132 x 33.334 x 2 and
@@ -1881,7 +1923,7 @@ GEAR_MODE_FORMULA = {
 }
 REFRESH_MODE_FORMULA = {
     0: "Normal Refresh (tRFC)",
-    1: "FGR Mode (tRFC2)",
+    1: "FGR",
 }
 tCCD_L_FORMULA = {
     0: "8",
@@ -2256,6 +2298,11 @@ TIMINGS = [
     {"name": "tREFSBRD", "address": MCHBAR + 0xE00A, "Category": "Other Timings", "Tab": "Timings", "parameters": {"bit_start": 8, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
     {"name": "tMOD", "address": MCHBAR + 0xE440, "Category": "Other Timings", "Tab": "Timings", "parameters": {"bit_start": 24, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
     {"name": "tCAL", "address": MCHBAR + 0xE08C, "Category": "Other Timings", "Tab": "Timings", "parameters": {"bit_start": 3, "bit_length": 3}, "Column": "Right", "read_type": "standard"},
+    # The reference register map calls out the all-bank precharge extension
+    # separately. Its embedded
+    # Intel map places the four-bit field at 0xE000[10:7]; both controllers on
+    # the Z790 DDR5 bench read zero, matching its dump.
+    {"name": "TRPab_EXT", "address": MCHBAR + 0xE000, "Category": "Other Timings", "Tab": "Timings", "parameters": {"bit_start": 7, "bit_length": 4}, "Column": "Right", "read_type": "standard"},
     {"name": "tWRPDEN", "address": MCHBAR + 0xE054, "Category": "Power down", "Tab": "Timings", "parameters": {"bit_start": 0, "bit_length": 10,}, "Column": "Left", "read_type": "standard"},
     {"name": "tRDPDEN", "address": MCHBAR + 0xE050, "Category": "Power down", "Tab": "Timings", "parameters": {"bit_start": 21, "bit_length": 8}, "Column": "Left", "read_type": "standard"},
     {"name": "tPRPDEN", "address": MCHBAR + 0xE054, "Category": "Power down", "Tab": "Timings", "parameters": {"bit_start": 27, "bit_length": 5}, "Column": "Left", "read_type": "standard"},
@@ -2298,8 +2345,11 @@ TIMINGS = [
     {"name": "tCSH", "address": MCHBAR + 0xE054, "Category": "Power down", "Tab": "Timings", "parameters": {"bit_start": 10, "bit_length": 6}, "Column": "Left", "read_type": "standard"},
     {"name": "tCSL", "address": MCHBAR + 0xE054, "Category": "Power down", "Tab": "Timings", "parameters": {"bit_start": 16, "bit_length": 6}, "Column": "Left", "read_type": "standard"},
     {"name": "tCA2CS", "address": MCHBAR + 0xE054, "Category": "Power down", "Tab": "Timings", "parameters": {"bit_start": 22, "bit_length": 5}, "Column": "Left", "read_type": "standard"},
-    {"name": "OREF_RI", "address": MCHBAR + 0xE438, "Category": "Power down", "Tab": "Timings", "parameters": {"bit_start": 0, "bit_length": 8}, "Column": "Left", "read_type": "standard"},
-    # The rest of 0xE438. OREF_RI holds bits 0-7 and tREFIx9 bits 24-31,
+    # The reference map's internal OREFRI field is presented to users as
+    # "Rank Idle". This renames the existing reading rather than duplicating
+    # it, so the UI uses the reference label for 0xE438[7:0].
+    {"name": "Rank Idle", "address": MCHBAR + 0xE438, "Category": "Power down", "Tab": "Timings", "parameters": {"bit_start": 0, "bit_length": 8}, "Column": "Left", "read_type": "standard"},
+    # The rest of 0xE438. Rank Idle holds bits 0-7 and tREFIx9 bits 24-31,
     # and the reference tool's six names tile the gap between them exactly:
     # 8-11, 12-15, 16, 17, 18-19, 20-23. Read on the bench, all six agree
     # with its dump -- 6, 7, 0, 1, 2, 5 -- which is what pins the layout,
@@ -2330,7 +2380,7 @@ TIMINGS = [
     {
     "name": "RTT WR",
     "Category": "RTT",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "parameter_name": "Name",
     "name_a": "CHA",
@@ -2362,7 +2412,7 @@ TIMINGS = [
     {
     "name": "RTT NOM RD",
     "Category": "RTT",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "parameter_name": "Name",
     "name_a": "CHA",
@@ -2394,7 +2444,7 @@ TIMINGS = [
     {
     "name": "RTT NOM WR",
     "Category": "RTT",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "parameter_name": "Name",
     "name_a": "CHA",
@@ -2426,7 +2476,7 @@ TIMINGS = [
     {
     "name": "RTT PARK",
     "Category": "RTT",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "parameter_name": "Name",
     "name_a": "CHA",
@@ -2458,7 +2508,7 @@ TIMINGS = [
     {
     "name": "RTT PARK DQS",
     "Category": "RTT",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "parameter_name": "Name",
     "name_a": "CHA",
@@ -2490,7 +2540,7 @@ TIMINGS = [
     {
     "name": "RTT LOOPBACK",
     "Category": "RTT",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "parameter_name": "Name",
     "name_a": "CHA",
@@ -2522,7 +2572,7 @@ TIMINGS = [
     {
     "name": "CA ODT GROUP A",
     "Category": "ODT",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "parameter_name": "Name",
     "name_a": "CHA",
@@ -2554,7 +2604,7 @@ TIMINGS = [
     {
     "name": "CS ODT GROUP A",
     "Category": "ODT",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "parameter_name": "Name",
     "name_a": "CHA",
@@ -2586,7 +2636,7 @@ TIMINGS = [
     {
     "name": "CK ODT GROUP A",
     "Category": "ODT",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "parameter_name": "Name",
     "name_a": "CHA",
@@ -2618,7 +2668,7 @@ TIMINGS = [
     {
     "name": "CA ODT GROUP B",
     "Category": "ODT",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "parameter_name": "Name",
     "name_a": "CHA",
@@ -2650,7 +2700,7 @@ TIMINGS = [
     {
     "name": "CS ODT GROUP B",
     "Category": "ODT",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "parameter_name": "Name",
     "name_a": "CHA",
@@ -2682,7 +2732,7 @@ TIMINGS = [
     {
     "name": "CK ODT GROUP B",
     "Category": "ODT",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "parameter_name": "Name",
     "name_a": "CHA",
@@ -2714,7 +2764,7 @@ TIMINGS = [
     {
     "name": "PULL UP",
     "Category": "RON",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "parameter_name": "Name",
     "name_a": "CHA",
@@ -2747,7 +2797,7 @@ TIMINGS = [
     {
     "name": "PULL DN",
     "Category": "RON",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "parameter_name": "Name",
     "name_a": "CHA",
@@ -2777,14 +2827,14 @@ TIMINGS = [
     },
     "Formula": RON_FORMULA,
     },
-    {"name": "WrDS Up", "address": MCHBAR + 0x2CE8, "Category": "VREF", "Tab": "Skew", "parameters": {"bit_start": 0, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
-    {"name": "WrDS Dn", "address": MCHBAR + 0x2CE8, "Category": "VREF", "Tab": "Skew", "parameters": {"bit_start": 8, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
-    {"name": "RdODT Up", "address": MCHBAR + 0x2CE8, "Category": "VREF", "Tab": "Skew", "parameters": {"bit_start": 16, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
-    {"name": "RdODT Dn", "address": MCHBAR + 0x2CE8, "Category": "VREF", "Tab": "Skew", "parameters": {"bit_start": 24, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
-    {"name": "WrDSCmd Up", "address": MCHBAR + 0x2CEC, "Category": "VREF", "Tab": "Skew", "parameters": {"bit_start": 0, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
-    {"name": "WrDSCtl Up", "address": MCHBAR + 0x2CEC, "Category": "VREF", "Tab": "Skew", "parameters": {"bit_start": 8, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
-    {"name": "WrDSClk Up", "address": MCHBAR + 0x2CEC, "Category": "VREF", "Tab": "Skew", "parameters": {"bit_start": 16, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
-    {"name": "WrDSCke CS Up", "address": MCHBAR + 0x2CEC, "Category": "VREF", "Tab": "Skew", "parameters": {"bit_start": 24, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
+    {"name": "WrDS Up", "address": MCHBAR + 0x2CE8, "Category": "VREF", "Tab": "Training", "parameters": {"bit_start": 0, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
+    {"name": "WrDS Dn", "address": MCHBAR + 0x2CE8, "Category": "VREF", "Tab": "Training", "parameters": {"bit_start": 8, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
+    {"name": "RdODT Up", "address": MCHBAR + 0x2CE8, "Category": "VREF", "Tab": "Training", "parameters": {"bit_start": 16, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
+    {"name": "RdODT Dn", "address": MCHBAR + 0x2CE8, "Category": "VREF", "Tab": "Training", "parameters": {"bit_start": 24, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
+    {"name": "WrDSCmd Up", "address": MCHBAR + 0x2CEC, "Category": "VREF", "Tab": "Training", "parameters": {"bit_start": 0, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
+    {"name": "WrDSCtl Up", "address": MCHBAR + 0x2CEC, "Category": "VREF", "Tab": "Training", "parameters": {"bit_start": 8, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
+    {"name": "WrDSClk Up", "address": MCHBAR + 0x2CEC, "Category": "VREF", "Tab": "Training", "parameters": {"bit_start": 16, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
+    {"name": "WrDSCke CS Up", "address": MCHBAR + 0x2CEC, "Category": "VREF", "Tab": "Training", "parameters": {"bit_start": 24, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
     # CKE/CS has an up level and no down level, so there is deliberately no
     # WrDSCke CS Dn row. One was added here -- as CKE CS VREFDN, before these
     # rows took the reference tools' names -- on the assumption that every
@@ -2802,11 +2852,11 @@ TIMINGS = [
     # one, and QXCOUNT is a count rather than a voltage at all, kept with the
     # VREF rows because it is what the comparator those levels feed reports.
     # Read 374 and 30 respectively on the bench.
-    {"name": "RX VREF", "address": MCHBAR + 0x008C, "Category": "VREF", "Tab": "Skew", "parameters": {"bit_start": 14, "bit_length": 9}, "Column": "Right", "read_type": "standard"},
-    {"name": "QXCOUNT", "address": MCHBAR + 0x3C94, "Category": "VREF", "Tab": "Skew", "parameters": {"bit_start": 18, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
-    {"name": "WrDSCmd Dn", "address": MCHBAR + 0x2CF0, "Category": "VREF", "Tab": "Skew", "parameters": {"bit_start": 0, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
-    {"name": "WrDSCtl Dn", "address": MCHBAR + 0x2CF0, "Category": "VREF", "Tab": "Skew", "parameters": {"bit_start": 8, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
-    {"name": "WrDSClk Dn", "address": MCHBAR + 0x2CF0, "Category": "VREF", "Tab": "Skew", "parameters": {"bit_start": 16, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
+    {"name": "RX VREF", "address": MCHBAR + 0x008C, "Category": "VREF", "Tab": "Training", "parameters": {"bit_start": 14, "bit_length": 9}, "Column": "Right", "read_type": "standard"},
+    {"name": "QXCOUNT", "address": MCHBAR + 0x3C94, "Category": "VREF", "Tab": "Training", "parameters": {"bit_start": 18, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
+    {"name": "WrDSCmd Dn", "address": MCHBAR + 0x2CF0, "Category": "VREF", "Tab": "Training", "parameters": {"bit_start": 0, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
+    {"name": "WrDSCtl Dn", "address": MCHBAR + 0x2CF0, "Category": "VREF", "Tab": "Training", "parameters": {"bit_start": 8, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
+    {"name": "WrDSClk Dn", "address": MCHBAR + 0x2CF0, "Category": "VREF", "Tab": "Training", "parameters": {"bit_start": 16, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
     # DQ VREF is per device, not per channel: the table entry points at a
     # base and the four DRAM devices sit in the four bytes from there, so the
     # device is chosen by walking the base one byte at a time. Reading only
@@ -2818,7 +2868,7 @@ TIMINGS = [
         {
             "name": "DQ VREF D%d" % device,
             "Category": "VREF Additional",
-            "Tab": "Skew",
+            "Tab": "Training",
             "Column": "Right",
             "read_type": "dynamic",
             "dynamic_params": {
@@ -2838,7 +2888,7 @@ TIMINGS = [
     {
     "name": "CA VREF",
     "Category": "VREF Additional",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Right",
     "read_type": "dynamic",  
     "dynamic_params": {
@@ -2856,7 +2906,7 @@ TIMINGS = [
     {
     "name": "CS VREF",
     "Category": "VREF Additional",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Right",
     "read_type": "dynamic",  
     "dynamic_params": {
@@ -2875,19 +2925,19 @@ TIMINGS = [
     # BWSEL match the reference tool exactly; CODEPI is a live DLL phase
     # code and was seen moving between 35 and 37 while sampled, so it is
     # read rather than compared against a captured number.
-    {"name": "DLL_CODEPI", "address": MCHBAR + 0x01BC, "Category": "MISC Additional", "Tab": "Skew", "parameters": {"bit_start": 0, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
-    {"name": "DLL_CODEWL", "address": MCHBAR + 0x01BC, "Category": "MISC Additional", "Tab": "Skew", "parameters": {"bit_start": 6, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
-    {"name": "DLL BWSEL", "address": MCHBAR + 0x01BC, "Category": "MISC Additional", "Tab": "Skew", "parameters": {"bit_start": 12, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
+    {"name": "DLL_CODEPI", "address": MCHBAR + 0x01BC, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 0, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
+    {"name": "DLL_CODEWL", "address": MCHBAR + 0x01BC, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 6, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
+    {"name": "DLL BWSEL", "address": MCHBAR + 0x01BC, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 12, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
     # The rest of the bandwidth-select and receive-enable group that sits with
     # DLL BWSEL. Verified on the bench at 4, 128 and 1253.
-    {"name": "BWSEL LO Threshold", "address": MCHBAR + 0x3CA4, "Category": "MISC Additional", "Tab": "Skew", "parameters": {"bit_start": 16, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
-    {"name": "DCC Control Code", "address": MCHBAR + 0x2C38, "Category": "MISC Additional", "Tab": "Skew", "parameters": {"bit_start": 11, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
-    {"name": "RcvEn PI", "address": MCHBAR + 0x00F4, "Category": "MISC Additional", "Tab": "Skew", "parameters": {"bit_start": 0, "bit_length": 12}, "Column": "Right", "read_type": "standard"},
-    #{"name": "ODTFINETUNE_CHA", "address": None, "Category": "MISC Additional", "Tab": "Skew", "parameters": {}, "Column": "Right", "read_type": "standard"},
-    #{"name": "ODTFINETUNE_CHB", "address": None, "Category": "MISC Additional", "Tab": "Skew", "parameters": {}, "Column": "Right", "read_type": "standard"},
-    {"name": "VTT ODT", "address": MCHBAR + 0x017C, "Category": "MISC Additional", "Tab": "Skew", "parameters": {"bit_start": 0, "bit_length": 1},"Formula": EN_DIS_FORMULA, "Column": "Right", "read_type": "standard"},
-    {"name": "VSS ODT", "address": MCHBAR + 0x017C, "Category": "MISC Additional", "Tab": "Skew", "parameters": {"bit_start": 1, "bit_length": 1},"Formula": EN_DIS_FORMULA, "Column": "Right", "read_type": "standard"},
-    {"name": "VDDQ ODT", "address": MCHBAR + 0x017C, "Category": "MISC Additional", "Tab": "Skew", "parameters": {"bit_start": 2, "bit_length": 1},"Formula": EN_DIS_FORMULA, "Column": "Right", "read_type": "standard"},
+    {"name": "BWSEL LO Threshold", "address": MCHBAR + 0x3CA4, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 16, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
+    {"name": "DCC Control Code", "address": MCHBAR + 0x2C38, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 11, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
+    {"name": "RcvEn PI", "address": MCHBAR + 0x00F4, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 0, "bit_length": 12}, "Column": "Right", "read_type": "standard"},
+    #{"name": "ODTFINETUNE_CHA", "address": None, "Category": "MISC Additional", "Tab": "Training", "parameters": {}, "Column": "Right", "read_type": "standard"},
+    #{"name": "ODTFINETUNE_CHB", "address": None, "Category": "MISC Additional", "Tab": "Training", "parameters": {}, "Column": "Right", "read_type": "standard"},
+    {"name": "VTT ODT", "address": MCHBAR + 0x017C, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 0, "bit_length": 1},"Formula": EN_DIS_FORMULA, "Column": "Right", "read_type": "standard"},
+    {"name": "VSS ODT", "address": MCHBAR + 0x017C, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 1, "bit_length": 1},"Formula": EN_DIS_FORMULA, "Column": "Right", "read_type": "standard"},
+    {"name": "VDDQ ODT", "address": MCHBAR + 0x017C, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 2, "bit_length": 1},"Formula": EN_DIS_FORMULA, "Column": "Right", "read_type": "standard"},
     
     # 0xE070 holds all four read/write duration and delay fields, one nibble
     # each. These rows used to carry only the two write fields and label the
@@ -2895,16 +2945,16 @@ TIMINGS = [
     # read and write -- they were the same bits on the two controllers, and
     # the actual read fields were not shown at all. The columns are the
     # channels here, as everywhere else on this tab.
-    {"name": "ODT Read Duration", "address_a": MCHBAR + 0xE070, "address_b": CHANNEL_B + 0xE070, "Category": "ODT DELAY", "Tab": "Skew", "parameters_a": {"bit_start": 0, "bit_length": 4}, "parameters_b": {"bit_start": 0, "bit_length": 4}, "Column": "Right", "read_type_a": "standard", "read_type_b": "standard"},
-    {"name": "ODT Read Delay", "address_a": MCHBAR + 0xE070, "address_b": CHANNEL_B + 0xE070, "Category": "ODT DELAY", "Tab": "Skew", "parameters_a": {"bit_start": 4, "bit_length": 4}, "parameters_b": {"bit_start": 4, "bit_length": 4}, "Column": "Right", "read_type_a": "standard", "read_type_b": "standard"},
-    {"name": "ODT Write Duration", "address_a": MCHBAR + 0xE070, "address_b": CHANNEL_B + 0xE070, "Category": "ODT DELAY", "Tab": "Skew", "parameters_a": {"bit_start": 8, "bit_length": 4}, "parameters_b": {"bit_start": 8, "bit_length": 4}, "Column": "Right", "read_type_a": "standard", "read_type_b": "standard"},
-    {"name": "ODT Write Delay", "address_a": MCHBAR + 0xE070, "address_b": CHANNEL_B + 0xE070, "Category": "ODT DELAY", "Tab": "Skew", "parameters_a": {"bit_start": 12, "bit_length": 4}, "parameters_b": {"bit_start": 12, "bit_length": 4}, "Column": "Right", "read_type_a": "standard", "read_type_b": "standard"},
-    {"name": "ODT FINETUNE", "address_a": MCHBAR + 0xE0B4, "address_b": CHANNEL_B + 0xE0B4, "Category": "ODT DELAY", "Tab": "Skew", "parameters_a": {"bit_start": 0, "bit_length": 4}, "parameters_b": {"bit_start": 0, "bit_length": 4}, "Column": "Right", "read_type_a": "standard", "read_type_b": "standard"},
-    {"name": "ODT Write Early ODT", "address_a": MCHBAR + 0xE074, "address_b": CHANNEL_B + 0xE074, "Category": "ODT DELAY", "Tab": "Skew", "parameters_a": {"bit_start": 6, "bit_length": 1}, "parameters_b": {"bit_start": 6, "bit_length": 1}, "Column": "Right", "read_type_a": "standard", "read_type_b": "standard"},
+    {"name": "ODT Read Duration", "address_a": MCHBAR + 0xE070, "address_b": CHANNEL_B + 0xE070, "Category": "ODT DELAY", "Tab": "Training", "parameters_a": {"bit_start": 0, "bit_length": 4}, "parameters_b": {"bit_start": 0, "bit_length": 4}, "Column": "Right", "read_type_a": "standard", "read_type_b": "standard"},
+    {"name": "ODT Read Delay", "address_a": MCHBAR + 0xE070, "address_b": CHANNEL_B + 0xE070, "Category": "ODT DELAY", "Tab": "Training", "parameters_a": {"bit_start": 4, "bit_length": 4}, "parameters_b": {"bit_start": 4, "bit_length": 4}, "Column": "Right", "read_type_a": "standard", "read_type_b": "standard"},
+    {"name": "ODT Write Duration", "address_a": MCHBAR + 0xE070, "address_b": CHANNEL_B + 0xE070, "Category": "ODT DELAY", "Tab": "Training", "parameters_a": {"bit_start": 8, "bit_length": 4}, "parameters_b": {"bit_start": 8, "bit_length": 4}, "Column": "Right", "read_type_a": "standard", "read_type_b": "standard"},
+    {"name": "ODT Write Delay", "address_a": MCHBAR + 0xE070, "address_b": CHANNEL_B + 0xE070, "Category": "ODT DELAY", "Tab": "Training", "parameters_a": {"bit_start": 12, "bit_length": 4}, "parameters_b": {"bit_start": 12, "bit_length": 4}, "Column": "Right", "read_type_a": "standard", "read_type_b": "standard"},
+    {"name": "ODT FINETUNE", "address_a": MCHBAR + 0xE0B4, "address_b": CHANNEL_B + 0xE0B4, "Category": "ODT DELAY", "Tab": "Training", "parameters_a": {"bit_start": 0, "bit_length": 4}, "parameters_b": {"bit_start": 0, "bit_length": 4}, "Column": "Right", "read_type_a": "standard", "read_type_b": "standard"},
+    {"name": "ODT Write Early ODT", "address_a": MCHBAR + 0xE074, "address_b": CHANNEL_B + 0xE074, "Category": "ODT DELAY", "Tab": "Training", "parameters_a": {"bit_start": 6, "bit_length": 1}, "parameters_b": {"bit_start": 6, "bit_length": 1}, "Column": "Right", "read_type_a": "standard", "read_type_b": "standard"},
     {
     "name": "REFRESH",
     "Category": "REFRESH MODE",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "read_type": "dynamic",  
     "dynamic_params": {
@@ -2922,7 +2972,7 @@ TIMINGS = [
     {
     "name": "ODTL WR ON",
     "Category": "ODTL",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "read_type": "dynamic",  
     "dynamic_params": {
@@ -2940,7 +2990,7 @@ TIMINGS = [
     {
     "name": "ODTL WR OFF",
     "Category": "ODTL",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "read_type": "dynamic",  
     "dynamic_params": {
@@ -2958,7 +3008,7 @@ TIMINGS = [
     {
     "name": "ODTL WR NT ON",
     "Category": "ODTL",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "read_type": "dynamic",  
     "dynamic_params": {
@@ -2976,7 +3026,7 @@ TIMINGS = [
     {
     "name": "ODTL WR NT OFF",
     "Category": "ODTL",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "read_type": "dynamic",  
     "dynamic_params": {
@@ -2994,7 +3044,7 @@ TIMINGS = [
     {
     "name": "ODTL RD NT ON",
     "Category": "ODTL",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "read_type": "dynamic",  
     "dynamic_params": {
@@ -3012,7 +3062,7 @@ TIMINGS = [
     {
     "name": "ODTL RD NT OFF",
     "Category": "ODTL",
-    "Tab": "Skew",
+    "Tab": "Training",
     "Column": "Left",
     "read_type": "dynamic",  
     "dynamic_params": {
@@ -3591,7 +3641,7 @@ def _install_platform_vref_additional():
         if timing.get("Category") != "VREF Additional":
             continue
 
-        # Remove the v21 dual-channel wrapper. Summary and Skew should show one
+        # Remove the v21 dual-channel wrapper. Summary and Training should show one
         # clean value column for DQ/CA/CS VREF.
         for key in (
             "read_type_a", "read_type_b", "dynamic_params_a", "dynamic_params_b",
@@ -3770,7 +3820,7 @@ for timing in TIMINGS:
     elif timing.get("name") == "Dram Ratio" and timing.get("Tab") == "Main" and timing.get("Category") == "General":
         timing["name"] = "DRAM Ratio"
     elif timing.get("name") == "Multiplier" and timing.get("Tab") == "Main" and timing.get("Category") == "General":
-        timing["name"] = "DDR QCLK Ratio"
+        timing["name"] = "QCLK Ratio"
         timing["value"] = get_qclk_ratio()
         timing["address"] = None
         timing["parameters"] = {}
@@ -4030,16 +4080,19 @@ custom_general_rows = [
     {"name": "Model", "value": get_board_model(), "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
     {"name": "BIOS", "value": get_bios_version(), "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
     {"name": "Microcode", "value": get_microcode(), "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
-    {"name": "RAM Manufacturer", "value": lambda: _dimm_field("module_manufacturer") or get_ram_manufacturer(), "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
-    {"name": "Memory Capacity", "value": get_total_physical_memory(), "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
+    {"name": "RAM Manufacturer", "display_name": "Module Manuf.", "value": lambda: _dimm_field("module_manufacturer") or get_ram_manufacturer(), "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
+    {"name": "Memory Capacity", "display_name": "Capacity", "value": get_total_physical_memory(), "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
     {"name": "DRAM Frequency", "value": get_dram_frequency, "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
     {"name": "CMD Stretch", "value": get_cmd_stretch(), "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
     {"name": "DRAM Ratio", "value": get_dram_ratio_value, "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
     {"name": "Gear Mode", "value": get_gear_mode_value, "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
     {"name": "Channels", "value": detect_dual_channel_memory(), "Category": "General", "Tab": "Main", "parameters": {}, "Column": "Left", "read_type": "standard"},
-    {"name": "DDR QCLK Ratio", "value": get_qclk_ratio, "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
-    {"name": "BCLK", "value": get_bclk_rd, "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
-    {"name": "Uncore", "value": get_ring_freq, "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
+    {"name": "QCLK Ratio", "value": get_qclk_ratio, "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
+    {"name": "BCLK", "display_name": "Bus Clock", "value": get_bclk_rd, "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
+    {"name": "Core Ratio", "value": get_core_ratio, "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
+    {"name": "Uncore Ratio", "value": get_uncore_ratio, "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
+    {"name": "Core Clock", "value": get_core_clock, "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
+    {"name": "Uncore", "display_name": "Ring Clock", "value": get_ring_freq, "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
     {"name": "MCLK", "value": get_mclk, "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
     {"name": "UCLK", "value": get_uclk, "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
     {"name": "Power Down Mode", "value": get_power_down_mode_value(), "Category": "General", "Tab": "Main", "Column": "Left", "read_type": "standard"},
@@ -4181,7 +4234,7 @@ def _reorder_power_down_timings():
 _reorder_power_down_timings()
 
 # --- DDR4 live RTT / RON reader (verified on Alder/Raptor Lake DDR4 register shadows).
-# DDR5 keeps the project's original Skew-tab readers until its register mapping is verified.
+# DDR5 keeps the project's original Training-tab readers until its register mapping is verified.
 DDR4_RTT_NOM_PARK_FORMULA = {
     0b000: "Disabled",
     0b001: "60 Ohm",
@@ -4273,7 +4326,7 @@ def get_ddr4_ron(base):
 
 def _make_dual_live_row(name, category, read, base_a=MCHBAR,
                         base_b=CHANNEL_B):
-    """A per-channel Skew row that reads both controllers on every refresh.
+    """A per-channel Training row that reads both controllers on every refresh.
 
     Takes the reader rather than two readings. It used to take the values,
     which meant each row froze at whatever the DRAM had been told at startup
@@ -4285,7 +4338,7 @@ def _make_dual_live_row(name, category, read, base_a=MCHBAR,
     return {
         "name": name,
         "Category": category,
-        "Tab": "Skew",
+        "Tab": "Training",
         "Column": "Left",
         "parameter_name": "Name",
         "name_a": "CHA",
@@ -4308,7 +4361,7 @@ def _install_ddr4_skew_live_rows():
     TIMINGS = [
         timing for timing in TIMINGS
         if not (
-            timing.get("Tab") == "Skew"
+            timing.get("Tab") == "Training"
             and timing.get("Category") in ("RTT", "RON")
         )
     ]
@@ -4333,9 +4386,9 @@ def _install_ddr4_skew_live_rows():
         ),
     ]
 
-    # Preserve the original Skew order: RTT, ODT, RON, then the remaining sections.
+    # Preserve the original Training order: RTT, ODT, RON, then the remaining sections.
     first_skew = next(
-        (i for i, timing in enumerate(TIMINGS) if timing.get("Tab") == "Skew"),
+        (i for i, timing in enumerate(TIMINGS) if timing.get("Tab") == "Training"),
         len(TIMINGS),
     )
     TIMINGS[first_skew:first_skew] = rtt_rows
@@ -4343,7 +4396,7 @@ def _install_ddr4_skew_live_rows():
     after_odt = first_skew + len(rtt_rows)
     while (
         after_odt < len(TIMINGS)
-        and TIMINGS[after_odt].get("Tab") == "Skew"
+        and TIMINGS[after_odt].get("Tab") == "Training"
         and TIMINGS[after_odt].get("Category") == "ODT"
     ):
         after_odt += 1
@@ -4407,7 +4460,7 @@ def _install_ddr4_odt_rows():
     TIMINGS = [
         timing for timing in TIMINGS
         if not (
-            timing.get("Tab") == "Skew"
+            timing.get("Tab") == "Training"
             and timing.get("Category") == "ODT"
         )
     ]
@@ -4424,15 +4477,15 @@ def _install_ddr4_odt_rows():
         ),
     ]
 
-    # Keep the Skew order as RTT -> ODT -> RON.
+    # Keep the Training order as RTT -> ODT -> RON.
     insert_at = next(
         (
             i for i, timing in enumerate(TIMINGS)
-            if timing.get("Tab") == "Skew"
+            if timing.get("Tab") == "Training"
             and timing.get("Category") == "RON"
         ),
         next(
-            (i for i, timing in enumerate(TIMINGS) if timing.get("Tab") == "Skew"),
+            (i for i, timing in enumerate(TIMINGS) if timing.get("Tab") == "Training"),
             len(TIMINGS),
         ),
     )
@@ -4452,14 +4505,14 @@ def _install_arrow_lake_vref_rows():
         return
 
     # The analog drive-strength rows used to be dropped here as obsolete on
-    # this platform. They stay, by request, so Skew carries the same rows on
+    # this platform. They stay, by request, so Training carries the same rows on
     # both platforms and the ones that read nothing say N/A rather than
     # vanishing. This function now only promotes the DDR5 values beside them.
     # Present DQ/CA/CS as the normal VREF section on Arrow Lake rather than a
     # second "VREF Additional" panel.
     for timing in TIMINGS:
         if (
-            timing.get("Tab") == "Skew"
+            timing.get("Tab") == "Training"
             and timing.get("Category") == "VREF Additional"
             and timing.get("name") in ("DQ VREF", "CA VREF", "CS VREF")
         ):
@@ -4484,13 +4537,10 @@ def _read_slew_rate_field(offset, bit_start, bit_length):
         return "N/A"
 
 
-# Skew rows that hold text rather than a reading, and are meant to. Both are
-# DDR4: VREFCA is an external reference the controller cannot report, and
-# DDR4 has no VREFCS register at all, so there is nothing to read in either
-# case. They say so instead of showing a number that would look measured.
-# Everything else on the tab must reach hardware when it is drawn -- see
-# tests/test_skew_live.py, which allows exactly these two.
-SKEW_FIXED_BY_SPECIFICATION = frozenset({"CA VREF", "CS VREF"})
+# Training contains readings only. DDR4 has no VREFCA or VREFCS register, so those
+# rows are removed by _install_platform_vref_additional instead of filling the
+# value column with explanatory constants. DDR5 reads both from MR11/MR12.
+# tests/test_skew_live.py checks this rule on every supported Intel profile.
 
 
 # The five categories the slew-rate rows are filed under -- the four signal
@@ -4530,7 +4580,7 @@ def _make_slew_rate_row(name, offset, bit_start, bit_length):
     return {
         "name": name,
         "Category": _slew_rate_category(name),
-        "Tab": "Skew",
+        "Tab": "Training",
         "Column": "Right",
         "value": (lambda offset=offset, bit_start=bit_start,
                   bit_length=bit_length:
@@ -4554,7 +4604,7 @@ def _make_slew_rate_row_for_generation(name, offset, bit_start, bit_length):
     return {
         "name": name,
         "Category": _slew_rate_category(name),
-        "Tab": "Skew",
+        "Tab": "Training",
         "Column": "Right",
         "value": read,
     }
@@ -4647,7 +4697,7 @@ def _make_ddr4_clk_slew_row(name, field_name):
     return {
         "name": name,
         "Category": _slew_rate_category(name),
-        "Tab": "Skew",
+        "Tab": "Training",
         "Column": "Right",
         "value": lambda field_name=field_name: _read_ddr4_clk_slew_field(
             field_name),
@@ -4661,19 +4711,24 @@ def _install_slew_rate_rows():
     TIMINGS = [
         timing for timing in TIMINGS
         if not (
-            timing.get("Tab") == "Skew"
+            timing.get("Tab") == "Training"
             and timing.get("Category") == "Slew Rate"
         )
     ]
 
     slew_rows = [
         # DATA
-        _make_slew_rate_row("Data Drv Up", 0x2CD8, 0, 6),
-        _make_slew_rate_row("Data Drv Dn", 0x2CD8, 6, 6),
-        _make_slew_rate_row("Data ODT Up", 0x2CD8, 12, 6),
-        _make_slew_rate_row("Data ODT Dn", 0x2CD8, 18, 6),
+        # DATA0CH0_CR_DDRCRDATACOMP0 is the per-channel register at 0x01B4.
+        # The old 0x2CD8 address was inferred from the adjacent global
+        # CMD/CLK/CTL compensation blocks; it returned plausible drive codes
+        # but put both ODT codes one step high. The reference map and dump
+        # pin this address and decode it as 52 / 42 / 17 / 14 / 48.
+        _make_slew_rate_row("Data Drv Up", 0x01B4, 0, 6),
+        _make_slew_rate_row("Data Drv Dn", 0x01B4, 6, 6),
+        _make_slew_rate_row("Data ODT Up", 0x01B4, 12, 6),
+        _make_slew_rate_row("Data ODT Dn", 0x01B4, 18, 6),
         _make_slew_rate_row_for_generation(
-            "Data VssHiFFdq", 0x2CD8, 24, 6),
+            "Data VssHiFFdq", 0x01B4, 24, 6),
 
         # CMD
         _make_slew_rate_row("CMD Drv Up", 0x2CDC, 0, 6),
@@ -4716,11 +4771,11 @@ def _install_slew_rate_rows():
         _make_slew_rate_row("SComp cmn bonus", 0x2C24, 12, 8),
     ]
 
-    # Place the new panel before MISC Additional in the Skew right column.
+    # Place the new panel before MISC Additional in the Training right column.
     insert_at = next(
         (
             index for index, timing in enumerate(TIMINGS)
-            if timing.get("Tab") == "Skew"
+            if timing.get("Tab") == "Training"
             and timing.get("Category") == "MISC Additional"
         ),
         len(TIMINGS),
@@ -4730,7 +4785,7 @@ def _install_slew_rate_rows():
 
 _install_slew_rate_rows()
 
-# --- Skew-tab organization cleanup.
+# --- Training-tab organization cleanup.
 # Keep the legacy analog VREF values and the DQ/CA/CS VREF values in one panel,
 # order WrDSCke CS Up after WrDSClk Dn, and place ODT DELAY below ODTL.
 def _organize_skew_sections():
@@ -4769,14 +4824,14 @@ def _organize_skew_sections():
 
     vref_rows = [
         timing for timing in TIMINGS
-        if timing.get("Tab") == "Skew"
+        if timing.get("Tab") == "Training"
         and timing.get("Category") in ("VREF", "VREF Additional")
     ]
     if vref_rows:
         first_vref_index = min(TIMINGS.index(timing) for timing in vref_rows)
         for timing in vref_rows:
             timing["Category"] = "VREF"
-            timing["Column"] = "Right"
+            timing["Column"] = "Middle"
 
         order_lookup = {name: index for index, name in enumerate(vref_name_order)}
         original_lookup = {id(timing): index for index, timing in enumerate(vref_rows)}
@@ -4791,7 +4846,7 @@ def _organize_skew_sections():
 
     odt_delay_rows = [
         timing for timing in TIMINGS
-        if timing.get("Tab") == "Skew"
+        if timing.get("Tab") == "Training"
         and timing.get("Category") == "ODT DELAY"
     ]
     if odt_delay_rows:
@@ -4800,7 +4855,7 @@ def _organize_skew_sections():
             timing["Column"] = "Left"
         odtl_indices = [
             index for index, timing in enumerate(TIMINGS)
-            if timing.get("Tab") == "Skew"
+            if timing.get("Tab") == "Training"
             and timing.get("Category") == "ODTL"
         ]
         insert_at = (max(odtl_indices) + 1) if odtl_indices else len(TIMINGS)
@@ -4858,7 +4913,7 @@ def _ddr4_odtl_row(name, kind):
         "name": name,
         "value": lambda kind=kind: _ddr4_odtl_clocks(kind),
         "Category": "ODTL",
-        "Tab": "Skew",
+        "Tab": "Training",
         "Column": "Left",
         "read_type": "standard",
     }
@@ -4871,7 +4926,7 @@ def _install_ddr4_odtl_values():
 
     old_rows = [
         timing for timing in TIMINGS
-        if timing.get("Tab") == "Skew" and timing.get("Category") == "ODTL"
+        if timing.get("Tab") == "Training" and timing.get("Category") == "ODTL"
     ]
     if not old_rows:
         return
@@ -4900,7 +4955,7 @@ def _install_ddr4_refresh_mode_value():
         return
     for timing in TIMINGS:
         if (
-            timing.get("Tab") == "Skew"
+            timing.get("Tab") == "Training"
             and timing.get("Category") == "REFRESH MODE"
             and timing.get("name") == "REFRESH"
         ):
@@ -4909,7 +4964,7 @@ def _install_ddr4_refresh_mode_value():
                 "name": "REFRESH",
                 "value": get_ddr4_refresh_mode_value,
                 "Category": "REFRESH MODE",
-                "Tab": "Skew",
+                "Tab": "Training",
                 "Column": "Left",
                 "read_type": "standard",
             })
@@ -5137,13 +5192,12 @@ CCD_ROWS = (
 # What the mode-register search left behind, in the order they appeared.
 SUPERSEDED_CCD_ROWS = ("tCCDL", "tCCDL WR")
 
-# Where the delays live now, and the row they follow.
-CCD_CATEGORY = "Other Timings"
-CCD_ANCHOR = "tCAL"
+# The delays have their own section so the complete family stays together.
+CCD_CATEGORY = "CAS to CAS"
 
 
 def _install_dfe_rows():
-    """Put the four DFE taps on the Skew tab, directly below ODT DELAY.
+    """Put the four DFE taps on the Training tab, directly below ODT DELAY.
 
     Per channel: the mode-register table exists in both controller windows and
     the taps genuinely differ between them, so each row reads its own side
@@ -5164,7 +5218,7 @@ def _install_dfe_rows():
     # keep them.
     TIMINGS = [
         timing for timing in TIMINGS
-        if not (timing.get("Tab") == "Skew" and timing.get("Category") == "DFE")
+        if not (timing.get("Tab") == "Training" and timing.get("Category") == "DFE")
     ]
 
     if detect_ddr_generation() == "DDR4":
@@ -5173,7 +5227,7 @@ def _install_dfe_rows():
     anchor = None
     column = "Right"
     for index, timing in enumerate(TIMINGS):
-        if timing.get("Tab") == "Skew" and timing.get("Category") == "ODT DELAY":
+        if timing.get("Tab") == "Training" and timing.get("Category") == "ODT DELAY":
             anchor = index + 1
             column = timing.get("Column", column)
 
@@ -5190,7 +5244,7 @@ def _install_dfe_rows():
                 "value_b": (lambda tap=tap, getter=getter:
                             getter(tap, CHANNEL_B)),
                 "Category": "DFE",
-                "Tab": "Skew",
+                "Tab": "Training",
                 "Column": column,
                 "read_type": "standard",
             })
@@ -5204,7 +5258,7 @@ _install_dfe_rows()
 
 
 # The Jedec tab held nothing but DFE rows -- the per-tap enables and values,
-# and the global gain -- and the taps now sit on the Skew tab beside the VREF
+# and the global gain -- and the taps now sit on the Training tab beside the VREF
 # levels they bias. A whole tab for one section that lives somewhere else is a
 # second place to look for the same thing, so it goes.
 #
@@ -5233,11 +5287,11 @@ def _remove_jedec_tab():
     column = "Right"
     last_dfe = None
     for timing in TIMINGS:
-        if timing.get("Tab") == "Skew" and timing.get("Category") == "DFE":
+        if timing.get("Tab") == "Training" and timing.get("Category") == "DFE":
             column = timing.get("Column", column)
         if timing.get("Tab") != JEDEC_TAB:
             remaining.append(timing)
-            if timing.get("Tab") == "Skew" and timing.get("Category") == "DFE":
+            if timing.get("Tab") == "Training" and timing.get("Category") == "DFE":
                 last_dfe = len(remaining)
             continue
         label = JEDEC_ROWS_KEPT.get(timing.get("name")) if keep_dfe else None
@@ -5245,7 +5299,7 @@ def _remove_jedec_tab():
             continue
         moved = dict(timing)
         moved["name"] = label
-        moved["Tab"] = "Skew"
+        moved["Tab"] = "Training"
         moved["Category"] = "DFE"
         moved["Column"] = column
         kept.append(moved)
@@ -5260,30 +5314,30 @@ def _remove_jedec_tab():
 _remove_jedec_tab()
 
 
-def _place_misc_additional_last():
-    """Put the MISC Additional rows after DFE, at the foot of its column.
+def _place_misc_additional_after_vref():
+    """Put MISC Additional directly after VREF in the middle Training column.
 
     They are the leftovers of the tab -- bandwidth select, the DCC code, the
-    ODT enables -- so they read as a footnote rather than as a section between
-    the signal groups.
+    ODT enables -- and belong beside the VREF state they supplement rather
+    than at the foot below the unrelated compensation and DFE groups.
     """
     global TIMINGS
 
     misc = [
         timing for timing in TIMINGS
-        if timing.get("Tab") == "Skew"
+        if timing.get("Tab") == "Training"
         and timing.get("Category") == "MISC Additional"
     ]
     if not misc:
         return
 
     rest = [timing for timing in TIMINGS if timing not in misc]
-    anchor = None
-    column = "Right"
-    for index, timing in enumerate(rest):
-        if timing.get("Tab") == "Skew" and timing.get("Category") == "DFE":
-            anchor = index + 1
-            column = timing.get("Column", column)
+    column = "Middle"
+    vref_indices = [
+        index for index, timing in enumerate(rest)
+        if timing.get("Tab") == "Training" and timing.get("Category") == "VREF"
+    ]
+    anchor = max(vref_indices) + 1 if vref_indices else None
     for timing in misc:
         timing["Column"] = column
     if anchor is None:
@@ -5293,17 +5347,11 @@ def _place_misc_additional_last():
     TIMINGS = rest
 
 
-_place_misc_additional_last()
+_place_misc_additional_after_vref()
 
 
 def _install_ccd_timings():
-    """Put the column-to-column delays at the foot of the other timings.
-
-    Placed after CCD_ANCHOR rather than where the rows they replaced sat: a
-    section draws its rows in table order, so leaving them among the
-    secondaries would have put them at the head of their new section rather
-    than at its foot.
-    """
+    """Install the column-to-column delays as one dedicated section."""
     for name in SUPERSEDED_CCD_ROWS:
         for timing in list(TIMINGS):
             if timing.get("name") == name:
@@ -5321,16 +5369,7 @@ def _install_ccd_timings():
         for name, getter in CCD_ROWS
     ]
 
-    anchor = next(
-        (index + 1 for index, timing in enumerate(TIMINGS)
-         if timing.get("name") == CCD_ANCHOR
-         and timing.get("Category") == CCD_CATEGORY),
-        None,
-    )
-    if anchor is None:
-        TIMINGS.extend(rows)
-    else:
-        TIMINGS[anchor:anchor] = rows
+    TIMINGS.extend(rows)
 
 
 _install_ccd_timings()
@@ -6141,6 +6180,98 @@ def absent_sensor_rows(platform, arrow_lake, manufacturer=None):
     return board
 
 
+def _voltage_snapshot_rows(platform, absent=(), read_dimms=None):
+    """Build one startup voltage snapshot from the Intel telemetry readers.
+
+    The live rows remain on ``Sensors`` for the Telemetry window, where their
+    changing values have min/max/average context.  This second view deliberately
+    caches the same readers once for the whole app session, matching the AM5
+    Voltages tab rather than polling a settings page once a second.
+    """
+    from functools import lru_cache
+
+    excluded = set(absent)
+    voltage_rows = [
+        (name, getter, column)
+        for name, category, getter, column in SENSOR_ROWS
+        if category == "Voltages" and name not in excluded
+    ]
+    dimm_rails = (
+        ("vdd", "VDD"), ("vddq", "VDDQ"), ("vpp", "VPP"),
+        ("vin_bulk", "VIN"), ("vout_1v8", "1.8V output"),
+        ("vout_1v0", "1.0V output"),
+    )
+
+    @lru_cache(maxsize=1)
+    def snapshot():
+        values = {}
+        for name, getter, _column in voltage_rows:
+            label = sensor_row_label(platform, name)
+            try:
+                values[label] = getter() or "\u2014"
+            except Exception:
+                values[label] = "\u2014"
+        if platform in DDR5_TIMING_PLATFORMS:
+            try:
+                if read_dimms is None:
+                    from rochviewer.memory.ddr5_telemetry import read_dimm_telemetry
+
+                    modules = read_dimm_telemetry()
+                else:
+                    modules = read_dimms()
+            except Exception:
+                modules = []
+            for channel in ("a", "b"):
+                entries = [
+                    module for module in modules
+                    if str(module.get("channel", "")).lower() == channel
+                ]
+                for key, _label in dimm_rails:
+                    # One controller channel can address more than one DIMM.
+                    # A shared row must not silently choose which module wins.
+                    raw = entries[0].get(key) if len(entries) == 1 else None
+                    values[channel + key] = (
+                        f"{raw / 1000:.3f} V"
+                        if isinstance(raw, (int, float)) else "\u2014"
+                    )
+        return values
+
+    rows = [{
+        "name": "Reading mode",
+        "value": "Snapshot at startup \u2014 reopen app to update",
+        "Category": "Snapshot",
+        "Tab": "Voltages",
+        "Column": "Left",
+        "read_type": "standard",
+    }]
+    for name, _getter, column in voltage_rows:
+        label = sensor_row_label(platform, name)
+        rows.append({
+            "name": label + " snapshot",
+            "display_name": label,
+            "value": lambda key=label: snapshot().get(key, "\u2014"),
+            "Category": "CPU and motherboard",
+            "Tab": "Voltages",
+            "Column": column,
+            "read_type": "standard",
+        })
+    if platform in DDR5_TIMING_PLATFORMS:
+        for channel, channel_label in (("a", "CHA"), ("b", "CHB")):
+            for key, rail_label in dimm_rails:
+                name = channel_label + " " + rail_label
+                rows.append({
+                    "name": name,
+                    "value": lambda cache_key=channel + key: snapshot().get(
+                        cache_key, "\u2014"
+                    ),
+                    "Category": channel_label + " memory",
+                    "Tab": "Voltages",
+                    "Column": "Right",
+                    "read_type": "standard",
+                })
+    return rows
+
+
 def _install_sensors_tab():
     global TIMINGS
 
@@ -6152,6 +6283,8 @@ def _install_sensors_tab():
     platform = active_platform()
     absent = absent_sensor_rows(platform, is_arrow_lake_platform(),
                                 get_board_manufacturer())
+
+    TIMINGS.extend(_voltage_snapshot_rows(platform, absent))
 
     for name, category, getter, column in SENSOR_ROWS:
         if name in absent:
@@ -6172,24 +6305,14 @@ def _install_sensors_tab():
 _install_sensors_tab()
 
 
-# --- Refresh mode leads the refresh timings.
+# --- Refresh mode is policy rather than a timing interval.
 #
-# The row used to sit on the Skew tab, a section of one, while the timings it
-# governs were a tab away. It now heads the Refresh timings section, because
-# the mode is what tREFI and tREFIx9 are read under.
-#
-# It is the one row in that section without channel columns: on DDR4 it is
-# decoded from DDR_PTM_CTL at MCHBAR + 0x5880, in the global register region
-# rather than the per-controller block, so there is no second-channel copy of
-# it to show. The section renders it as a value under A1 with B1 blank, which
-# is only tolerable because REFRESH_MODE_LABELS keeps the text as narrow as the
-# timings beside it - see the note there.
-#
-# Both platform paths survive the move untouched: DDR4 arrives as a decoded
-# value, DDR5 as the dynamic mode-register read declared in the table.
+# On DDR4 it comes from DDR_PTM_CTL in the global MCHBAR region; on DDR5 it is
+# decoded from the mode-register shadow. It therefore lives with settings,
+# with its source scope decided below: global on DDR4, per-DIMM on DDR5.
 REFRESH_MODE_SOURCE = ("REFRESH", "REFRESH MODE")
 REFRESH_MODE_NAME = "Refresh Mode"
-REFRESH_TIMINGS_CATEGORY = "Refresh timings"
+REFRESH_POLICY_CATEGORY = "Refresh"
 
 
 def _install_refresh_mode_row():
@@ -6203,18 +6326,14 @@ def _install_refresh_mode_row():
         return
 
     row["name"] = REFRESH_MODE_NAME
-    row["Category"] = REFRESH_TIMINGS_CATEGORY
-    row["Tab"] = "Timings"
-
-    # First row of the section it now belongs to.
-    for index, timing in enumerate(TIMINGS):
-        if (
-            timing.get("Tab") == "Timings"
-            and timing.get("Category") == REFRESH_TIMINGS_CATEGORY
-        ):
-            row["Column"] = timing.get("Column", "Left")
-            TIMINGS.insert(index, row)
-            return
+    row["Category"] = REFRESH_POLICY_CATEGORY
+    row["Tab"] = "Misc"
+    row["Column"] = "Left"
+    # DDR5 Refresh Mode is a type-5 mode-register field. DDR4's
+    # DDR_PTM_CTL form is instead one fixed controller-policy source.
+    row["source_scope"] = (
+        "module" if detect_ddr_generation() == "DDR5" else "controller"
+    )
     TIMINGS.append(row)
 
 
@@ -6252,20 +6371,19 @@ _install_refresh_mode_dimming()
 # tab sat empty.
 #
 # Assigning whole sections here rather than per row keeps a section in one
-# piece and puts the arithmetic in one place where it can be checked. The split
-# below is 36 lines against 37, counting section headings.
-#
-# Left keeps the sequence a tuner reads top to bottom: the primaries, the
-# secondaries, then how refresh is configured. Right takes the two long
-# reference blocks.
+# piece and puts the layout in one place where it can be checked. The three
+# columns are semantic and balanced by row count:
+# primary/secondary/command timings on the left, refresh/tertiary timings in
+# the middle, and power-down/other timings on the right.
 TIMINGS_TAB_COLUMNS = {
     "Primary": "Left",
     "Secondary": "Left",
-    "Other Timings": "Left",
     "Command": "Left",
-    "Refresh timings": "Right",
-    "Tertiary": "Right",
+    "Refresh timings": "Middle",
+    "Tertiary": "Middle",
+    "CAS to CAS": "Right",
     "Power down": "Right",
+    "Other Timings": "Right",
 }
 
 # Power down had become the tab's catch-all: 25 rows holding the actual
@@ -6279,7 +6397,8 @@ TIMINGS_TAB_COLUMNS = {
 TIMINGS_SECTION_MOVES = {
     # Refresh management and the refresh interval read with the intervals.
     "tRFM": "Refresh timings",
-    "OREF_RI": "Refresh timings",
+    "tREFSBRD": "Refresh timings",
+    "Rank Idle": "Refresh timings",
     # Precharge, preamble and the DLL lock are ordinary bus timings.
     "tRDPRE": "Other Timings",
     "tWRPRE": "Other Timings",
@@ -6294,6 +6413,51 @@ TIMINGS_SECTION_MOVES = {
     "tMRR": "Command",
     # The mode-register write timing sits with the read it pairs with.
     "tMRRMRW": "Command",
+    # A mode-register command delay and the enabled back-to-back command
+    # allowance belong with the rest of the command-bus timings.
+    "tMOD": "Command",
+    "Allow 2cyc B2B LPDDR": "Command",
+    # Keep the complete column-to-column delay family together.
+    "tCCD": "CAS to CAS",
+    "tCCD_L": "CAS to CAS",
+    "tCCD_L_WR": "CAS to CAS",
+    "tCCD_L_WR2": "CAS to CAS",
+}
+
+# Primary intentionally is not listed: its source order is already the desired
+# display order and must stay untouched. Every other section is pinned here so
+# rows moved between sections land beside related operations instead of at the
+# position of their old category.
+TIMINGS_SECTION_ROW_ORDER = {
+    "Secondary": (
+        "tWR", "tWR_MR", "tRRD_L", "tRRD_S", "tWTR_L", "tWTR_S",
+        "tRTP", "tRTP_MR", "tFAW", "tCWL", "tCWL_MR",
+    ),
+    "Command": (
+        "tCSH", "tCSL", "tCA2CS", "tOSCO", "tPREMRR", "tMRRMRW",
+        "tMRR", "tMOD", "Allow 2cyc B2B LPDDR",
+    ),
+    "Refresh timings": (
+        "Refresh Mode", "tREFI", "tREFIns", "tREFIx9", "tRFCns", "tRFC", "tRFC2", "tRFCpb",
+        "Rank Idle", "tRFM", "tREFSBRD",
+    ),
+    "Tertiary": (
+        "tRDRD_sg", "tRDRD_dg", "tRDRD_dr", "tRDRD_dd",
+        "tRDWR_sg", "tRDWR_dg", "tRDWR_dr", "tRDWR_dd",
+        "tWRRD_sg", "tWRRD_dg", "tWRRD_dr", "tWRRD_dd",
+        "tWRWR_sg", "tWRWR_dg", "tWRWR_dr", "tWRWR_dd",
+    ),
+    "CAS to CAS": (
+        "tCCD", "tCCD_L", "tCCD_L_MR", "tCCD_L_WR", "tCCD_L_WR2",
+    ),
+    "Power down": (
+        "tWRPDEN", "tRDPDEN", "tPRPDEN", "tAONPD", "tCPDED", "tCKE",
+        "tXP", "tXPDLL", "tXSDLL", "tXSR", "tCKCKEH", "tPPD", "tSR",
+    ),
+    "Other Timings": (
+        "tZQCAL", "tZQCS", "ZQCS period", "tZQoper", "tCAL",
+        "TRPab_EXT", "tRDPRE", "tWRPRE", "tWPRE", "tDLLK",
+    ),
 }
 
 
@@ -6332,6 +6496,16 @@ def _group_timings_sections():
             grouped[category] = []
             order.append(category)
         grouped[category].append(TIMINGS[index])
+
+    for category, rows in grouped.items():
+        priority = {
+            name: index
+            for index, name in enumerate(
+                TIMINGS_SECTION_ROW_ORDER.get(category, ()))
+        }
+        if priority:
+            rows.sort(key=lambda row: priority.get(
+                row.get("name"), len(priority)))
 
     regrouped = [row for category in order for row in grouped[category]]
     for index, row in zip(positions, regrouped):
@@ -6472,6 +6646,27 @@ def get_os_name():
     except Exception as e:
         print(f"Error retrieving OS name: {e}")
         return None
+
+
+def _os_name_and_version():
+    """Split the CPU-Z-style OS reading after its architecture."""
+    combined = get_os_name()
+    if not combined:
+        return None, None
+    match = re.search(r"\((?:x64|x86)\)\s+", combined, re.IGNORECASE)
+    if match is None:
+        return combined, None
+    return combined[:match.end()].strip(), combined[match.end():].strip() or None
+
+
+def get_os_edition():
+    """Windows product name and architecture, without release/build."""
+    return _os_name_and_version()[0]
+
+
+def get_os_version():
+    """Windows feature update and full build, as a separate row."""
+    return _os_name_and_version()[1]
 
 
 def get_gpu_driver_date():
@@ -6714,8 +6909,8 @@ def _dimm_field(field):
         return None
 
 
-def _system_info_row(name, getter):
-    return {
+def _system_info_row(name, getter, display_name=None):
+    row = {
         "name": name,
         "value": getter,
         "Category": "General",
@@ -6723,6 +6918,9 @@ def _system_info_row(name, getter):
         "Column": "Left",
         "read_type": "standard",
     }
+    if display_name:
+        row["display_name"] = display_name
+    return row
 
 
 def _place_system_info_rows(anchor, rows, after=True):
@@ -6750,7 +6948,8 @@ def _install_system_info_identity_rows():
         "CPU",
         [
             _system_info_row("Platform", get_platform_name),
-            _system_info_row("OS", get_os_name),
+            _system_info_row("OS", get_os_edition),
+            _system_info_row("OS Version", get_os_version),
         ],
         after=False,
     )
@@ -6770,7 +6969,7 @@ def _install_system_info_identity_rows():
         _system_info_row("LPCIO", get_lpcio_name),
     ])
     _place_system_info_rows("Channels", [
-        _system_info_row("Type", get_memory_type),
+        _system_info_row("DRAM Technology", get_memory_type),
     ], after=False)
     _place_system_info_rows("GPU", [
         _system_info_row(label, partial(_gpu_field, field))
@@ -6794,7 +6993,8 @@ def _install_system_info_identity_rows():
             _system_info_row("DIMM Size", lambda: _dimm_field("size")),
             _system_info_row("Rank", lambda: _dimm_field("rank")),
             _system_info_row(
-                "DRAM Manufacturer", lambda: _dimm_field("dram_manufacturer")
+                "DRAM Manufacturer", lambda: _dimm_field("dram_manufacturer"),
+                display_name="DRAM Manuf.",
             ),
             _system_info_row("DRAM Die", lambda: _dimm_field("dram_die")),
             # Ordered as CPU-Z's SPD tab reads them: what the module is, then
@@ -6828,40 +7028,40 @@ SYSTEM_INFO_REMOVED = (
     "Memory Scrambler",
     "Row Hammer",
     "Power Down Mode",
+    # Variable CPU clocks belong in Telemetry. System Info keeps the bus and
+    # memory/controller ratios, which describe the configured platform.
+    "Core Clock",
 )
 
+# Summary's compact clock chain still includes Ring.  Keep its existing
+# hardware reader available to that purpose without exposing the changing
+# value as a System Info row; Telemetry remains the detailed live-clock view.
+SYSTEM_INFO_SUMMARY_ONLY = ("Uncore",)
 
-# The tab was 26 rows in one column under a single General heading, which is
-# a long unbroken list to find anything in. Split into what the machine is,
-# what board it runs on, the clock chain, and what memory is installed --
-# each row keeping its place in SYSTEM_INFO_ORDER within its section.
-#
-# One column, the full width of the tab. That is not a leftover: the board
-# row carries "ASUSTeK COMPUTER INC. ROG MAXIMUS Z790 APEX (Rev 1.xx)", which
-# wants about 457px against the name beside it -- more than half a 700px
-# window -- so a two-column split clips it. The column entry is kept so the
-# arrangement is stated rather than implied, and so a future split has one
-# place to change.
+
+# Keep identity on the left and hardware details on the right. At the compact
+# width those two logical columns stack, so Graphics follows Memory and remains
+# the final System Info section rather than landing halfway down the page.
 SYSTEM_INFO_SECTIONS = (
-    ("System", "Left", ("OS", "Platform")),
+    ("System", "Left", ("OS", "OS Version", "Platform")),
     ("Processor", "Left", ("CPU", "Code Name", "Technology",
                            "Cores / Threads", "Microcode")),
     ("Motherboard", "Left", ("Manufacturer", "Model", "Board Revision", "BIOS", "BIOS Date",
                              "Chipset", "Southbridge", "LPCIO")),
-    # The memory speed first, then the ratios that set it, then the
-    # clocks themselves from the reference outwards.
-    ("Clocks", "Left", ("DRAM Frequency", "DRAM Ratio", "DDR QCLK Ratio",
-                        "BCLK", "Uncore", "MCLK", "UCLK", "PSF0 PLL",
-                        "Gear Mode")),
-    ("Memory", "Left", ("Type", "Channels", "RAM Manufacturer",
-                        "Memory Capacity", "Slots Used", "DIMM Size", "Rank",
-                        "DRAM Manufacturer", "DRAM Die", "Part Number",
-                        "Serial Number", "Manufactured")),
-    ("Graphics", "Left", ("GPU", "Board Manufacturer", "GPU Code Name",
-                          "GPU Revision", "Cores", "ROPs / TMUs",
-                          "GPU Technology", "Memory Size", "Memory Type",
-                          "Memory Vendor", "Bus Width", "Resizable BAR",
-                          "Driver Version", "Driver Date")),
+    # Configured memory clocks and ratios only. Variable CPU core/ring clocks
+    # are sensor readings and remain in Telemetry.
+    ("Clocks", "Right", ("DRAM Frequency", "DRAM Ratio", "QCLK Ratio",
+                         "BCLK", "Core Ratio", "Uncore Ratio", "MCLK",
+                         "UCLK", "PSF0 PLL", "Gear Mode")),
+    ("Memory", "Right", ("DRAM Technology", "Channels", "RAM Manufacturer",
+                         "Memory Capacity", "Slots Used", "DIMM Size", "Rank",
+                         "DRAM Manufacturer", "DRAM Die", "Part Number",
+                         "Serial Number", "Manufactured")),
+    ("Graphics", "Right", ("GPU", "Board Manufacturer", "GPU Code Name",
+                            "GPU Revision", "Cores", "ROPs / TMUs",
+                            "GPU Technology", "Memory Size", "Memory Type",
+                            "Memory Vendor", "Bus Width", "Resizable BAR",
+                            "Driver Version", "Driver Date")),
 )
 
 
@@ -6907,6 +7107,13 @@ def _install_system_info_sections():
 
 def _install_system_info_order():
     global TIMINGS
+
+    for timing in TIMINGS:
+        if (
+            timing.get("Tab") == SYSTEM_INFO_TAB
+            and timing.get("name") in SYSTEM_INFO_SUMMARY_ONLY
+        ):
+            timing["Tab"] = "Summary"
 
     TIMINGS = [
         timing for timing in TIMINGS
@@ -6957,6 +7164,7 @@ _install_system_info_sections()
 # note in the slew block), so anything not confirmed against a second source
 # is flagged where it is decoded.
 MISC_TAB = "Misc"
+SETTINGS_TAB = "Settings"
 RTL_TAB = "RTL"
 
 # One register holds all ten CKE fields. the reference timing tool lists them in this order
@@ -7121,13 +7329,17 @@ MR_ECS_COUNTS = {
 MR_READ_DQS_OFFSET = {
     0: "0 Clock", 1: "1 Clock", 2: "2 Clocks", 3: "3 Clocks",
 }
-# MR6 keeps the DRAM's own write recovery and read-to-precharge, which are
-# not the controller's tWR and tRTP on the Timings tab -- same names, one
-# programmed into the module and one applied by the controller.
+# DDR5 MR0 encodes CAS latency in A6:A2. The codes are the even CL values
+# from 22 through 84; code 8 is the reference machine's CL38 setting.
+MR_TCL = {code: str(22 + 2 * code) for code in range(32)}
+
+# MR6 keeps the DRAM's own write recovery and read-to-precharge. These and
+# tCL_MR are the module-programmed copies of controller timings displayed on
+# the Timings tab.
 MR_TWR = {
     0: "48", 1: "54", 2: "60", 3: "66", 4: "72", 5: "78", 6: "84", 7: "90",
-    8: "96", 9: "Reserved", 10: "Reserved", 11: "Reserved", 12: "Reserved",
-    13: "Reserved", 14: "Reserved", 15: "Reserved",
+    8: "96", 9: "102", 10: "108", 11: "114", 12: "120", 13: "126",
+    14: "132", 15: "Reserved",
 }
 MR_TRTP = {
     0: "12", 1: "14", 2: "15", 3: "17", 4: "18", 5: "20", 6: "21", 7: "23",
@@ -7163,6 +7375,7 @@ def _dqs_interval_timer(code):
 
 # (row, mode register, bit start, bit length, decode table or None)
 MISC_MODE_REGISTER_STATE = (
+    ("tCL_MR", 0x00, 2, 5, MR_TCL),
     ("Refresh tRFC Mode", 0x04, 4, 1, MR_REFRESH_MODE),
     ("Wide Range", 0x04, 5, 1, MR_SUPPORTED),
     ("Data Output Disable", 0x05, 0, 1, MR_DATA_OUTPUT),
@@ -7240,6 +7453,7 @@ def _misc_mode_register_value(number, bit_start, bit_length, decode,
 # at 0.5 tCK with no register behind them, ECS is DDR5 on-die-ECC scrubbing
 # on a part that has no on-die ECC, and the rest are DDR5 additions.
 DDR5_ONLY_MISC_ROWS = (
+    "tCL_MR",
     "Read Postamble",
     "Write Postamble",
     "Wide Range",
@@ -7292,7 +7506,7 @@ DDR4_UNREACHABLE_MISC_ROWS = (
 # bit 4 through the same shadow window: the Timings row searches 0xE600 for
 # index 0x04 and reads bit 4 of the payload at 0xE200, which is what
 # read_mode_register(0x04) does. Same bit, twice, under two names -- this
-# bench prints "FGR Mode (tRFC2)" on Timings and "Fine Granularity Refresh"
+# bench prints "FGR" on Timings and "Fine Granularity Refresh"
 # on Misc. The Timings row is the one that stays: it heads the Refresh
 # timings section and names the interval that applies, directly above the
 # tRFC/tRFC2/tRFCpb rows it applies to.
@@ -7414,8 +7628,8 @@ def _ddr4_misc_value(number, bit_start, bit_length, decode, base=None):
     return decode.get(value, str(value))
 
 
-def _misc_row(name, category, column, value):
-    return {
+def _misc_row(name, category, column, value, source_scope="controller"):
+    row = {
         "name": name,
         "Category": category,
         "Tab": MISC_TAB,
@@ -7423,6 +7637,13 @@ def _misc_row(name, category, column, value):
         "value": value,
         "read_type": "standard",
     }
+    # Source scope is intentionally explicit. The reference descriptor table uses
+    # type 5 for a mode-register field evaluated in the selected DIMM context
+    # and type 6 for a fixed controller-register offset. Equal live values do
+    # not turn two mode-register reads into one source, and repeated dump
+    # columns do not turn one controller register into four sources.
+    row["source_scope"] = source_scope
+    return row
 
 
 def _install_misc_tab():
@@ -7455,12 +7676,10 @@ def _install_misc_tab():
     # the controller is doing -- so a value resolved here would be a snapshot
     # of startup that never moved again.
     #
-    # One reading per row, from channel A. The 0xE000 block and the
-    # mode-register table do have channel-B twins, and these rows carried
-    # both for a while -- but two columns leave the value column too narrow
-    # for what this tab holds, and "Manual ECS Mode Disabled", "Fine
-    # Granularity Refresh" and the preamble patterns were all cut off. These
-    # are controller settings that read the same on both channels anyway.
+    # Rows start with a channel-A-compatible getter so older consumers remain
+    # valid. The source split below promotes type-5 mode-register rows to
+    # independent A1/B1 getters and moves fixed type-6 controller registers
+    # into Settings.
     def cke(bit_start, bit_length):
         return lambda base: _misc_number(
             MISC_CKE_CONFIG_OFFSET, bit_start, bit_length, base)
@@ -7477,11 +7696,20 @@ def _install_misc_tab():
         """Bind a base-taking reader to channel A."""
         return lambda: read(MCHBAR)
 
+    def module_row(name, category, column, read):
+        """Build one type-5 row with independent A1/B1 readers."""
+        row = _misc_row(
+            name, category, column, _channel_a(read),
+            source_scope="module",
+        )
+        row["base_reader"] = read
+        return row
+
     def mode_register(number, bit_start, bit_length, decode):
         return lambda base: _misc_mode_register_value(
             number, bit_start, bit_length, decode, base)
 
-    # Every Skew and Misc row the LGA1700 DDR5 table carries is installed on
+    # Every Training and Misc row the LGA1700 DDR5 table carries is installed on
     # Core Ultra 200S too, by request, so the two platforms show the same rows
     # and a row that reads nothing says so rather than being absent. A missing
     # row and an N/A row look identical on screen but mean opposite things --
@@ -7503,45 +7731,37 @@ def _install_misc_tab():
     )
     # Burst Length sits with the command configuration, where the reference
     # tools list it, even though it comes from a mode register.
-    rows.append(_misc_row(
+    rows.append(module_row(
         "Burst Length", "Command", "Right",
-        _channel_a(mode_register(*MISC_BURST_LENGTH_FIELD))))
+        mode_register(*MISC_BURST_LENGTH_FIELD)))
     rows.extend(
-        _misc_row(name, "Command", "Right",
-                  _channel_a(mode_register(number, bit_start, bit_length,
-                                           decode)))
+        module_row(name, "Command", "Right",
+                   mode_register(number, bit_start, bit_length, decode))
         for name, number, bit_start, bit_length, decode
         in MISC_MODE_REGISTER_COMMAND
     )
 
     rows.extend(
-        _misc_row(name, "ECS", "Left",
-                  _channel_a(mode_register(number, bit_start, bit_length,
-                                           decode)))
+        module_row(name, "ECS", "Left",
+                   mode_register(number, bit_start, bit_length, decode))
         for name, number, bit_start, bit_length, decode
         in MISC_MODE_REGISTER_ECS
     )
 
     rows.extend(
-        _misc_row(name, "Preamble", "Left",
-                  _channel_a(mode_register(number, bit_start, bit_length,
-                                           decode)))
+        module_row(name, "Preamble", "Left",
+                   mode_register(number, bit_start, bit_length, decode))
         for name, number, bit_start, bit_length, decode
         in MISC_MODE_REGISTER_FIELDS
     )
 
     for name, number, bit_start, bit_length, decode in MISC_MODE_REGISTER_STATE:
         read = mode_register(number, bit_start, bit_length, decode)
-        row = _misc_row(name, "Mode Registers", "Left", _channel_a(read))
-        # Kept unbound as well: tWR_MR and tRTP_MR move to the Timings
-        # tab, where every row reads both controllers, and a getter
-        # already bound to channel A cannot be asked for channel B.
-        row["base_reader"] = read
-        rows.append(row)
-    rows.append(_misc_row(
-        "DQS Interval Timer RT", "Mode Registers", "Left",
-        lambda: _misc_mode_register_code(
-            MISC_DQS_TIMER_REGISTER, 0, 8, _dqs_interval_timer)))
+        rows.append(module_row(name, "Mode Registers", "Left", read))
+    dqs_timer = lambda base: _misc_mode_register_code(
+        MISC_DQS_TIMER_REGISTER, 0, 8, _dqs_interval_timer, base)
+    rows.append(module_row(
+        "DQS Interval Timer RT", "Mode Registers", "Left", dqs_timer))
 
 
     rows.extend(
@@ -7580,19 +7800,12 @@ def _install_misc_tab():
         # to channel A for Misc, with the unbound reader kept so the move onto
         # the Timings tab can give them both controllers.
         for name, read in DDR4_ONLY_MODE_REGISTER_TIMINGS:
-            row = _misc_row(name, "Mode Registers", "Left", _channel_a(read))
+            row = _misc_row(
+                name, "Mode Registers", "Left", _channel_a(read),
+                source_scope="module",
+            )
             row["base_reader"] = read
             rows.append(row)
-
-    # The round-trip latencies move in rather than holding a tab of their own.
-    # They keep their Latency CHA/CHB headings, so the two blocks stay separate
-    # on the page; only the tab strip loses an entry. Conditional on there
-    # being rows to join, so a platform that gets none keeps its RTL tab under
-    # its own name instead of one called Misc that holds nothing but latencies.
-    if rows:
-        for timing in TIMINGS:
-            if timing.get("Tab") == RTL_TAB:
-                timing["Tab"] = MISC_TAB
 
     TIMINGS.extend(rows)
 
@@ -7614,7 +7827,7 @@ _install_misc_tab()
 # each sits under is its own name without the suffix, so the list is the only
 # place a new one has to be named.
 MODE_REGISTER_TIMING_ROWS = (
-    "tWR_MR", "tRTP_MR", "tCWL_MR", "tCCD_L_MR",
+    "tCL_MR", "tWR_MR", "tRTP_MR", "tCWL_MR", "tCCD_L_MR",
 )
 
 # Dropped on Core Ultra 200S, where both decode to "Reserved".
@@ -7682,7 +7895,7 @@ _move_mode_register_timings()
 #
 # What the controller does about refresh -- when it may skip a per-bank one,
 # how many it will bank up before it insists -- rather than how long any of
-# them takes. They are read from the same two registers as OREF_RI and
+# them takes. They are read from the same two registers as Rank Idle and
 # tRFCpb, which is why they were built beside them.
 #
 # PBR Exit on idle stays on Timings: it was not among those asked for, and
@@ -7710,10 +7923,10 @@ def _move_refresh_policy_rows():
         # Left: the right column already carries Power Down, Command and
         # Features, and eleven more there would leave the columns 33 and 50.
         row.update({"Tab": MISC_TAB, "Category": "Refresh", "Column": "Left"})
-        # Misc shows one value per row by design: these registers do
-        # have a channel-B twin, but it holds the same value and a
-        # second column leaves the text this tab carries too narrow.
-        # The channel-A address the row already has is the reading.
+        row["source_scope"] = "controller"
+        # The reference descriptor names one fixed type-6 register for each
+        # row. Collapse the earlier Timings mirroring back to that source; the
+        # split below then files it under Settings.
         for key in ("address_a", "address_b", "parameters_a",
                     "parameters_b", "read_type_a", "read_type_b",
                     "value_a", "value_b", "name_a", "name_b",
@@ -7727,28 +7940,34 @@ def _move_refresh_policy_rows():
 _move_refresh_policy_rows()
 
 
-# --- Misc draws as a single column.
+# --- Misc section columns.
 #
-# The tab held two, which suited it while it was short. It is 83 rows now and
-# the split was doing less than it looks: the two halves have to be levelled
-# to the same height for the row shading to cross the tab whole, so the
-# shorter one was padded with blank rows, and reading down one column then
-# back up to the top of the other is a worse way through a list of settings
-# than reading straight down.
-#
-# Order follows the table, which puts the two latency blocks together at the
-# head and the refresh policy at the foot.
-#
-# The column stays named rather than removed: the renderer builds both halves
-# for every tab, and a tab with nothing in its right half draws it empty,
-# which is what one column means here.
-def _collapse_misc_to_one_column():
+# Inventory and mode-register results read down the first column. Operational
+# controls read down the second, so the long latency pair stays together and
+# none of the settings blocks is split between sides.
+MISC_TAB_COLUMNS = {
+    "Latency CHA": "Left",
+    "Latency CHB": "Left",
+    "Mode Registers": "Left",
+    "Refresh": "Right",
+    "ECS": "Right",
+    "Command": "Right",
+    "Features": "Right",
+    "Preamble": "Right",
+    "Power Down": "Right",
+}
+
+
+def _install_misc_columns():
     for timing in TIMINGS:
-        if timing.get("Tab") == MISC_TAB:
-            timing["Column"] = "Left"
+        if timing.get("Tab") != MISC_TAB:
+            continue
+        column = MISC_TAB_COLUMNS.get(timing.get("Category"))
+        if column is not None:
+            timing["Column"] = column
 
 
-_collapse_misc_to_one_column()
+_install_misc_columns()
 
 
 # --- Misc section order.
@@ -7757,18 +7976,19 @@ _collapse_misc_to_one_column()
 # declared rather than inherited because the sections are built by several
 # passes -- mode-register groups, feature switches, the latency block, the
 # refresh policy -- and the order they happened to run in is not a reading
-# order. The two latency blocks lead, then the settings, with the counters and
-# the error-correction section at the foot.
+# order. The left-column sequence comes first, followed by the independent
+# right-column sequence; the renderer preserves each sequence after splitting
+# the rows into their assigned columns.
 MISC_SECTION_ORDER = (
     "Latency CHA",
     "Latency CHB",
-    "Features",
+    "Mode Registers",
     "Command",
     "Preamble",
-    "Power Down",
-    "Mode Registers",
     "Refresh",
     "ECS",
+    "Features",
+    "Power Down",
 )
 
 
@@ -7816,9 +8036,9 @@ def _install_ddr5_timing_labels():
 _install_ddr5_timing_labels()
 
 
-# --- Skew drops the rows that read nothing.
+# --- Training drops the rows that read nothing.
 #
-# Skew is a panel of measured levels, and a row of N/A among them is not
+# Training is a panel of measured levels, and a row of N/A among them is not
 # informative the way a blank timing is: there is no "this is off" reading to
 # distinguish, only a level the silicon either states or does not. On Core
 # Ultra 200S that is 31 of 85 rows, and four whole categories -- DATA, CMD,
@@ -7891,14 +8111,14 @@ def _install_skew_without_blank_rows():
     if not is_arrow_lake_platform():
         return
 
-    skew = [timing for timing in TIMINGS if timing.get("Tab") == "Skew"]
+    skew = [timing for timing in TIMINGS if timing.get("Tab") == "Training"]
     if not skew:
         return
 
     blank = [timing for timing in skew if _row_reads_nothing(timing)]
 
     # Every row blank means the reads are not working at all -- no driver, or
-    # a platform whose Skew block is somewhere else entirely -- and emptying
+    # a platform whose Training block is somewhere else entirely -- and emptying
     # the tab would turn that into a silent success. Nothing is dropped then.
     if len(blank) == len(skew):
         return
@@ -7907,4 +8127,397 @@ def _install_skew_without_blank_rows():
     TIMINGS = [timing for timing in TIMINGS if id(timing) not in drop]
 
 
+def _place_skew_columns():
+    """Lay out Training as signal, reference, and compensation columns."""
+    columns = {
+        "RTT": "Left",
+        "ODT": "Left",
+        "RON": "Left",
+        "ODTL": "Left",
+        "ODT DELAY": "Left",
+        # DFE remains with the read/termination training values.
+        "DFE": "Left",
+        "VREF": "Middle",
+        "MISC Additional": "Middle",
+        "DATA": "Right",
+        "CMD": "Right",
+        "CLK": "Right",
+        "CTL": "Right",
+        "SComp": "Right",
+    }
+    for timing in TIMINGS:
+        if timing.get("Tab") != "Training":
+            continue
+        column = columns.get(timing.get("Category"))
+        if column:
+            timing["Column"] = column
+
+
+_place_skew_columns()
 _install_skew_without_blank_rows()
+
+
+# DDR5's DQ-device, CA/CS VREF and ODTL rows come from the selected module's
+# mode-register window. A four-context hardware dump proves the VREF values are
+# not shared PHY values, while the descriptor type places ODTL on that same
+# context-sensitive path even when both modules happen to hold equal offsets.
+# Expose the two module sources before the shared-row split below decides
+# which tab owns each row.
+DDR5_MODULE_VREF_NAMES = frozenset({
+    "DQ VREF D0", "DQ VREF D1", "DQ VREF D2", "DQ VREF D3",
+    "CA VREF", "CS VREF",
+})
+
+
+def _promote_ddr5_module_rows():
+    if detect_ddr_generation() != "DDR5":
+        return
+    for timing in TIMINGS:
+        if (timing.get("Tab") != "Training"
+                or (timing.get("name") not in DDR5_MODULE_VREF_NAMES
+                    and timing.get("Category") != "ODTL")):
+            continue
+        params = timing.get("dynamic_params")
+        if timing.get("read_type") != "dynamic" or not isinstance(params, dict):
+            continue
+
+        # Some original ODTL descriptors were rooted at MC1 because that was
+        # the one value the former shared view displayed. Build both sides
+        # explicitly instead of assuming the original always starts at MC0.
+        params_a = dict(params)
+        params_b = dict(params)
+        params_a["mchbar"] = MCHBAR
+        params_b["mchbar"] = CHANNEL_B
+        timing["dynamic_params_a"] = params_a
+        timing["dynamic_params_b"] = params_b
+        timing["read_type_a"] = "dynamic"
+        timing["read_type_b"] = "dynamic"
+        _dual_channel_headers(timing)
+        timing["source_scope"] = "module"
+
+
+_promote_ddr5_module_rows()
+
+
+# --- Keep Training strictly per-module.
+#
+# A module selector only tells the truth when every row beneath it has two
+# independent hardware sources.  Rows that expose one controller/PHY value
+# used to remain mixed into Training beside genuine A1/B1 readings, which made a
+# shared result look as though it belonged to the selected DIMM.  Preserve
+# their existing three-column grouping on a separate PHY tab and leave Training
+# with a simple invariant: every displayed row is dual-source.
+PHY_TAB = "Controller"
+
+
+def _move_shared_skew_rows_to_phy():
+    for timing in TIMINGS:
+        if timing.get("Tab") != "Training" or is_dual_timing(timing):
+            continue
+        timing["Tab"] = PHY_TAB
+        # These are fixed controller/PHY fields. The reference dump
+        # repeats the same register result in every DIMM context; that is not
+        # four independent module sources.  Keep the scope explicit so a
+        # later layout pass cannot accidentally put one beneath the A1/B1
+        # selector just because the row originally lived on Training.
+        timing.setdefault("source_scope", "controller")
+
+
+_move_shared_skew_rows_to_phy()
+
+
+# --- Keep Misc strictly per-module too.
+#
+# The reference row table distinguishes mode-register fields (type 5) from
+# fixed controller-register fields (type 6). The former are evaluated in the
+# selected DIMM context and therefore have independent A1/B1 sources. The
+# latter are one controller/PHY setting; the four-column dump repeats the
+# same fixed register result for every DIMM context. Misc retains only the
+# mode-register rows and its explicitly paired MC0/MC1 latency rows. Shared
+# refresh, command, feature and power-down controls move to Settings.
+SETTINGS_TAB_COLUMNS = {
+    "Refresh": "Left",
+    "Features": "Left",
+    "Command": "Right",
+    "Power Down": "Right",
+}
+
+
+def _misc_latency_has_peer(timing):
+    """Whether a fixed MC latency row has the other physical MC source."""
+    name = str(timing.get("name", ""))
+    if " MC0 " in f" {name} ":
+        peer_name = name.replace(" MC0 ", " MC1 ")
+    elif " MC1 " in f" {name} ":
+        peer_name = name.replace(" MC1 ", " MC0 ")
+    else:
+        return False
+    return any(
+        row is not timing
+        and row.get("Tab") == MISC_TAB
+        and row.get("Category") == timing.get("Category")
+        and row.get("name") == peer_name
+        for row in TIMINGS
+    )
+
+
+def _split_misc_sources():
+    # First expose both mode-register windows to the synchronized A1/B1
+    # selector. A row's old channel-A getter remains only as a compatibility
+    # fallback; the table reads value_a/value_b after promotion.
+    for timing in TIMINGS:
+        if (timing.get("Tab") != MISC_TAB
+                or timing.get("source_scope") != "module"):
+            continue
+        reader = timing.get("base_reader")
+        if reader is not None:
+            _promote_computed_row(timing, reader)
+        elif timing.get("read_type") == "dynamic":
+            _promote_dynamic_row(timing)
+
+    # Then move every remaining real single-source row. Empty latency spacer
+    # rows are layout, while named latency rows have explicit MC0/MC1 peers
+    # and are compacted into A1/B1 by the Misc renderer.
+    for timing in TIMINGS:
+        if timing.get("Tab") != MISC_TAB:
+            continue
+        if not str(timing.get("name", "")).strip():
+            continue
+        if is_dual_timing(timing) or _misc_latency_has_peer(timing):
+            continue
+        timing["Tab"] = SETTINGS_TAB
+        timing["Column"] = SETTINGS_TAB_COLUMNS.get(
+            timing.get("Category"), timing.get("Column", "Left")
+        )
+
+
+_split_misc_sources()
+
+
+# --- Final Intel tab composition.
+#
+# RTL remains an exhaustive register view: MC0 and MC1 are both visible at
+# once, stacked under the two physical channel headings. Per-DIMM
+# mode-register data joins Training,
+# whose selector already represents A1/B1. Shared controller settings join
+# PHY, which deliberately has no module selector. The four-column PHY layout
+# keeps all 85 shared rows visible without a scroll canvas.
+SKEW_MISC_COLUMNS = {
+    "RTT": "Left",
+    "ODT": "Left",
+    "RON": "Left",
+    "ODT DELAY": "Left",
+    "DFE": "Left",
+    "VREF": "Right",
+    "ODTL": "Right",
+    "Command": "Right",
+    "Mode Registers": "Right",
+    "Preamble": "Right",
+    "ECS": "Right",
+}
+
+PHY_SETTINGS_COLUMNS = {
+    "VREF": "Left",
+    "Command": "Left",
+    "ODTL": "Left",
+    "Refresh": "Left",
+    "DATA": "Middle",
+    "CMD": "Middle",
+    "CLK": "Middle",
+    "CTL": "Middle",
+    "SComp": "Middle",
+    "MISC Additional": "Right",
+    "Features": "Right",
+    "Power Down": "Right",
+}
+
+
+def _combine_intel_detail_tabs():
+    global TIMINGS
+
+    for timing in TIMINGS:
+        tab = timing.get("Tab")
+        category = timing.get("Category")
+        name = str(timing.get("name", ""))
+
+        if tab == RTL_TAB:
+            # The unnamed row already present between MC0 and MC1 is kept as
+            # the visual break shown by the reference layout. Its original category identifies
+            # which channel it belongs to when there is no row name to parse.
+            original_category = str(timing.get("Category", ""))
+            subchannel = (
+                "CHB" if "CHB" in name or "CHB" in original_category
+                else "CHA"
+            )
+            timing["Category"] = f"RTL {subchannel}"
+            timing["Column"] = "Right" if subchannel == "CHB" else "Left"
+            continue
+
+        if tab == MISC_TAB:
+            timing["Tab"] = "Training"
+            timing["Column"] = SKEW_MISC_COLUMNS.get(
+                category, timing.get("Column", "Right")
+            )
+            continue
+
+        if tab == SETTINGS_TAB:
+            timing["Tab"] = PHY_TAB
+            timing["Column"] = PHY_SETTINGS_COLUMNS.get(
+                category, timing.get("Column", "Right")
+            )
+
+    # Rebalance the original Training/PHY rows as part of the combined tables.
+    for timing in TIMINGS:
+        if timing.get("Tab") == "Training":
+            timing["Column"] = SKEW_MISC_COLUMNS.get(
+                timing.get("Category"), timing.get("Column", "Left")
+            )
+        elif timing.get("Tab") == PHY_TAB:
+            timing["Column"] = PHY_SETTINGS_COLUMNS.get(
+                timing.get("Category"), timing.get("Column", "Right")
+            )
+
+
+_combine_intel_detail_tabs()
+
+
+def _move_module_refresh_mode_to_timings():
+    """Place the per-module DDR5 refresh policy beside its refresh timings.
+
+    DDR4's row is one shared controller-policy source and therefore remains on
+    Controller. DDR5 reads the setting independently through both module
+    windows, so it satisfies the Timings tab's A1/B1 source rule.
+    """
+    row = next(
+        (timing for timing in TIMINGS
+         if timing.get("name") == REFRESH_MODE_NAME
+         and timing.get("source_scope") == "module"
+         and is_dual_timing(timing)),
+        None,
+    )
+    if row is None:
+        return
+    row.update({
+        "Tab": "Timings",
+        "Category": "Refresh timings",
+        "Column": "Middle",
+    })
+
+
+_move_module_refresh_mode_to_timings()
+
+
+# --- Intel signal presentation.
+#
+# Keep the register reads and lookup codes above as the source of every value;
+# this final presentation pass only gives the decoded settings the same names
+# and resistance-first notation used by the reference viewer. Mutating the shared
+# formula dictionaries also keeps Summary and Training on one decoder.
+_REFERENCE_SIGNAL_NAMES = {
+    "RTT WR": "RTT Wr",
+    "RTT PARK": "RTT Park",
+    "RTT NOM WR": "RTT Nom Wr",
+    "RTT NOM RD": "RTT Nom Rd",
+    "RTT PARK DQS": "RTT Park Dqs",
+    "RTT LOOPBACK": "RTT Loopback",
+    "CK ODT GROUP A": "CK ODT Group A",
+    "CS ODT GROUP A": "CS ODT Group A",
+    "CA ODT GROUP A": "CA ODT Group A",
+    "CK ODT GROUP B": "CK ODT Group B",
+    "CS ODT GROUP B": "CS ODT Group B",
+    "CA ODT GROUP B": "CA ODT Group B",
+    "PULL UP": "Pull Up Drv",
+    "PULL DN": "Pull Down Drv",
+}
+
+_REFERENCE_VREF_NAMES = {
+    "WrDS Up": "Dq Vref Up",
+    "WrDS Dn": "Dq Vref Dn",
+    "RdODT Up": "Dq Odt Vref Up",
+    "RdODT Dn": "Dq Odt Vref Dn",
+    "WrDSCmd Up": "Cmd Vref Up",
+    "WrDSCmd Dn": "Cmd Vref Dn",
+    "WrDSCtl Up": "Ctl Vref Up",
+    "WrDSCtl Dn": "Ctl Vref Dn",
+    "WrDSClk Up": "Clk Vref Up",
+    "WrDSClk Dn": "Clk Vref Dn",
+    "WrDSCke CS Up": "CkeCs Vref Up",
+    "QXCOUNT": "QX Count",
+    "DQ VREF D0": "DQ VREF 0",
+    "DQ VREF D1": "DQ VREF 1",
+    "DQ VREF D2": "DQ VREF 2",
+    "DQ VREF D3": "DQ VREF 3",
+}
+
+_REFERENCE_SIGNAL_ORDER = {
+    "RTT": (
+        "RTT Wr", "RTT Nom Rd", "RTT Nom Wr", "RTT Park",
+        "RTT Park Dqs", "RTT Loopback",
+    ),
+    "ODT": (
+        "CA ODT Group A", "CS ODT Group A", "CK ODT Group A",
+        "CA ODT Group B", "CS ODT Group B", "CK ODT Group B",
+    ),
+    "RON": ("Pull Up Drv", "Pull Down Drv"),
+}
+
+
+def _resistance_first_rzq_text(value):
+    """Convert a decoded RZQ label to resistance-first notation."""
+    if value == "RTT_OFF":
+        return "0 RZQ OFF"
+    match = re.fullmatch(r"(RZQ(?:/[0-9.]+)?) \(([0-9]+)\)", str(value))
+    if match:
+        return f"{match.group(2)} {match.group(1)}"
+    return value
+
+
+def _install_reference_signal_presentation():
+    formula_tables = (
+        RON_FORMULA,
+        CA_ODT_FORMULA,
+        CS_ODT_FORMULA,
+        CK_ODT_FORMULA,
+        DQS_RTT_PARK_FORMULA,
+        RTT_PARK_FORMULA,
+        RTT_WR_FORMULA,
+        RTT_NOM_WR_FORMULA,
+        RTT_NOM_RD_FORMULA,
+        RTT_Loopback_FORMULA,
+    )
+    for formula in formula_tables:
+        for code, decoded in formula.items():
+            formula[code] = _resistance_first_rzq_text(decoded)
+
+    for timing in TIMINGS:
+        if timing.get("Category") in {"RTT", "ODT", "RON"}:
+            timing["name"] = _REFERENCE_SIGNAL_NAMES.get(
+                timing.get("name"), timing.get("name")
+            )
+        elif timing.get("Category") == "VREF":
+            timing["name"] = _REFERENCE_VREF_NAMES.get(
+                timing.get("name"), timing.get("name")
+            )
+
+    # Keep each category in the reference row order without moving it out of
+    # its existing Training block. Stable sorting leaves platform-only rows in
+    # their original relative order.
+    for category, names in _REFERENCE_SIGNAL_ORDER.items():
+        positions = [
+            index for index, timing in enumerate(TIMINGS)
+            if timing.get("Tab") == "Training"
+            and timing.get("Category") == category
+        ]
+        rank = {name: index for index, name in enumerate(names)}
+        rows = [TIMINGS[index] for index in positions]
+        rows.sort(key=lambda timing: rank.get(timing.get("name"), len(rank)))
+        for index, timing in zip(positions, rows):
+            TIMINGS[index] = timing
+
+
+_install_reference_signal_presentation()
+
+# A few generation-specific rows are installed after the first Timings layout
+# pass. Reapply the stable section ordering once the table is complete so late
+# rows such as tRFC2 land beside their family instead of at the section tail.
+_group_timings_sections()

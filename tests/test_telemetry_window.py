@@ -188,10 +188,10 @@ class SensorTabTest(unittest.TestCase):
 
     def test_the_other_tabs_are_untouched(self):
         rows = [{"Tab": name} for name in
-                ("Timings", "Skew", "Jedec", "RTL", "System Info")]
+                ("Timings", "Training", "Jedec", "RTL", "System Info")]
         self.assertEqual(
             select_tab_names(rows),
-            ["Summary", "System Info", "Timings", "Skew", "Jedec", "RTL"],
+            ["Summary", "System Info", "Timings", "Training", "RTL", "Jedec"],
         )
 
 

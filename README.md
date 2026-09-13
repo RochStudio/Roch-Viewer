@@ -1,6 +1,6 @@
-# Roch Viewer 1.0.2
+# Roch Viewer 1.0.3
 
-Download version 1.0.2 from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/tag/v1.0.2).
+Download version 1.0.3 from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/tag/v1.0.3).
 
 A read-only Windows memory-timing and hardware-monitoring tool for supported Intel and AMD systems. View clocks, timings, per-channel settings, RAM details and native CPU/memory telemetry in a compact light/dark interface. No HWiNFO dependency.
 
@@ -19,17 +19,17 @@ The InpOut DLL contains a kernel driver and can install a persistent Windows ser
 ## Features
 
 - **Summary:** CPU/board identity, memory speed, DRAM Ratio below BCLK, supported MCLK/UCLK/FCLK readings, key timings and voltage snapshots. Select one module or all modules; matching channel values display once and differences display side by side.
-- **System Info:** processor, motherboard, BIOS, RAM and graphics-card identity.
-- **Timings:** primary, secondary and tertiary timings, including per-channel values where exposed, in a compact layout with aligned alternating row shading.
+- **System Info:** system, processor, motherboard, clocks and RAM details, followed by graphics-card identity at the bottom.
+- **Timings:** primary, secondary and tertiary timings, including per-channel values where exposed, with aligned alternating row shading and scrolling at the compact window size.
 - **Voltages:** startup snapshots of supported CPU, motherboard and memory rails. Use Telemetry for live readings.
-- **Skew and Misc:** supported RTT/ODT, drive strengths, VREF, training and controller configuration fields. AMD Misc includes native preamble/postamble and ECC status (memory-controller ECC, not DDR5 on-die ECC). Granite Ridge also exposes eight raw training codes using the reference tool's labels; those labels are not verified physical VREF/DFE readings. Unavailable reads stay blank.
+- **Training and Controller:** supported RTT/ODT, drive strengths, VREF, training and controller configuration fields. AMD Controller includes native preamble/postamble and ECC status (memory-controller ECC, not DDR5 on-die ECC). Granite Ridge also exposes eight raw training codes with compatibility labels; those labels are not verified physical VREF/DFE readings. Unavailable reads stay blank.
 - **Native telemetry:** CPU/effective clocks, temperatures, power and supported board voltages, plus each DIMM's temperature and PMIC rails. Current/minimum/maximum/average statistics and reset controls are included.
 - **Per-stick RAM details:** part number, capacity, rank and available IC information in the footer and telemetry.
 - **Shared Roch interface:** light/dark themes, consistent toolbar buttons, and YouTube | X | Discord links at the bottom-left.
 - **Advanced view:** searchable fields and a text dump for comparing configurations or reporting issues.
 - **Read-only:** no overclocking controls or voltage writes. Low-level selectors and query transactions retrieve readings only.
 
-Version 1.0.2 includes the red-bordered module selector, consistent rounded toolbar buttons, resistance units and explicit Off states, improved row shading, Gigabyte split channel/socket labels, and VDDIO on the tested X870 AORUS TACHYON ICE. Graphics was removed from telemetry; GPU identity remains in System Info.
+Version 1.0.3 adds reorganized timing and training layouts, independent A1/B1 module readings, Controller and RTL views, expanded System Info, snapshot voltage reporting, and a compact 700 × 800 interface with scrolling for longer pages.
 
 ## Screenshots
 

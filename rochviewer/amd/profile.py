@@ -56,7 +56,7 @@ SENSOR_TAB = "Sensors"
 
 # What training settled on, and what the controller was configured with:
 # neither is a timing, and each fills a page of its own.
-SKEW_TAB = "Skew"
+SKEW_TAB = "Training"
 MISC_TAB = "Misc"
 
 # What the processor was configured to allow, as opposed to what it is
@@ -83,7 +83,7 @@ TRAINING_FIELDS = frozenset(RAW_TRAINING_FIELDS) | frozenset({
     # decode instead, which has no such field, so value() answered with an em
     # dash for something that had been read correctly. The per-channel path
     # reads the block directly and was never affected, which is why both
-    # Summary and Skew kept showing it and nothing looked wrong.
+    # Summary and Training kept showing it and nothing looked wrong.
     "proc_dq_ds", "proc_dq_ds_pu", "proc_dq_ds_pd",
     "dram_dq_ds_pu", "dram_dq_ds_pd",
 })
@@ -1796,12 +1796,12 @@ SYSTEM_INFO_SECTIONS = (
                 "DIMM Size", "Rank", "Part Number",
                 "Module Manufacturer", "IC Manufacturer", "DRAM Die",
                 "Serial Number", "Manufactured")),
+    ("Status", ("Status", "Read Status", "Training Status", "Voltage Status",
+                "Power Status")),
     ("Graphics", ("GPU", "Board Manufacturer", "GPU Code Name",
                   "GPU Revision", "GPU Technology", "Cores", "ROPs / TMUs",
                   "Memory Size", "Memory Type", "Memory Vendor", "Bus Width",
                   "Resizable BAR", "Driver Version", "Driver Date")),
-    ("Status", ("Status", "Read Status", "Training Status", "Voltage Status",
-                "Power Status")),
 )
 
 SECTION_OF = {
@@ -1868,9 +1868,20 @@ def build_timings(runtime):
         info("DRAM Die", _dimm_value("dram_die")),
         info("Serial Number", _dimm_value("serial_number")),
         info("Manufactured", _dimm_value("manufacture_date")),
-        # Graphics. The card's own name comes from the display class key
-        # rather than WMI: it is the string the driver registered, which is
-        # what GPU-Z and CPU-Z both show.
+        # Status. One line covering every transport. The four it replaces are
+        # kept below, marked diagnostic: the tab shows the summary, the dump
+        # keeps the full text including the APOB record addresses.
+        info("Status", _status_summary(runtime), live=True),
+        info("Read Status", lambda: _status(runtime), diagnostic=True),
+        info("Training Status", lambda: _training_status(runtime),
+             diagnostic=True),
+        info("Voltage Status", lambda: _voltage_status(runtime),
+             live=True, diagnostic=True),
+        info("Power Status", lambda: _power_status(runtime),
+             live=True, diagnostic=True),
+        # Graphics is the final System Info block. The card's own name comes
+        # from the display class key rather than WMI: it is the string the
+        # driver registered, which is what GPU-Z and CPU-Z both show.
         info("GPU", _gpu_value("name")),
         info("Board Manufacturer", _gpu_value("board_manufacturer")),
         info("GPU Code Name", _gpu_value("code_name")),
@@ -1890,17 +1901,6 @@ def build_timings(runtime):
         info("Resizable BAR", _gpu_value("resizable_bar")),
         info("Driver Version", _gpu_value("driver_version")),
         info("Driver Date", _gpu_value("driver_date")),
-        # Status. One line covering every transport. The four it replaces are
-        # kept below, marked diagnostic: the tab shows the summary, the dump
-        # keeps the full text including the APOB record addresses.
-        info("Status", _status_summary(runtime), live=True),
-        info("Read Status", lambda: _status(runtime), diagnostic=True),
-        info("Training Status", lambda: _training_status(runtime),
-             diagnostic=True),
-        info("Voltage Status", lambda: _voltage_status(runtime),
-             live=True, diagnostic=True),
-        info("Power Status", lambda: _power_status(runtime),
-             live=True, diagnostic=True),
     ]
 
     def misc(name, value, **extra):
@@ -2111,7 +2111,7 @@ def build_timings(runtime):
         ("DRAM DQ DS Pu", "dram_dq_ds_pu"),
         ("DRAM DQ DS Pd", "dram_dq_ds_pd"),
     )
-    # Skew, not Timings. These three groups are what memory training settled
+    # Training, not Timings. These three groups are what memory training settled
     # on -- terminations, on-die termination and drive strengths -- rather
     # than intervals the controller was told to wait, and they filled the
     # Timings tab's right-hand column with twenty rows of a different kind of

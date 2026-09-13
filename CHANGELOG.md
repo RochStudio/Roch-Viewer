@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.3 (2026-09-13)
+
+- Reorganized Intel Timings into balanced command, refresh, tertiary, CAS-to-CAS, power-down and other groups while preserving Primary.
+- Rebalanced Training across termination, receiver/VREF and mode-register columns; moved the per-module DDR5 Refresh Mode beside its refresh timings.
+- Added independent A1/B1 module readings, dedicated Controller and RTL views, expanded System Info and snapshot voltage reporting.
+- Set the compact window to 700 × 800, made longer pages scroll, and placed Graphics at the bottom of System Info.
+
 ## 1.0.2 (2026-09-11)
 
 - Added native per-channel AMD preamble, decoded read/write postamble duration/pattern and ECC status to Misc. Unavailable reads remain blank and reserved encodings stay explicit.

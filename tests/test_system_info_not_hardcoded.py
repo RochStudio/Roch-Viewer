@@ -165,7 +165,7 @@ class FollowsTheHardwareTest(unittest.TestCase):
                     if name == "Win32_PhysicalMemory" else []
                 ),
             ):
-                seen.append(_require(self, "Type"))
+                seen.append(_require(self, "DRAM Technology"))
         self.assertEqual(seen, ["DDR5", "DDR4"])
 
     def _generation(self, generation):

@@ -27,7 +27,9 @@ import types
 import inspect
 import unittest
 
-from rochviewer.ui.main import TimingGUI, VIEWPORT_SHADED_TABS
+from rochviewer.ui.main import (
+    PAIRED_SECTION_TABS, TimingGUI, VIEWPORT_SHADED_TABS,
+)
 
 
 def icon_widths():
@@ -52,7 +54,10 @@ def frame(width, managed=True):
 
 def gui(grid_frames):
     stand_in = types.SimpleNamespace(
-        grid_frames=grid_frames, TAB_CHROME_WIDTH=TimingGUI.TAB_CHROME_WIDTH
+        grid_frames=grid_frames,
+        TAB_CHROME_WIDTH=TimingGUI.TAB_CHROME_WIDTH,
+        COLUMN_GAP=TimingGUI.COLUMN_GAP,
+        DETAIL_COLUMN_GAP=TimingGUI.DETAIL_COLUMN_GAP,
     )
     return TimingGUI.required_tab_width(stand_in)
 
@@ -64,17 +69,31 @@ class RequiredWidthTest(unittest.TestCase):
             "Summary": {"Left": frame(320), "Right": frame(320)},
             "Misc": {"Left": frame(433), "Right": frame(433)},
         })
-        self.assertEqual(width, 866 + TimingGUI.TAB_CHROME_WIDTH)
+        self.assertEqual(
+            width, 866 + TimingGUI.DETAIL_COLUMN_GAP + TimingGUI.TAB_CHROME_WIDTH
+        )
 
     def test_both_halves_of_a_tab_are_counted(self):
         self.assertEqual(gui({"Timings": {"Left": frame(399),
                                           "Right": frame(399)}}),
-                         798 + TimingGUI.TAB_CHROME_WIDTH)
+                         798 + TimingGUI.DETAIL_COLUMN_GAP
+                         + TimingGUI.TAB_CHROME_WIDTH)
+
+    def test_all_three_timing_columns_are_counted(self):
+        self.assertEqual(
+            gui({"Timings": {
+                "Left": frame(310),
+                "Middle": frame(320),
+                "Right": frame(330),
+            }}),
+            960 + 2 * TimingGUI.DETAIL_COLUMN_GAP + TimingGUI.TAB_CHROME_WIDTH,
+        )
 
     def test_a_tab_held_as_a_list_is_measured_too(self):
         # Not every tab stores its halves in a dict.
-        self.assertEqual(gui({"Skew": [frame(400), frame(400)]}),
-                         800 + TimingGUI.TAB_CHROME_WIDTH)
+        self.assertEqual(gui({"Training": [frame(400), frame(400)]}),
+                         800 + TimingGUI.DETAIL_COLUMN_GAP
+                         + TimingGUI.TAB_CHROME_WIDTH)
 
     def test_an_ungridded_placeholder_is_not_counted(self):
         # System Info keeps a right-hand placeholder it never grids,
@@ -101,25 +120,25 @@ class ChromeTest(unittest.TestCase):
         # Pinned rather than derived. The title bar and footer sit inside the
         # window rather than in a frame around it, so 850 has to carry them
         # as well as the tabs: the two take 54px, and Summary needs 644.
-        self.assertEqual(TimingGUI.WINDOW_WIDTH, 710)
-        self.assertEqual(TimingGUI.WINDOW_HEIGHT, 780)
-        self.assertIn("Timings", TimingGUI.UNSCROLLED_TABS)
+        self.assertEqual(TimingGUI.WINDOW_WIDTH, 700)
+        self.assertEqual(TimingGUI.WINDOW_HEIGHT, 800)
+        self.assertIn("Summary", TimingGUI.UNSCROLLED_TABS)
         chrome = TimingGUI.TITLE_BAR_HEIGHT + TimingGUI.FOOTER_HEIGHT
         self.assertEqual(chrome, 54)
-        # No assertion that Summary clears its 644px here any more: at this
-        # height it does not, and scrolls by 17px. That is the chosen size,
-        # not a defect, so the test records the size rather than a fit it no
-        # longer has.
+        # The rendered fit is checked separately against the live window; this
+        # assertion records the requested fixed size itself.
 
-    def test_the_fitted_width_pass_compares_against_the_asked_for_size(self):
-        # It runs before the window is mapped, where winfo_width() answers
-        # with Tk's 200x200 default. Compared against that, every tab looked
-        # too wide and the window grew past the pinned size every time.
-        source = inspect.getsource(TimingGUI._widen_to_fit_tabs)
-        self.assertIn('getattr(self, "_window_width"', source)
-        self.assertIn("self._window_width = target", source)
-        self.assertIn("_window_width = window_width",
-                      inspect.getsource(TimingGUI.setup_window_geometry))
+    def test_summary_top_pairs_have_readable_spacing(self):
+        source = inspect.getsource(TimingGUI._summary_about_pair)
+        self.assertIn('padx=(0, 4)', source)
+        self.assertIn('padx=(0, 8)', source)
+
+    def test_tabs_do_not_expand_the_fixed_window_after_startup(self):
+        source = inspect.getsource(TimingGUI.__init__)
+        self.assertNotIn("self._widen_to_fit_tabs()", source)
+        geometry = inspect.getsource(TimingGUI.setup_window_geometry)
+        self.assertIn("target_width = self.WINDOW_WIDTH", geometry)
+        self.assertNotIn("extra_columns", geometry)
 
     def test_the_logo_picks_a_size_it_can_actually_draw(self):
         # Tk cannot scale an image up, so the entry chosen has to be at or
@@ -195,16 +214,11 @@ class ChromeTest(unittest.TestCase):
         self.assertIn("self.appearance_button", tools)
         self.assertNotIn("appearance_selector", inspect.getsource(TimingGUI))
 
-    def test_the_tools_are_measured_onto_the_tab_strip(self):
-        # TAB_STRIP_HEIGHT is what the tabview is asked for, not what the
-        # strip draws as -- 36 against 26 here -- so the offset is measured
-        # rather than assumed, and on <Configure> rather than after_idle,
-        # which runs before there is a size to measure.
-        source = inspect.getsource(TimingGUI.align_tab_strip_tools)
-        self.assertIn("strip.winfo_rooty() - self.tabview.winfo_rooty()",
-                      source)
-        self.assertIn('self.root.bind("<Configure>"',
-                      inspect.getsource(TimingGUI.build_tab_strip_tools))
+    def test_the_tools_use_a_separate_compact_strip(self):
+        source = inspect.getsource(TimingGUI.build_tab_strip_tools)
+        self.assertIn("before=self.tabview", source)
+        self.assertIn("bar.pack_propagate(False)", source)
+        self.assertNotIn("bar.place(", source)
 
     def test_an_unused_half_is_taken_out_of_the_grid(self):
         # An empty CTkFrame still asks for the toolkit's default 200px, so
@@ -212,19 +226,52 @@ class ChromeTest(unittest.TestCase):
         # nothing and the row shading stopped short of it. grid_remove keeps
         # the configuration, so the half comes back if the tab splits again.
         source = inspect.getsource(TimingGUI._stretch_tab_halves)
-        self.assertIn("right.grid_remove()", source)
-        self.assertIn("grid_columnconfigure(1, minsize=0, weight=0)", source)
+        self.assertIn("unused.grid_remove()", source)
+        self.assertIn("grid_column, minsize=0, weight=0", source)
 
-    def test_compact_data_tabs_are_drawn_without_scrollbars(self):
+    def test_only_tabs_that_fit_are_drawn_without_scrollbars(self):
         # They give up no width to gutters they do not use. Whether they fit is
         # measured against the drawn window in test_unscrolled_fit_live --
         # without a scrollbar, content past the bottom is not reachable.
         self.assertEqual(
             TimingGUI.UNSCROLLED_TABS,
-            ("Summary", "Timings", "Skew", "Misc", "Voltages"),
+            ("Summary", "RTL", "Controller", "Voltages"),
+        )
+        for name in ("System Info", "Timings", "Training"):
+            self.assertNotIn(name, TimingGUI.UNSCROLLED_TABS)
+
+    def test_training_is_two_columns_and_controller_is_three(self):
+        source = inspect.getsource(TimingGUI.create_widgets)
+        self.assertIn('if name in ("Timings", "Controller")', source)
+        self.assertIn('column_keys = ("Left", "Middle", "Right")', source)
+        self.assertIn('column_keys = ("Left", "Right")', source)
+        self.assertIn('stacked = name in ("Timings", "Training")', source)
+
+        from rochviewer.ui.main import SKEW_SECTION_ORDER
+
+        self.assertEqual(
+            SKEW_SECTION_ORDER,
+            ("RTT", "ODT", "RON", "ODT DELAY",
+             "DFE", "VREF", "ODTL",
+             "Command", "Mode Registers", "Preamble", "ECS"),
         )
 
-    def test_the_module_selector_is_built_for_summary_only(self):
+    def test_training_does_not_collapse_when_only_the_third_column_is_empty(self):
+        source = inspect.getsource(TimingGUI.load_all_tabs_content)
+        self.assertIn("available_columns = set(self.grid_frames[tab_name])", source)
+        self.assertIn('timing.get("Column", "Left") != "Left"', source)
+
+    def test_controller_uses_the_balanced_three_column_section_order(self):
+        from rochviewer.ui.main import PHY_SECTION_ORDER
+
+        self.assertEqual(
+            PHY_SECTION_ORDER,
+            ("VREF", "Command", "ODTL", "Refresh",
+             "DATA", "CMD", "CLK", "CTL", "SComp",
+             "MISC Additional", "Features", "Power Down"),
+        )
+
+    def test_module_selector_is_built_for_summary_and_module_aware_tabs(self):
         source = inspect.getsource(TimingGUI.create_widgets)
         self.assertNotIn("bottom_part_number_frame", source)
         summary_branch = source[
@@ -233,21 +280,46 @@ class ChromeTest(unittest.TestCase):
         ]
         self.assertIn("_build_summary_module_selector", summary_branch)
         self.assertEqual(source.count("_build_summary_module_selector"), 1)
-        selector = inspect.getsource(TimingGUI._build_summary_module_selector)
+        self.assertIn('(\"Timings\", \"Training\")', source)
+        self.assertIn("_build_module_selector", source)
+        # The holder occupies row 0 and the selector is a sibling in row 1.
+        # Putting the selector inside ``frame`` makes it disappear below the
+        # scrollable timing table until the user scrolls to its end.
+        self.assertIn('holder.grid(row=0, column=0, sticky="nsew")', source)
+        self.assertIn('tab_page, name, row=1, column_count=1', source)
+        selector = inspect.getsource(TimingGUI._build_module_selector)
         self.assertIn("CTkOptionMenu", selector)
-        self.assertIn('{"All modules": None}', selector)
         self.assertIn("fg_color=self.BRAND_COLOR", selector)
+        choices = inspect.getsource(TimingGUI._prepare_module_choices)
+        self.assertIn('{"All modules": None}', choices)
 
     def test_short_banded_tabs_extend_their_shading_when_selected(self):
         self.assertEqual(
             VIEWPORT_SHADED_TABS,
-            frozenset({"Timings", "Skew", "Misc", "Voltages"}),
+            frozenset({
+                "System Info", "Timings", "Training", "Controller", "RTL", "Voltages",
+            }),
         )
         source = inspect.getsource(TimingGUI._on_tab_changed)
         self.assertIn("_extend_tab_shading_to_viewport", source)
         self.assertIn("after_idle", source)
         extension = inspect.getsource(TimingGUI._extend_tab_shading_to_viewport)
         self.assertIn("self.tabview.tab(tab_name)", extension)
+
+    def test_system_info_columns_stack_without_cross_column_padding(self):
+        # Four identity sections face only two clock/memory sections. Pairing
+        # them inserts blank rows between Processor and Motherboard.
+        self.assertNotIn("System Info", PAIRED_SECTION_TABS)
+
+    def test_system_info_section_names_are_shaded_rows(self):
+        from rochviewer.ui.main import CONTINUOUS_SECTION_TABS
+
+        self.assertIn("System Info", CONTINUOUS_SECTION_TABS)
+        source = inspect.getsource(TimingGUI.create_section)
+        self.assertIn(
+            "self.VALUE_COLOR if uniform_header else self.SUBTITLE_COLOR",
+            source,
+        )
 
     def test_the_footer_links_to_the_handle_it_names(self):
         self.assertEqual(TimingGUI.TWITTER_URL,
@@ -290,7 +362,7 @@ class RowBandTest(unittest.TestCase):
 
     A tab puts dual-channel sections in one column and single-value ones in
     the other. While the two branches computed the position differently, every
-    row on Skew came out one shade on the left and the other on the right.
+    row on Training came out one shade on the left and the other on the right.
     """
 
     def test_the_heading_holds_a_band_position_on_a_continuous_tab(self):
@@ -312,7 +384,7 @@ class RowBandTest(unittest.TestCase):
                          TimingGUI.row_band(1, True, rows_drawn - 1) + 2)
 
     def test_opposite_columns_stay_in_step(self):
-        # Skew's left column is dual and its right single, both starting at
+        # Training's left column is dual and its right single, both starting at
         # offset 1. Facing rows must land on the same band.
         for data_row in range(8):
             with self.subTest(data_row=data_row):

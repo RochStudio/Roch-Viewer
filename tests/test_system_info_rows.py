@@ -31,8 +31,8 @@ from tests.intel_stub import install, restore
 intel_timings = None
 
 NEW_ROWS = (
-    "Platform", "OS", "GPU",
-    "DIMM Size", "Rank", "DRAM Manufacturer", "DRAM Die",
+    "Platform", "OS", "OS Version", "GPU",
+    "DRAM Technology", "DIMM Size", "Rank", "DRAM Manufacturer", "DRAM Die",
 )
 
 
@@ -127,7 +127,7 @@ class PresenceTest(unittest.TestCase):
         # the current reading rather than a copy of startup.
         by_name = {row.get("name"): row for row in system_info_rows()}
         for name in ("BCLK", "MCLK", "Uncore", "UCLK", "PSF0 PLL",
-                     "DRAM Frequency", "DRAM Ratio", "DDR QCLK Ratio",
+                     "DRAM Frequency", "DRAM Ratio", "QCLK Ratio",
                      "Gear Mode"):
             row = by_name.get(name)
             if row is None:
@@ -135,6 +135,24 @@ class PresenceTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertTrue(callable(row.get("value")))
                 self.assertFalse(row.get("live"))
+
+    def test_only_non_live_clock_configuration_is_in_system_info(self):
+        by_name = {row.get("name"): row for row in system_info_rows()}
+        for name in ("BCLK", "Core Ratio", "Uncore Ratio"):
+            with self.subTest(name=name):
+                self.assertTrue(callable(by_name[name].get("value")))
+                self.assertFalse(by_name[name].get("live"))
+        self.assertNotIn("Core Clock", by_name)
+        self.assertNotIn("Uncore", by_name)
+
+    def test_ring_remains_available_to_summary_only(self):
+        row = next(
+            row for row in intel_timings.TIMINGS
+            if row.get("name") == "Uncore"
+        )
+        self.assertEqual(row.get("Tab"), "Summary")
+        self.assertEqual(row.get("display_name"), "Ring Clock")
+        self.assertTrue(callable(row.get("value")))
 
     def test_only_the_sensor_rows_are_read_on_a_timer(self):
         # "live" puts a row on the refresh worker. It belongs to the sensors,
@@ -200,7 +218,7 @@ class PresenceTest(unittest.TestCase):
                               ("Chipset", "Motherboard"),
                               ("Southbridge", "Motherboard"),
                               ("LPCIO", "Motherboard"),
-                              ("Type", "Memory")):
+                              ("DRAM Technology", "Memory")):
             with self.subTest(name=name):
                 self.assertEqual(placement.get(name), section)
 
@@ -263,13 +281,25 @@ class PresenceTest(unittest.TestCase):
                 seen.append(category)
                 previous = category
 
-    def test_every_section_is_in_the_one_column_the_tab_draws(self):
-        # System Info is built as a single full-width column and its "Right"
-        # frame is an ungridded placeholder, so a section sent there is built
-        # and never shown. The board row needs that full width anyway.
-        columns = {column for _title, column, _names
-                   in intel_timings.SYSTEM_INFO_SECTIONS}
-        self.assertEqual(columns, {"Left"})
+    def test_sections_are_split_between_identity_and_memory_state(self):
+        placement = {title: column for title, column, _names
+                     in intel_timings.SYSTEM_INFO_SECTIONS}
+        self.assertEqual(
+            placement,
+            {
+                "System": "Left",
+                "Processor": "Left",
+                "Motherboard": "Left",
+                "Clocks": "Right",
+                "Memory": "Right",
+                "Graphics": "Right",
+            },
+        )
+
+    def test_graphics_is_the_final_system_info_section(self):
+        self.assertEqual(
+            intel_timings.SYSTEM_INFO_SECTIONS[-1][0], "Graphics"
+        )
 
     def test_no_new_row_leaked_onto_another_tab(self):
         for row in intel_timings.TIMINGS:
@@ -302,7 +332,7 @@ class OrderTest(unittest.TestCase):
     def test_the_identity_rows_lead(self):
         # GPU leads its own Graphics section now, beside the card's board,
         # silicon and frame buffer, so it no longer sits between these two.
-        self.assertEqual(row_names()[:2], ["OS", "Platform"])
+        self.assertEqual(row_names()[:3], ["OS", "OS Version", "Platform"])
 
     def test_no_row_is_left_out_of_the_order(self):
         # A row missing from SYSTEM_INFO_ORDER still renders, at the end. This
@@ -331,11 +361,11 @@ class OrderTest(unittest.TestCase):
 
     def test_the_clock_chain_reads_downward(self):
         # The order asked for: what the memory runs at, the ratios that got it
-        # there, then the clocks underneath it. Uncore sits above MCLK/UCLK
-        # because it is the ring the controller hangs off, not a memory clock.
+        # there, then the fixed memory clocks underneath it. Variable core and
+        # ring clocks belong to Telemetry and do not appear here.
         names = row_names()
-        clocks = ("DRAM Frequency", "DRAM Ratio", "DDR QCLK Ratio", "BCLK",
-                  "Uncore", "MCLK", "UCLK", "PSF0 PLL")
+        clocks = ("DRAM Frequency", "DRAM Ratio", "QCLK Ratio", "BCLK",
+                  "MCLK", "UCLK", "PSF0 PLL")
         self.assertEqual([n for n in names if n in clocks], list(clocks))
 
 
@@ -353,16 +383,17 @@ class ValueTest(unittest.TestCase):
     def test_an_unclassified_platform_reports_no_value(self):
         self.assertIsNone(intel_timings.PLATFORM_LABELS.get("am5"))
 
-    def test_the_os_reads_as_cpuz_states_it(self):
+    def test_the_os_name_and_version_are_separate_like_cpuz(self):
         # "Microsoft Windows 11  Professional (x64) Build 22631.6199" on the
         # bench. The revision is patched rather than read, so this asserts the
         # assembly and not whichever cumulative update the machine is on.
         with os_parts(revision=6199, display_version="23H2"):
             self.assertEqual(
                 value_of("OS"),
-                "Microsoft Windows 11 Professional (x64) 23H2 "
-                "Build 22631.6199",
+                "Microsoft Windows 11 Professional (x64)",
             )
+            self.assertEqual(value_of("OS Version"),
+                             "23H2 Build 22631.6199")
 
     def test_the_os_still_reads_when_the_revision_is_unavailable(self):
         # The UBR is the one part WMI does not carry, so it is the one part
@@ -370,8 +401,9 @@ class ValueTest(unittest.TestCase):
         with os_parts(revision=None, display_version=None):
             self.assertEqual(
                 value_of("OS"),
-                "Microsoft Windows 11 Professional (x64) Build 22631",
+                "Microsoft Windows 11 Professional (x64)",
             )
+            self.assertEqual(value_of("OS Version"), "Build 22631")
 
     def test_the_feature_update_is_not_taken_from_release_id(self):
         # ReleaseId looks like the right key and is not: Microsoft froze it at
@@ -402,6 +434,30 @@ class ValueTest(unittest.TestCase):
     def test_the_dram_component_is_split_into_maker_and_die(self):
         self.assertEqual(value_of("DRAM Manufacturer"), "Samsung")
         self.assertEqual(value_of("DRAM Die"), "B-die")
+
+    def test_the_memory_manufacturer_labels_are_compact(self):
+        by_name = {row.get("name"): row for row in system_info_rows()}
+        self.assertEqual(by_name["RAM Manufacturer"].get("display_name"),
+                         "Module Manuf.")
+        self.assertEqual(by_name["DRAM Manufacturer"].get("display_name"),
+                         "DRAM Manuf.")
+
+    def test_capacity_and_bus_clock_labels_match_the_requested_names(self):
+        by_name = {row.get("name"): row for row in system_info_rows()}
+        self.assertEqual(by_name["Memory Capacity"].get("display_name"),
+                         "Capacity")
+        self.assertEqual(by_name["BCLK"].get("display_name"), "Bus Clock")
+
+    def test_core_and_uncore_ratios_follow_the_read_clocks(self):
+        with mock.patch.object(intel_timings, "_core_clock_mhz",
+                               return_value=5400.0), \
+                mock.patch.object(intel_timings, "get_bclk",
+                                  return_value=100.0):
+            self.assertEqual(intel_timings.get_core_clock(), "5400 MHz")
+            self.assertEqual(intel_timings.get_core_ratio(), "54.0 x")
+        with mock.patch.object(intel_timings, "_ring_ratio_value",
+                               return_value=50):
+            self.assertEqual(intel_timings.get_uncore_ratio(), "50.0 x")
 
 
 class UnavailableValueTest(unittest.TestCase):

@@ -250,7 +250,7 @@ class AdvancedWindow(ctk.CTkToplevel):
                 title = category if category else tab
                 # No colour of its own: a heading is a row of the table and
                 # takes the band its position calls for, which is what the
-                # Timings and Skew tabs do. Given one, the alternation would
+                # Timings and Training tabs do. Given one, the alternation would
                 # visibly restart at every section.
                 heading = ctk.CTkFrame(self._body, corner_radius=0,
                                        fg_color="transparent")

@@ -46,11 +46,6 @@ def tearDownModule():
     restore()
 
 
-# Rows on the Timings tab that come from the global MCHBAR region rather than a
-# per-controller block, so they have no second channel to show.
-GLOBAL_REGISTER_ROWS = ("Refresh Mode",)
-
-
 def timings_rows():
     return [row for row in intel_timings.TIMINGS if row.get("Tab") == "Timings"]
 
@@ -251,13 +246,44 @@ class SectionLayoutTest(unittest.TestCase):
             "tXP", "tXPDLL", "tXSDLL", "tXSR", "tCKCKEH", "tPPD", "tSR",
         })
 
-    def test_refresh_sits_above_tertiary_in_the_same_column(self):
+    def test_refresh_sits_above_tertiary_in_the_middle_column(self):
         from rochviewer.ui.main import TIMINGS_SECTION_ORDER
 
         columns = intel_timings.TIMINGS_TAB_COLUMNS
         self.assertEqual(columns["Refresh timings"], columns["Tertiary"])
+        self.assertEqual(columns["Refresh timings"], "Middle")
         self.assertLess(TIMINGS_SECTION_ORDER.index("Refresh timings"),
                         TIMINGS_SECTION_ORDER.index("Tertiary"))
+
+    def test_reorganised_sections_use_the_three_columns(self):
+        columns = intel_timings.TIMINGS_TAB_COLUMNS
+        self.assertEqual(columns["Command"], "Left")
+        self.assertEqual(columns["CAS to CAS"], "Right")
+        self.assertEqual(columns["Power down"], "Right")
+        self.assertEqual(columns["Other Timings"], "Right")
+
+    def test_non_primary_rows_follow_the_declared_order(self):
+        sections = self._sections()
+        for category, order in intel_timings.TIMINGS_SECTION_ROW_ORDER.items():
+            present = sections.get(category, [])
+            expected = [name for name in order if name in present]
+            with self.subTest(category=category):
+                self.assertEqual(present, expected)
+
+    def test_related_rows_moved_to_their_new_sections(self):
+        sections = self._sections()
+        expected = {
+            "Allow 2cyc B2B LPDDR": "Command",
+            "tMOD": "Command",
+            "tREFSBRD": "Refresh timings",
+            "tCCD": "CAS to CAS",
+            "tCCD_L": "CAS to CAS",
+            "tCCD_L_WR": "CAS to CAS",
+            "tCCD_L_WR2": "CAS to CAS",
+        }
+        for name, category in expected.items():
+            with self.subTest(name=name):
+                self.assertIn(name, sections.get(category, []))
 
     def test_no_section_is_ordered_twice(self):
         # A category listed twice sorts by its first appearance and reads as
@@ -272,7 +298,7 @@ class SectionLayoutTest(unittest.TestCase):
         # walks the rows, so a category whose rows are not contiguous renders
         # as two headings with the same name. Re-categorising by name left
         # Refresh timings appearing three times and two others twice.
-        for column in ("Left", "Right"):
+        for column in ("Left", "Middle", "Right"):
             seen, previous = [], None
             for row in timings_rows():
                 if row.get("Column") != column:
@@ -356,6 +382,8 @@ class ReferenceAdditionsTest(unittest.TestCase):
         "tPREMRR": (0xE494, 8, 7),
         "tMRR": (0xE494, 22, 7),
         "tRFM": (0xE40C, 0, 11),
+        "Rank Idle": (0xE438, 0, 8),
+        "TRPab_EXT": (0xE000, 7, 4),
     }
 
     def _rows(self):
@@ -381,8 +409,9 @@ class ReferenceAdditionsTest(unittest.TestCase):
 
     def test_they_joined_the_tab_without_displacing_anything(self):
         names = [name for name in self._rows() if name]
-        for existing in ("tXSR", "tCKE", "OREF_RI"):
+        for existing in ("tXSR", "tCKE", "Rank Idle", "TRPab_EXT"):
             self.assertIn(existing, names)
+        self.assertNotIn("OREF_RI", names)
         self.assertEqual(len(set(names)), len(names))
 
     def test_no_row_is_named_for_a_field_that_does_not_exist(self):
@@ -393,7 +422,7 @@ class ReferenceAdditionsTest(unittest.TestCase):
         self.assertIn("tPREMRR", names)
 
     def test_the_refresh_arbitration_fields_tile_0xe438(self):
-        # OREF_RI holds bits 0-7 and tREFIx9 bits 24-31; the reference tool's
+        # Rank Idle holds bits 0-7 and tREFIx9 bits 24-31; the reference tool's
         # six names fill the gap exactly. A layout that only half fitted would
         # still read plausible numbers, so what pins it is that all six match
         # its dump on this bench at once -- 6, 7, 0, 1, 2, 5.
@@ -442,7 +471,7 @@ class ReferenceAdditionsTest(unittest.TestCase):
 
     def test_the_dll_codes_share_the_bwsel_register(self):
         # 0x01BC tiles as CODEPI 0-5, CODEWL 6-11, BWSEL 12-17. These three
-        # are Skew rows, not Timings ones, so they are looked up in the whole
+        # are Training rows, not Timings ones, so they are looked up in the whole
         # table rather than through the tab-scoped helper.
         rows = {row.get("name"): row for row in intel_timings.TIMINGS}
         for name, start in (("DLL_CODEPI", 0), ("DLL_CODEWL", 6),
@@ -500,33 +529,20 @@ class InstalledTableTest(unittest.TestCase):
         single = [
             row.get("name") for row in timings_rows()
             if not intel_timings.is_dual_timing(row)
-            and row.get("name") not in GLOBAL_REGISTER_ROWS
         ]
         self.assertEqual(single, [])
 
-    def test_the_global_row_stays_single(self):
-        # Refresh mode comes from DDR_PTM_CTL in the global register region,
-        # so there is no second-channel copy of it to show.
-        rows = [
-            row for row in timings_rows()
-            if row.get("name") in GLOBAL_REGISTER_ROWS
-        ]
-        self.assertTrue(rows)
-        for row in rows:
-            with self.subTest(row=row.get("name")):
-                self.assertFalse(intel_timings.is_dual_timing(row))
-
-    def test_the_global_row_stays_narrow_enough_for_a_channel_column(self):
-        # It now shares a section with per-channel rows, so its text renders in
-        # the A1 column, and _align_dual_columns widens that column across the
-        # whole tab to fit the longest entry. The labels have to stay in the
-        # same league as the timings beside them.
-        widest_timing = max(
-            len(str(intel_timings.apply_formula(65535, None))), len("144 ns")
-        )
-        for label in intel_timings.REFRESH_MODE_LABELS.values():
-            with self.subTest(label=label):
-                self.assertLessEqual(len(label), widest_timing * 3)
+    def test_refresh_mode_uses_its_generation_specific_source_scope(self):
+        row = register_rows()["Refresh Mode"]
+        ddr5 = intel_timings.detect_ddr_generation() == "DDR5"
+        expected_tab = "Timings" if ddr5 else intel_timings.PHY_TAB
+        self.assertEqual(row["Tab"], expected_tab)
+        self.assertEqual(
+            row["Category"], "Refresh timings" if ddr5 else "Refresh")
+        self.assertEqual(
+            "Refresh Mode" in [r.get("name") for r in timings_rows()], ddr5)
+        if ddr5:
+            self.assertTrue(intel_timings.is_dual_timing(row))
 
     def test_every_mirrored_pair_differs_by_exactly_one_channel(self):
         for row in timings_rows():
@@ -600,11 +616,9 @@ class InstalledTableTest(unittest.TestCase):
         self.assertNotIn(channel_b + 0xE004, side_a - {detect})
         self.assertNotIn(MCHBAR + 0xE004, side_b - {detect})
 
-    # Skew carries channel columns too, on the rows whose registers were
-    # shown to have a channel-B twin. Misc does not: its registers do have
-    # twins, but they hold the same values and a second column left the value
-    # column too narrow for the text this tab shows.
-    CHANNEL_COLUMN_TABS = ("Timings", "Skew")
+    # Timings and the combined Training tab carry module-aware pairs. Shared
+    # controller fields live on PHY, where no selected-DIMM label is implied.
+    CHANNEL_COLUMN_TABS = ("Timings", "Training")
 
     def test_no_other_tab_was_given_channel_columns(self):
         for row in intel_timings.TIMINGS:

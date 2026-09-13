@@ -388,20 +388,14 @@ class InstalledRowTest(unittest.TestCase):
             and r.get("Category") == intel_timings.CCD_CATEGORY
         ]
 
-    def test_the_rows_sit_together_after_their_anchor(self):
-        # A section draws its rows in table order, so being in the right
-        # category is not enough: left among the secondaries they would have
-        # rendered at the head of their new section rather than beside the
-        # row they belong with.
-        #
+    def test_the_rows_form_one_cas_to_cas_section(self):
         # Mode-register copies are taken out first. tCCD_L_MR sits directly
         # under tCCD_L by the rule every _MR row follows, which puts it inside
-        # this group without belonging to it -- the three CCD rows are still
+        # this group without belonging to it -- the four CCD rows are still
         # consecutive, and that is what this is checking.
         names = [n for n in self._ccd_section()
                  if not n.endswith(intel_timings.MODE_REGISTER_TIMING_SUFFIX)]
-        start = names.index(intel_timings.CCD_ANCHOR) + 1
-        self.assertEqual(names[start:start + len(CCD_NAMES)], list(CCD_NAMES))
+        self.assertEqual(names, list(CCD_NAMES))
 
     def test_the_mode_register_copy_sits_directly_under_tccd_l(self):
         # DDR4 only: DDR5 keeps tCCD_L in a register this project has no

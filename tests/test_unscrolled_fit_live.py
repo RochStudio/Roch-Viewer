@@ -100,6 +100,17 @@ class UnscrolledTabFitTest(unittest.TestCase):
                     "rows off the tab." % (name, needed, available,
                                            needed - available))
 
+    def test_stacked_tabs_scroll_at_the_compact_window_height(self):
+        for name in ("System Info", "Timings", "Training"):
+            if name not in self.app.tabview._name_list:
+                continue
+            with self.subTest(tab=name):
+                holder = self.app.tab_frames[name]
+                self.assertTrue(
+                    hasattr(holder, "_parent_canvas"),
+                    "%s must remain reachable at 700x800" % name,
+                )
+
     def test_nothing_on_any_tab_is_clipped(self):
         clipped = []
 
@@ -123,6 +134,26 @@ class UnscrolledTabFitTest(unittest.TestCase):
             self.root.update()
             walk(self.app.tabview.tab(name), name)
         self.assertEqual(clipped, [], "labels cut off at this window width")
+
+    def test_every_detail_column_stays_inside_its_tab(self):
+        overflow = []
+        for name, frames in self.app.grid_frames.items():
+            if not hasattr(frames, "values") or name == "Summary":
+                continue
+            holder = self.app.tab_frames.get(name)
+            if holder is None:
+                continue
+            self.app.tabview.set(name)
+            self.root.update_idletasks()
+            self.root.update()
+            right_edge = holder.winfo_rootx() + holder.winfo_width()
+            for key, frame in frames.items():
+                if not hasattr(frame, "winfo_manager") or not frame.winfo_manager():
+                    continue
+                frame_edge = frame.winfo_rootx() + frame.winfo_width()
+                if frame_edge > right_edge:
+                    overflow.append((name, key, frame_edge - right_edge))
+        self.assertEqual(overflow, [], "detail columns outside their viewport")
 
 
 if __name__ == "__main__":

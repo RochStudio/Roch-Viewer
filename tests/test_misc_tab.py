@@ -47,14 +47,21 @@ def _reading(row):
 
 class MiscRowTest(unittest.TestCase):
     def _tab_rows(self):
-        """Everything on the tab, latency blocks included."""
+        """Former Misc rows now combined into per-module Training."""
         return [t for t in intel_timings.TIMINGS
-                if t.get("Tab") == intel_timings.MISC_TAB]
+                if t.get("Tab") == "Training"
+                and t.get("source_scope") == "module"]
 
     def _rows(self):
-        """Only the Misc sections -- the latency rows are read live."""
+        """The per-module mode-register sections."""
         return [t for t in self._tab_rows()
                 if t.get("Category") in MISC_CATEGORIES]
+
+    def _settings_rows(self):
+        """The fixed controller-register rows now combined into PHY."""
+        return [t for t in intel_timings.TIMINGS
+                if t.get("Tab") == intel_timings.PHY_TAB
+                and t.get("source_scope") == "controller"]
 
     def test_every_row_from_both_reference_blocks_is_present(self):
         rows = self._rows()
@@ -62,9 +69,7 @@ class MiscRowTest(unittest.TestCase):
             self.skipTest("Misc tab is not installed on this platform")
         names = [t.get("name") for t in rows]
         expected = (
-            [name for name, _, _ in intel_timings.MISC_CKE_CONFIG_FIELDS]
-            + [name for name, _, _ in intel_timings.MISC_GS_CONFIG_FIELDS]
-            + ["Burst Length"]
+            ["Burst Length"]
             + [name for name, _, _, _, _
                in intel_timings.MISC_MODE_REGISTER_COMMAND]
             + [name for name, _, _, _, _
@@ -81,7 +86,6 @@ class MiscRowTest(unittest.TestCase):
                in intel_timings.MISC_MODE_REGISTER_STATE
                if name not in ("tWR_MR", "tRTP_MR")]
             + ["DQS Interval Timer RT"]
-            + [name for name, _, _, _, _ in intel_timings.MISC_FEATURE_FIELDS]
         )
         if intel_timings.detect_ddr_generation() == "DDR4":
             # The rows DDR4 has no counterpart for, and the ones it has that
@@ -114,18 +118,33 @@ class MiscRowTest(unittest.TestCase):
                     if name in set(seen)]
         self.assertEqual(seen, declared)
 
-    def test_every_section_is_in_the_one_column(self):
+    def test_sections_use_the_requested_two_columns(self):
         rows = self._rows()
         if not rows:
             self.skipTest("Misc tab is not installed on this platform")
-        # The tab draws as a single column. It held two, which suited it
-        # while it was short; at 83 rows the split was doing less than it
-        # looks, because the halves have to be levelled to the same height
-        # for the shading to cross the tab whole and the shorter one was
-        # padded with blank rows to get there.
         for row in self._tab_rows():
             with self.subTest(name=row.get("name")):
-                self.assertEqual(row.get("Column"), "Left")
+                self.assertEqual(
+                    row.get("Column"),
+                    intel_timings.SKEW_MISC_COLUMNS[row.get("Category")],
+                )
+
+    def test_each_misc_column_reads_in_the_requested_order(self):
+        requested = {
+            # Source-table order remains stable; the Training renderer applies
+            # SKEW_SECTION_ORDER to draw Command before Mode Registers.
+            "Right": ["Mode Registers", "Command", "Preamble", "ECS"],
+        }
+        for column, expected in requested.items():
+            seen = []
+            for row in self._tab_rows():
+                if row.get("Column") != column:
+                    continue
+                category = row.get("Category")
+                if not seen or seen[-1] != category:
+                    seen.append(category)
+            with self.subTest(column=column):
+                self.assertEqual(seen, [name for name in expected if name in seen])
 
     def test_every_row_carries_a_value(self):
         # A row with no value renders as an empty line rather than as a
@@ -142,14 +161,14 @@ class MiscRowTest(unittest.TestCase):
             with self.subTest(name=row.get("name")):
                 self.assertTrue(callable(row.get("value")))
 
-    def test_no_row_reads_two_channels(self):
-        # These are controller settings that read the same on both channels,
-        # and a second column left the value column too narrow for what this
-        # tab holds -- the ECS and preamble strings were cut off.
+    def test_each_mode_register_row_reads_both_modules(self):
+        # Type-5 fields are evaluated in the selected DIMM context.
+        # Equal readings are still two sources and may diverge after training.
         for row in self._rows():
             with self.subTest(name=row.get("name")):
-                self.assertIsNone(row.get("value_a"))
-                self.assertIsNone(row.get("value_b"))
+                self.assertTrue(intel_timings.is_dual_timing(row))
+                self.assertTrue(callable(row.get("value_a")))
+                self.assertTrue(callable(row.get("value_b")))
 
     def test_each_row_reads_its_own_field(self):
         # Late binding in the building loops would give every row the last
@@ -161,7 +180,8 @@ class MiscRowTest(unittest.TestCase):
         self.addCleanup(
             lambda: setattr(module, "read_physical_memory_int", saved))
         module.read_physical_memory_int = lambda address, size: 0x08104426
-        by_name = {row["name"]: _reading(row) for row in self._rows()}
+        by_name = {row["name"]: _reading(row)
+                   for row in self._settings_rows()}
         cke = [name for name, _, _ in intel_timings.MISC_CKE_CONFIG_FIELDS]
         self.assertGreater(len({by_name[name] for name in cke}), 1)
         # The bench's own register: bits 1-4 hold 3 and bits 24-27 hold 8.
@@ -171,41 +191,44 @@ class MiscRowTest(unittest.TestCase):
     def test_the_tab_is_offered_once_it_has_rows(self):
         tabs = select_tab_names(intel_timings.TIMINGS)
         if self._rows():
-            self.assertIn(intel_timings.MISC_TAB, tabs)
+            self.assertIn("Training", tabs)
+            self.assertNotIn(intel_timings.MISC_TAB, tabs)
         else:
             self.assertNotIn(intel_timings.MISC_TAB, tabs)
 
-    def test_the_latency_rows_moved_onto_this_tab(self):
+    def test_the_latency_rows_have_their_own_rtl_tab(self):
         if not self._rows():
             self.skipTest("Misc tab is not installed on this platform")
-        categories = {t.get("Category") for t in self._tab_rows()}
-        self.assertIn("Latency CHA", categories)
-        self.assertIn("Latency CHB", categories)
+        rtl = [t for t in intel_timings.TIMINGS if t.get("Tab") == "RTL"]
+        self.assertEqual(len([t for t in rtl if t.get("name")]), 32)
 
-    def test_the_latency_tab_is_gone_once_they_have_moved(self):
+    def test_the_latency_tab_is_registered(self):
         tabs = select_tab_names(intel_timings.TIMINGS)
         if self._rows():
-            self.assertNotIn(intel_timings.RTL_TAB, tabs)
+            self.assertIn(intel_timings.RTL_TAB, tabs)
         else:
-            # Nothing to merge into, so they keep their own tab rather than
-            # landing on one named Misc that holds only latencies.
             self.assertNotIn(intel_timings.MISC_TAB, tabs)
 
-    def test_the_latency_blocks_stack_rather_than_sitting_side_by_side(self):
-        # They are pinned by channel in the renderer, not by their rows, so
-        # collapsing the tab to one column had to reach that pin as well --
-        # Misc asked for a single column and still drew Latency CHB beside
-        # it. The rows say Left; main.py's single_column check is what makes
-        # the renderer agree.
-        columns = {t.get("Category"): t.get("Column")
-                   for t in self._tab_rows()}
-        if "Latency CHA" not in columns:
-            self.skipTest("no latency rows on this platform")
-        self.assertEqual(columns["Latency CHA"], "Left")
-        self.assertEqual(columns["Latency CHB"], "Left")
-        source = inspect.getsource(main.TimingGUI.load_all_tabs_content)
-        self.assertIn("single_column = not any(", source)
-        self.assertIn("if single_column:", source)
+    def test_rtl_is_split_into_two_channel_columns(self):
+        rtl = [t for t in intel_timings.TIMINGS
+               if t.get("Tab") == intel_timings.RTL_TAB]
+        counts = {column: sum(t.get("Column") == column for t in rtl)
+                  for column in ("Left", "Right")}
+        self.assertEqual(counts, {"Left": 17, "Right": 17})
+        self.assertEqual(
+            {t.get("Category") for t in rtl}, {"RTL CHA", "RTL CHB"}
+        )
+
+    def test_latency_spacers_do_not_flip_cross_column_shading(self):
+        latency = [row for row in intel_timings.TIMINGS
+                   if row.get("Tab") == intel_timings.RTL_TAB]
+        self.assertTrue(latency)
+        # One blank row in each channel separates MC0 from MC1.
+        for category in {row.get("Category") for row in latency}:
+            rows = [row for row in latency if row.get("Category") == category]
+            self.assertEqual(
+                sum(not str(row.get("name", "")).strip() for row in rows), 1
+            )
 
     def test_the_cke_fields_do_not_overlap(self):
         # The whole block comes out of one register, so an overrun would make
@@ -217,6 +240,69 @@ class MiscRowTest(unittest.TestCase):
                 self.assertNotIn(bit, claimed,
                                  f"{name} overlaps {claimed.get(bit)}")
                 claimed[bit] = name
+
+
+class SettingsSourceSplitTest(unittest.TestCase):
+    """Combined Training/Controller preserve the source-scope split."""
+
+    def _settings(self):
+        return [row for row in intel_timings.TIMINGS
+                if row.get("Tab") == intel_timings.PHY_TAB
+                and row.get("source_scope") == "controller"]
+
+    def test_fixed_controller_rows_move_to_phy(self):
+        expected = {
+            *[name for name, _, _ in intel_timings.MISC_CKE_CONFIG_FIELDS],
+            *[name for name, _, _ in intel_timings.MISC_GS_CONFIG_FIELDS],
+            *[name for name, _, _, _, _
+              in intel_timings.MISC_FEATURE_FIELDS],
+            *intel_timings.REFRESH_POLICY_ROWS,
+        }
+        rows = {row.get("name"): row for row in self._settings()}
+        self.assertLessEqual(expected, set(rows))
+        for name in expected:
+            with self.subTest(name=name):
+                self.assertEqual(rows[name].get("source_scope"), "controller")
+                self.assertFalse(intel_timings.is_dual_timing(rows[name]))
+
+    def test_every_settings_row_is_single_source(self):
+        for row in self._settings():
+            with self.subTest(name=row.get("name")):
+                self.assertEqual(row.get("source_scope"), "controller")
+                self.assertFalse(intel_timings.is_dual_timing(row))
+
+    def test_shared_sections_use_the_four_column_phy_layout(self):
+        expected = intel_timings.PHY_SETTINGS_COLUMNS
+        for row in self._settings():
+            with self.subTest(name=row.get("name")):
+                self.assertIn(row.get("Category"), expected)
+                self.assertEqual(row.get("Column"),
+                                 expected[row.get("Category")])
+
+    def test_every_former_misc_row_has_an_independent_module_source(self):
+        rows = [row for row in intel_timings.TIMINGS
+                if row.get("Tab") == "Training"
+                and row.get("source_scope") == "module"
+                and str(row.get("name", "")).strip()]
+        for row in rows:
+            with self.subTest(name=row.get("name")):
+                self.assertTrue(intel_timings.is_dual_timing(row))
+
+    def test_mode_register_pair_keeps_its_verified_source_reader(self):
+        row = next(row for row in intel_timings.TIMINGS
+                   if row.get("Tab") == "Training"
+                   and row.get("name") == "Burst Length")
+        reader = row.get("base_reader")
+        self.assertTrue(callable(reader))
+        # _promote_computed_row captures this same source once for A1 and
+        # once for B1; neither side is a copied startup value.
+        self.assertIs(row["value_a"].__defaults__[0], reader)
+        self.assertIs(row["value_b"].__defaults__[0], reader)
+
+    def test_shared_settings_are_combined_into_phy(self):
+        tabs = select_tab_names(intel_timings.TIMINGS)
+        self.assertIn(intel_timings.PHY_TAB, tabs)
+        self.assertNotIn(intel_timings.SETTINGS_TAB, tabs)
 
 
 class MiscDecodeTest(unittest.TestCase):
@@ -314,6 +400,33 @@ class MiscDecodeTest(unittest.TestCase):
             intel_timings._misc_mode_register_value(
                 0x02, 0, 1, intel_timings.MISC_READ_PREAMBLE_TRAINING),
             "Read Preamble Training")
+
+    def test_twr_mr_decodes_the_full_ddr5_range(self):
+        # The high codes are valid DDR5 write-recovery settings. Code 11 is
+        # the 114-clock setting used by the reference machine; it must not be
+        # mistaken for a reserved encoding.
+        self._with_mode_register(0x0B)
+        self.assertEqual(
+            intel_timings._misc_mode_register_value(
+                0x06, 0, 4, intel_timings.MR_TWR),
+            "114")
+        self.assertEqual(
+            [intel_timings.MR_TWR[code] for code in range(9, 15)],
+            ["102", "108", "114", "120", "126", "132"])
+        self.assertEqual(intel_timings.MR_TWR[15], "Reserved")
+
+    def test_tcl_mr_decodes_the_ddr5_mr0_field(self):
+        # MR0 0x20 carries code 8 in A6:A2, the reference machine's CL38.
+        self._with_mode_register(0x20)
+        self.assertEqual(
+            intel_timings._misc_mode_register_value(
+                0x00, 2, 5, intel_timings.MR_TCL),
+            "38")
+        self.assertEqual(intel_timings.MR_TCL[0], "22")
+        self.assertEqual(intel_timings.MR_TCL[31], "84")
+
+    def test_fine_granularity_refresh_uses_the_short_label(self):
+        self.assertEqual(intel_timings.REFRESH_MODE_FORMULA[1], "FGR")
 
     def test_a_field_without_a_table_shows_its_number(self):
         # No table means a count or an index, not a switch. It read as
@@ -639,7 +752,7 @@ class GenerationGateTest(unittest.TestCase):
 
 
 class RefreshPolicyMoveTest(unittest.TestCase):
-    """The refresh arbitration controls, moved off Timings onto Misc.
+    """The refresh arbitration controls, moved into shared PHY.
 
     They are policy the controller applies around refresh, not intervals a
     memory profile sets, and Timings had grown past what its two columns hold.
@@ -651,18 +764,17 @@ class RefreshPolicyMoveTest(unittest.TestCase):
                 return row
         return None
 
-    def test_every_moved_row_landed_in_the_misc_refresh_section(self):
+    def test_every_moved_row_landed_in_the_phy_refresh_section(self):
         for name in intel_timings.REFRESH_POLICY_ROWS:
             with self.subTest(name=name):
                 row = self._row(name)
                 self.assertIsNotNone(row, "%s is missing" % name)
-                self.assertEqual(row.get("Tab"), intel_timings.MISC_TAB)
+                self.assertEqual(row.get("Tab"), intel_timings.PHY_TAB)
                 self.assertEqual(row.get("Category"), "Refresh")
 
     def test_the_moved_rows_show_one_value_like_the_rest_of_the_tab(self):
-        # Misc has no channel columns: these registers do have a channel-B
-        # twin holding the same value, and a second column leaves the value
-        # column too narrow for the text this tab carries.
+        # These are fixed controller-register rows, not type-5
+        # fields evaluated in a selected DIMM's mode-register context.
         for name in intel_timings.REFRESH_POLICY_ROWS:
             with self.subTest(name=name):
                 row = self._row(name)

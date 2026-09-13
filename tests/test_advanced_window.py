@@ -46,9 +46,9 @@ def matches(filter_text, haystack):
 
 
 class EntryListTest(unittest.TestCase):
-    def test_it_covers_the_four_reading_tabs(self):
+    def test_it_covers_the_five_reading_tabs(self):
         self.assertEqual(TimingGUI.ADVANCED_TABS,
-                         ("System Info", "Timings", "Skew", "Misc"))
+                         ("System Info", "Timings", "Training", "Controller", "RTL"))
 
     def test_rows_are_grouped_by_tab_in_tab_order(self):
         # Built tab by tab rather than by walking TIMINGS once, so the window
@@ -57,11 +57,12 @@ class EntryListTest(unittest.TestCase):
         entries = build_entries([
             {"name": "tCL", "Tab": "Timings", "Category": "Primary"},
             {"name": "CPU", "Tab": "System Info", "Category": "General"},
-            {"name": "CMD SComp", "Tab": "Skew", "Category": "CMD"},
-            {"name": "idle_length", "Tab": "Misc", "Category": "Power Down"},
+            {"name": "RTL MC0 CHA R0", "Tab": "RTL", "Category": "RTL CHA MC0"},
+            {"name": "CMD SComp", "Tab": "Training", "Category": "CMD"},
+            {"name": "DLL BWSEL", "Tab": "Controller", "Category": "Misc Additional"},
         ])
         self.assertEqual([tab for tab, _, _, _ in entries],
-                         ["System Info", "Timings", "Skew", "Misc"])
+                         ["System Info", "Timings", "Training", "Controller", "RTL"])
 
     def test_spacer_rows_are_left_out(self):
         # The tables use blank rows to separate blocks. They are layout, and

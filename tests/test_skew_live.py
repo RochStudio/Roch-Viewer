@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Every Skew row must be read from hardware on each refresh.
+"""Every Training row must be read from hardware on each refresh.
 
 The compensation registers retrain while the tool is open -- the VssHiFF
 fields step between 48 and 49, and CLK's pull-down window overlaps them, so it
@@ -25,11 +25,13 @@ any tool reading the same register live. These tests pin the rows open.
 
 import unittest
 
-from tests.intel_stub import install, restore
+from rochviewer.platform_profiles import LGA1700_DDR4, LGA1700_DDR5, LGA1851
+from tests.intel_stub import MCHBAR, install, restore
 
 intel_timings = None
 
-SKEW_TAB = "Skew"
+SKEW_TAB = "Training"
+PHY_TAB = "Controller"
 
 
 def setUpModule():
@@ -42,6 +44,14 @@ def tearDownModule():
 
 
 def skew_rows():
+    """All rows historically covered here, now split by source scope."""
+    return [
+        t for t in intel_timings.TIMINGS
+        if t.get("Tab") in (SKEW_TAB, PHY_TAB)
+    ]
+
+
+def per_module_skew_rows():
     return [t for t in intel_timings.TIMINGS if t.get("Tab") == SKEW_TAB]
 
 
@@ -62,27 +72,185 @@ def frozen_values(row):
     return stored
 
 
-class SkewLivenessTest(unittest.TestCase):
+def has_live_source(row):
+    """Whether drawing this row reaches a register or a live getter."""
+    if any(callable(row.get(key))
+           for key in ("value", "value_a", "value_b")):
+        return True
+    if any(row.get(key) for key in (
+            "dynamic_params", "dynamic_params_a", "dynamic_params_b")):
+        return True
+    return any(
+        row.get(address) is not None and row.get(parameters)
+        for address, parameters in (
+            ("address", "parameters"),
+            ("address_a", "parameters_a"),
+            ("address_b", "parameters_b"),
+        )
+    )
+
+
+class ReferenceSignalLabelTest(unittest.TestCase):
+    def test_rtt_ron_and_vref_labels_match_reference(self):
+        by_category = {}
+        for row in skew_rows():
+            by_category.setdefault(row.get("Category"), set()).add(
+                row.get("name")
+            )
+
+        common = {
+            "RTT": {"RTT Wr", "RTT Park"},
+            "RON": {"Pull Up Drv", "Pull Down Drv"},
+            "VREF": {
+                "Dq Vref Up", "Dq Vref Dn",
+                "Dq Odt Vref Up", "Dq Odt Vref Dn",
+                "Cmd Vref Up", "Cmd Vref Dn",
+                "Ctl Vref Up", "Ctl Vref Dn",
+                "Clk Vref Up", "Clk Vref Dn", "CkeCs Vref Up",
+                "RX VREF", "QX Count",
+            },
+        }
+        for category, names in common.items():
+            with self.subTest(category=category):
+                if not by_category.get(category):
+                    self.skipTest(f"platform has no {category} block")
+                self.assertTrue(names.issubset(by_category[category]))
+
+        # These rows only exist in the DDR5 profile; DDR4 intentionally has
+        # its own combined RTT NOM and DQ VREF rows.
+        ddr5_rtt = {"RTT Nom Wr", "RTT Nom Rd", "RTT Park Dqs", "RTT Loopback"}
+        if ddr5_rtt & by_category.get("RTT", set()):
+            self.assertTrue(ddr5_rtt.issubset(by_category["RTT"]))
+        ddr5_vref = {
+            "DQ VREF 0", "DQ VREF 1", "DQ VREF 2", "DQ VREF 3",
+            "CA VREF", "CS VREF",
+        }
+        if ddr5_vref & by_category.get("VREF", set()):
+            self.assertTrue(ddr5_vref.issubset(by_category["VREF"]))
+
+    def test_ddr5_mode_register_vrefs_have_independent_a1_b1_sources(self):
+        module = install(LGA1700_DDR5)
+        try:
+            names = {
+                "DQ VREF 0", "DQ VREF 1", "DQ VREF 2", "DQ VREF 3",
+                "CA VREF", "CS VREF",
+            }
+            rows = [row for row in module.TIMINGS
+                    if row.get("name") in names]
+            self.assertEqual({row.get("name") for row in rows}, names)
+            for row in rows:
+                with self.subTest(name=row.get("name")):
+                    self.assertEqual(row.get("Tab"), SKEW_TAB)
+                    self.assertEqual(row.get("Column"), "Right")
+                    self.assertTrue(module.is_dual_timing(row))
+                    self.assertEqual(
+                        row["dynamic_params_a"]["mchbar"], module.MCHBAR
+                    )
+                    self.assertEqual(
+                        row["dynamic_params_b"]["mchbar"], module.CHANNEL_B
+                    )
+        finally:
+            restore()
+
+    def test_ddr5_odtl_has_independent_a1_b1_sources(self):
+        module = install(LGA1700_DDR5)
+        try:
+            rows = [row for row in module.TIMINGS
+                    if row.get("Category") == "ODTL"]
+            self.assertEqual(len(rows), 6)
+            for row in rows:
+                with self.subTest(name=row.get("name")):
+                    self.assertEqual(row.get("Tab"), SKEW_TAB)
+                    self.assertEqual(row.get("Column"), "Right")
+                    self.assertTrue(module.is_dual_timing(row))
+                    self.assertEqual(
+                        row["dynamic_params_a"]["mchbar"], module.MCHBAR
+                    )
+                    self.assertEqual(
+                        row["dynamic_params_b"]["mchbar"], module.CHANNEL_B
+                    )
+        finally:
+            restore()
+
+    def test_fixed_phy_groups_remain_shared_controller_rows(self):
+        module = install(LGA1700_DDR5)
+        try:
+            fixed = {"DATA", "CMD", "CLK", "CTL", "SComp"}
+            rows = [row for row in module.TIMINGS
+                    if row.get("Category") in fixed]
+            self.assertTrue(rows)
+            for row in rows:
+                with self.subTest(name=row.get("name")):
+                    self.assertEqual(row.get("Tab"), PHY_TAB)
+                    self.assertFalse(module.is_dual_timing(row))
+            shared_vref_names = {
+                "Dq Vref Up", "Dq Vref Dn",
+                "Dq Odt Vref Up", "Dq Odt Vref Dn",
+                "Cmd Vref Up", "Cmd Vref Dn",
+                "Ctl Vref Up", "Ctl Vref Dn",
+                "Clk Vref Up", "Clk Vref Dn", "CkeCs Vref Up",
+                "RX VREF", "QX Count",
+            }
+            shared_vrefs = [row for row in module.TIMINGS
+                            if row.get("name") in shared_vref_names]
+            self.assertEqual(
+                {row.get("name") for row in shared_vrefs}, shared_vref_names
+            )
+            for row in shared_vrefs:
+                with self.subTest(name=row.get("name")):
+                    self.assertEqual(row.get("Tab"), PHY_TAB)
+                    self.assertFalse(module.is_dual_timing(row))
+        finally:
+            restore()
+
+
+class TrainingLivenessTest(unittest.TestCase):
     def test_the_tab_has_rows_to_check(self):
         # Guards every other test here from passing vacuously.
         self.assertTrue(skew_rows())
 
+    def test_skew_contains_only_independent_a1_b1_rows(self):
+        rows = per_module_skew_rows()
+        self.assertTrue(rows)
+        for row in rows:
+            with self.subTest(name=row.get("name")):
+                self.assertTrue(intel_timings.is_dual_timing(row))
+
+    def test_single_source_rows_moved_to_phy(self):
+        rows = [r for r in skew_rows() if r.get("Tab") == PHY_TAB]
+        self.assertTrue(rows)
+        for row in rows:
+            with self.subTest(name=row.get("name")):
+                self.assertFalse(intel_timings.is_dual_timing(row))
+                self.assertEqual(row.get("source_scope"), "controller")
+
     def test_no_row_holds_a_baked_in_reading(self):
-        allowed = intel_timings.SKEW_FIXED_BY_SPECIFICATION
         for row in skew_rows():
             name = row.get("name") or "(blank)"
-            if name in allowed:
-                continue
             with self.subTest(name=name):
                 self.assertEqual(
                     frozen_values(row), [],
                     f"{name} stores a reading taken while building the table")
 
-    def test_the_allowed_constants_are_the_ones_with_nothing_to_read(self):
-        # Naming them is the point: the list is short, deliberate and says
-        # why. A row added to it to silence a failure would stand out.
-        self.assertEqual(intel_timings.SKEW_FIXED_BY_SPECIFICATION,
-                         frozenset({"CA VREF", "CS VREF"}))
+    def test_every_supported_intel_profile_is_entirely_live(self):
+        # A platform-specific installer must not escape the default-profile
+        # test above. Unsupported DDR4 CA/CS VREF rows are omitted; DDR5 and
+        # Arrow Lake supply their mode-register readers.
+        for platform in (LGA1700_DDR4, LGA1700_DDR5, LGA1851):
+            module = install(platform)
+            try:
+                rows = [row for row in module.TIMINGS
+                        if row.get("Tab") == SKEW_TAB]
+                self.assertTrue(rows, platform)
+                for row in rows:
+                    name = row.get("name") or "(blank)"
+                    with self.subTest(platform=platform, name=name):
+                        self.assertEqual(frozen_values(row), [])
+                        self.assertTrue(
+                            has_live_source(row),
+                            f"{platform} {name} has no hardware reader")
+            finally:
+                restore()
 
     def test_the_clk_pulldown_matches_the_reference_tools(self):
         # Bits 16-21, which is what both reference maps specify and what they
@@ -109,17 +277,49 @@ class SkewLivenessTest(unittest.TestCase):
         self.assertEqual(module._read_ddr4_clk_slew_field("scomp"), "32")
         self.assertEqual(module._read_ddr4_clk_slew_field("vsshiff"), "49")
 
-    def test_the_allowed_constants_say_so_rather_than_showing_a_number(self):
-        by_name = {row.get("name"): row for row in skew_rows()}
-        for name in intel_timings.SKEW_FIXED_BY_SPECIFICATION:
-            row = by_name.get(name)
-            if row is None:
-                continue
-            reading = row.get("value")
-            if callable(reading) or reading is None:
-                continue
-            with self.subTest(name=name):
-                self.assertRegex(str(reading), r"fixed|Uses ")
+    def test_the_compensation_panel_matches_the_reference_dump(self):
+        """Pin all five groups, including DATA's non-global register."""
+        module = intel_timings
+        saved = (module.read_physical_memory_int, module.detect_ddr_generation)
+        self.addCleanup(
+            lambda: setattr(module, "read_physical_memory_int", saved[0]))
+        self.addCleanup(
+            lambda: setattr(module, "detect_ddr_generation", saved[1]))
+
+        packed = {
+            # DATA0CH0_CR_DDRCRDATACOMP0
+            0x01B4: 52 | (42 << 6) | (17 << 12) | (14 << 18) | (48 << 24),
+            # DDRPHY_COMP_CR_DDRCRCMDCOMP
+            0x2CDC: 20 | (16 << 6) | (121 << 12) | (48 << 20),
+            # The upper dword of CLK's 0x2CE0 block is CTL's 0x2CE4 block.
+            0x2CE4: 63 | (54 << 6) | (32 << 12) | (63 << 20),
+            # Common compensation diagnostics.
+            0x2C24: 1 | (0 << 2) | (4 << 12),
+        }
+
+        def read(address, size):
+            self.assertEqual(size, 4)
+            return packed.get(address - MCHBAR, 0)
+
+        module.read_physical_memory_int = read
+        module.detect_ddr_generation = lambda: "DDR5"
+        rows = {row["name"]: row for row in skew_rows()}
+        expected = {
+            "Data Drv Up": "52", "Data Drv Dn": "42",
+            "Data ODT Up": "17", "Data ODT Dn": "14",
+            "Data VssHiFFdq": "48",
+            "CMD Drv Up": "20", "CMD Drv Dn": "16",
+            "CMD SComp": "121", "CMD VssHiFF": "48",
+            "CLK Drv Up": "63", "CLK Drv Dn": "50",
+            "CLK SComp": "32", "CLK VssHiFF": "63",
+            "CTL Drv Up": "63", "CTL Drv Dn": "54",
+            "CTL SComp": "32", "CTL VssHiFF": "63",
+            "CTL CkeCsUp": "0",
+            "CMD SlewStatlegen": "1", "SComp codelive": "0",
+            "SComp cmn bonus": "4",
+        }
+        self.assertEqual(
+            {name: rows[name]["value"]() for name in expected}, expected)
 
     def test_the_compensation_rows_are_getters(self):
         # The specific block that used to be frozen. Named separately so a
@@ -222,6 +422,46 @@ class ReferenceNameTest(unittest.TestCase):
             with self.subTest(name=stale):
                 self.assertNotIn(stale, names)
 
+    def test_combined_skew_and_phy_categories_use_their_columns(self):
+        expected = {
+            "RTT": "Left", "ODT": "Left", "RON": "Left",
+            "ODT DELAY": "Left", "DFE": "Left",
+            "MISC Additional": "Right",
+            "DATA": "Middle", "CMD": "Middle",
+            "CLK": "Middle", "CTL": "Middle",
+            "SComp": "Middle",
+        }
+        present = {row.get("Category") for row in skew_rows()}
+        for category, column in expected.items():
+            if category not in present:
+                continue
+            with self.subTest(category=category):
+                self.assertTrue(all(
+                    row.get("Column") == column for row in skew_rows()
+                    if row.get("Category") == category
+                ))
+
+        # Module VREF/ODTL belong to Training's right column; any fixed
+        # generation-specific form remains in the Controller layout.
+        for row in skew_rows():
+            category = row.get("Category")
+            if category not in {"VREF", "ODTL"}:
+                continue
+            expected_column = (
+                "Right" if row.get("Tab") == SKEW_TAB
+                else intel_timings.PHY_SETTINGS_COLUMNS[category]
+            )
+            with self.subTest(name=row.get("name")):
+                self.assertEqual(row.get("Column"), expected_column)
+
+    def test_misc_additional_uses_the_second_phy_column(self):
+        rows = [row for row in skew_rows()
+                if row.get("Category") == "MISC Additional"]
+        if not rows:
+            self.skipTest("platform has no MISC Additional block")
+        self.assertTrue(all(row.get("Column") == "Right"
+                            for row in rows))
+
 
 class DriveStrengthPairTest(unittest.TestCase):
     """CKE/CS has an up level and no down level.
@@ -238,27 +478,28 @@ class DriveStrengthPairTest(unittest.TestCase):
 
     def test_the_up_level_is_present(self):
         names = {row.get("name") for row in skew_rows()}
-        if not any(str(name).startswith("WrDS") for name in names):
+        if not any(str(name).startswith("Dq Vref") for name in names):
             self.skipTest("platform has no drive-strength block")
-        self.assertIn("WrDSCke CS Up", names)
+        self.assertIn("CkeCs Vref Up", names)
 
     def test_the_down_level_is_not_invented(self):
         names = {row.get("name") for row in intel_timings.TIMINGS}
         self.assertNotIn("WrDSCke CS Dn", names)
         self.assertNotIn("CKE CS VREFDN", names)
+        self.assertNotIn("CkeCsVrefDn", names)
 
     def test_every_other_level_still_pairs(self):
         # The point is that CKE/CS is the exception, not that pairing is
         # wrong: if these stopped pairing the removal above would have taken
         # something real with it.
         names = {row.get("name") for row in skew_rows()}
-        if "WrDSCmd Up" not in names:
+        if "Cmd Vref Up" not in names:
             self.skipTest("platform has no drive-strength block")
-        for up, down in (("WrDS Up", "WrDS Dn"),
-                         ("RdODT Up", "RdODT Dn"),
-                         ("WrDSCmd Up", "WrDSCmd Dn"),
-                         ("WrDSCtl Up", "WrDSCtl Dn"),
-                         ("WrDSClk Up", "WrDSClk Dn")):
+        for up, down in (("Dq Vref Up", "Dq Vref Dn"),
+                         ("Dq Odt Vref Up", "Dq Odt Vref Dn"),
+                         ("Cmd Vref Up", "Cmd Vref Dn"),
+                         ("Ctl Vref Up", "Ctl Vref Dn"),
+                         ("Clk Vref Up", "Clk Vref Dn")):
             with self.subTest(pair=up):
                 self.assertIn(up, names)
                 self.assertIn(down, names)
