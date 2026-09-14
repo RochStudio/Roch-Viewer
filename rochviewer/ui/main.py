@@ -1120,21 +1120,20 @@ class TimingGUI:
             return str(mode).title()
         return "Dark"
 
-    # At 700px the complete tab list and the three utility buttons cannot
-    # share one line without colliding. Keep the utilities in their own slim,
-    # right-aligned strip immediately above the tabs.
+    # The 750px window has room for the tab list and the three utility
+    # buttons on one line. Overlay the tools on the tab header so both groups
+    # share the same baseline without taking height from the active page.
     TOOL_BUTTON_HEIGHT = 24
     TOOL_BUTTON_WIDTH = 60
+    TOOL_BUTTON_GAP = 4
 
     def build_tab_strip_tools(self):
         bar = ctk.CTkFrame(
-            self.main_frame, corner_radius=0, fg_color="transparent",
+            self.tabview, corner_radius=0, fg_color="transparent",
+            width=self.TOOL_BUTTON_WIDTH * 3 + self.TOOL_BUTTON_GAP * 2,
             height=self.TOOL_BUTTON_HEIGHT,
         )
-        bar.pack(
-            side="top", fill="x", padx=8, pady=(0, 1), before=self.tabview
-        )
-        bar.pack_propagate(False)
+        bar.place(relx=1.0, x=-8, y=10, anchor="ne")
         self.appearance_toolbar = bar
 
         def tool(text, command):
@@ -1153,18 +1152,22 @@ class TimingGUI:
         next_mode = "Light" if self.appearance_mode == "Dark" else "Dark"
         self.appearance_button = tool(next_mode,
                                       self.toggle_appearance_mode)
-        self.appearance_button.pack(side="right", padx=(4, 0))
+        self.appearance_button.pack(
+            side="right", padx=(self.TOOL_BUTTON_GAP, 0)
+        )
 
         # Every row from the reading tabs in one searchable list. The tabs are
         # laid out for reading a set at a glance, which is the wrong shape
         # when you already know the name of the field you want.
         self.advanced_button = tool("Advanced", self.open_advanced)
-        self.advanced_button.pack(side="right", padx=(4, 0))
+        self.advanced_button.pack(
+            side="right", padx=(self.TOOL_BUTTON_GAP, 0)
+        )
 
         # Everything that moves, in its own window: it polls and keeps
         # min/max/average, which does not belong on a tab that reads settings.
         self.telemetry_button = tool("Telemetry", self.open_dimm_telemetry)
-        self.telemetry_button.pack(side="right", padx=(4, 0))
+        self.telemetry_button.pack(side="right")
 
     def toggle_appearance_mode(self):
         """Swap Light for Dark, and say which one is now on."""
@@ -2025,11 +2028,12 @@ class TimingGUI:
     # them whole. Anything taller than the window would be cut off unseen
     # here rather than reachable, so a tab only belongs on this list while
     # its content clears the viewport -- see the fit check in the tests.
-    # System Info stacks its identity groups, while Timings and Training draw
-    # two side-by-side columns. All three scroll at the compact height. Module
-    # selectors remain fixed below the scrolling content where applicable.
+    # Summary fits at the requested height. System Info stacks its identity
+    # groups, while Timings and Training draw two side-by-side columns; those
+    # longer pages scroll. Module selectors remain fixed below scrolling
+    # content where applicable.
     UNSCROLLED_TABS = (
-        "RTL", "IMC", "Voltages",
+        "Summary", "RTL", "IMC", "Voltages",
     )
 
     # Compact fixed size. Longer tabs scroll; every shorter tab stays fully

@@ -97,8 +97,20 @@ class UnscrolledTabFitTest(unittest.TestCase):
                     "rows off the tab." % (name, needed, available,
                                            needed - available))
 
+    def test_utility_buttons_align_with_the_tab_strip(self):
+        tabs = self.app.tabview._segmented_button
+        tools = self.app.appearance_toolbar
+        self.assertLessEqual(
+            abs(tools.winfo_rooty() - tabs.winfo_rooty()), 1,
+            "Telemetry, Advanced and Light are not aligned with the tabs",
+        )
+        self.assertGreaterEqual(
+            tools.winfo_rootx(), tabs.winfo_rootx() + tabs.winfo_width(),
+            "utility buttons overlap the main tabs",
+        )
+
     def test_long_tabs_scroll_at_the_compact_window_height(self):
-        for name in ("Summary", "System Info", "Timings", "Training"):
+        for name in ("System Info", "Timings", "Training"):
             if name not in self.app.tabview._name_list:
                 continue
             with self.subTest(tab=name):

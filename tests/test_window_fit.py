@@ -45,7 +45,7 @@ class ChromeTest(unittest.TestCase):
         # Pinned rather than derived; scrolling absorbs longer pages.
         self.assertEqual(TimingGUI.WINDOW_WIDTH, 750)
         self.assertEqual(TimingGUI.WINDOW_HEIGHT, 800)
-        self.assertNotIn("Summary", TimingGUI.UNSCROLLED_TABS)
+        self.assertIn("Summary", TimingGUI.UNSCROLLED_TABS)
         chrome = TimingGUI.TITLE_BAR_HEIGHT + TimingGUI.FOOTER_HEIGHT
         self.assertEqual(chrome, 54)
         # The rendered fit is checked separately against the live window; this
@@ -137,11 +137,11 @@ class ChromeTest(unittest.TestCase):
         self.assertIn("self.appearance_button", tools)
         self.assertNotIn("appearance_selector", inspect.getsource(TimingGUI))
 
-    def test_the_tools_use_a_separate_compact_strip(self):
+    def test_the_tools_share_the_tab_header(self):
         source = inspect.getsource(TimingGUI.build_tab_strip_tools)
-        self.assertIn("before=self.tabview", source)
-        self.assertIn("bar.pack_propagate(False)", source)
-        self.assertNotIn("bar.place(", source)
+        self.assertIn("self.tabview", source)
+        self.assertIn('bar.place(relx=1.0, x=-8, y=10, anchor="ne")', source)
+        self.assertNotIn("before=self.tabview", source)
 
     def test_an_unused_half_is_taken_out_of_the_grid(self):
         # An empty CTkFrame still asks for the toolkit's default 200px, so
@@ -158,9 +158,9 @@ class ChromeTest(unittest.TestCase):
         # without a scrollbar, content past the bottom is not reachable.
         self.assertEqual(
             TimingGUI.UNSCROLLED_TABS,
-            ("RTL", "IMC", "Voltages"),
+            ("Summary", "RTL", "IMC", "Voltages"),
         )
-        for name in ("Summary", "System Info", "Timings", "Training"):
+        for name in ("System Info", "Timings", "Training"):
             self.assertNotIn(name, TimingGUI.UNSCROLLED_TABS)
 
     def test_timings_and_training_are_two_columns_and_imc_is_three(self):
