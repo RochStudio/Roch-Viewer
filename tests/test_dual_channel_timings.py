@@ -535,7 +535,7 @@ class InstalledTableTest(unittest.TestCase):
     def test_refresh_mode_uses_its_generation_specific_source_scope(self):
         row = register_rows()["Refresh Mode"]
         ddr5 = intel_timings.detect_ddr_generation() == "DDR5"
-        expected_tab = "Timings" if ddr5 else intel_timings.PHY_TAB
+        expected_tab = "Timings" if ddr5 else intel_timings.IMC_TAB
         self.assertEqual(row["Tab"], expected_tab)
         self.assertEqual(
             row["Category"], "Refresh timings" if ddr5 else "Refresh")

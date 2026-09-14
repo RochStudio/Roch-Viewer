@@ -31,7 +31,7 @@ from tests.intel_stub import MCHBAR, install, restore
 intel_timings = None
 
 SKEW_TAB = "Training"
-PHY_TAB = "Controller"
+IMC_TAB = "IMC"
 
 
 def setUpModule():
@@ -47,7 +47,7 @@ def skew_rows():
     """All rows historically covered here, now split by source scope."""
     return [
         t for t in intel_timings.TIMINGS
-        if t.get("Tab") in (SKEW_TAB, PHY_TAB)
+        if t.get("Tab") in (SKEW_TAB, IMC_TAB)
     ]
 
 
@@ -181,7 +181,7 @@ class ReferenceSignalLabelTest(unittest.TestCase):
             self.assertTrue(rows)
             for row in rows:
                 with self.subTest(name=row.get("name")):
-                    self.assertEqual(row.get("Tab"), PHY_TAB)
+                    self.assertEqual(row.get("Tab"), IMC_TAB)
                     self.assertFalse(module.is_dual_timing(row))
             shared_vref_names = {
                 "Dq Vref Up", "Dq Vref Dn",
@@ -198,7 +198,7 @@ class ReferenceSignalLabelTest(unittest.TestCase):
             )
             for row in shared_vrefs:
                 with self.subTest(name=row.get("name")):
-                    self.assertEqual(row.get("Tab"), PHY_TAB)
+                    self.assertEqual(row.get("Tab"), IMC_TAB)
                     self.assertFalse(module.is_dual_timing(row))
         finally:
             restore()
@@ -217,7 +217,7 @@ class TrainingLivenessTest(unittest.TestCase):
                 self.assertTrue(intel_timings.is_dual_timing(row))
 
     def test_single_source_rows_moved_to_phy(self):
-        rows = [r for r in skew_rows() if r.get("Tab") == PHY_TAB]
+        rows = [r for r in skew_rows() if r.get("Tab") == IMC_TAB]
         self.assertTrue(rows)
         for row in rows:
             with self.subTest(name=row.get("name")):
@@ -442,7 +442,7 @@ class ReferenceNameTest(unittest.TestCase):
                 ))
 
         # Module VREF/ODTL belong to Training's right column; any fixed
-        # generation-specific form remains in the Controller layout.
+        # generation-specific form remains in the IMC layout.
         for row in skew_rows():
             category = row.get("Category")
             if category not in {"VREF", "ODTL"}:

@@ -60,7 +60,7 @@ class MiscRowTest(unittest.TestCase):
     def _settings_rows(self):
         """The fixed controller-register rows now combined into PHY."""
         return [t for t in intel_timings.TIMINGS
-                if t.get("Tab") == intel_timings.PHY_TAB
+                if t.get("Tab") == intel_timings.IMC_TAB
                 and t.get("source_scope") == "controller"]
 
     def test_every_row_from_both_reference_blocks_is_present(self):
@@ -243,11 +243,11 @@ class MiscRowTest(unittest.TestCase):
 
 
 class SettingsSourceSplitTest(unittest.TestCase):
-    """Combined Training/Controller preserve the source-scope split."""
+    """Combined Training/IMC preserve the source-scope split."""
 
     def _settings(self):
         return [row for row in intel_timings.TIMINGS
-                if row.get("Tab") == intel_timings.PHY_TAB
+                if row.get("Tab") == intel_timings.IMC_TAB
                 and row.get("source_scope") == "controller"]
 
     def test_fixed_controller_rows_move_to_phy(self):
@@ -301,7 +301,7 @@ class SettingsSourceSplitTest(unittest.TestCase):
 
     def test_shared_settings_are_combined_into_phy(self):
         tabs = select_tab_names(intel_timings.TIMINGS)
-        self.assertIn(intel_timings.PHY_TAB, tabs)
+        self.assertIn(intel_timings.IMC_TAB, tabs)
         self.assertNotIn(intel_timings.SETTINGS_TAB, tabs)
 
 
@@ -769,7 +769,7 @@ class RefreshPolicyMoveTest(unittest.TestCase):
             with self.subTest(name=name):
                 row = self._row(name)
                 self.assertIsNotNone(row, "%s is missing" % name)
-                self.assertEqual(row.get("Tab"), intel_timings.PHY_TAB)
+                self.assertEqual(row.get("Tab"), intel_timings.IMC_TAB)
                 self.assertEqual(row.get("Category"), "Refresh")
 
     def test_the_moved_rows_show_one_value_like_the_rest_of_the_tab(self):

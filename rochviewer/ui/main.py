@@ -256,7 +256,7 @@ def summary_snapshot_voltage_rows(timings):
 # their values close to their names and are already split into short
 # sections, so shading them would be noise.
 SHADED_TABS = frozenset({
-    "System Info", "Timings", "RTL", "Training", "Controller", "Voltages",
+    "System Info", "Timings", "RTL", "Training", "IMC", "Voltages",
 })
 
 # Tabs drawn as one continuous table per column rather than a stack of blocks:
@@ -265,13 +265,13 @@ SHADED_TABS = frozenset({
 # origin, so the two columns line up and take the same shade at the same row
 # without anything having to force them to.
 CONTINUOUS_SECTION_TABS = frozenset({
-    "System Info", "Timings", "RTL", "Training", "Controller", "Voltages",
+    "System Info", "Timings", "RTL", "Training", "IMC", "Voltages",
 })
 
 # These short reading tabs leave part of the viewport below their last row.
 # Continue their zebra table through that space when the tab is shown.
 VIEWPORT_SHADED_TABS = frozenset({
-    "System Info", "Timings", "Training", "Controller", "RTL", "Voltages",
+    "System Info", "Timings", "Training", "IMC", "RTL", "Voltages",
 })
 
 # Tabs whose two halves are instead padded to a shared row grid so a band runs
@@ -354,7 +354,7 @@ SKEW_SECTION_ORDER = (
 # Shared memory-controller and PHY values use three explicit columns. CMD is
 # the signal-compensation group; Command is the controller configuration
 # group, so both names are intentionally present.
-PHY_SECTION_ORDER = (
+IMC_SECTION_ORDER = (
     "VREF", "Command", "ODTL", "Refresh",
     "DATA", "CMD", "CLK", "CTL", "SComp",
     "MISC Additional", "Features", "Power Down",
@@ -460,7 +460,7 @@ def summary_system_memory_names():
     """Return the rows eligible for the full-width Summary system panel."""
     # Eligibility, not placement: summary_system_memory_layout decides which of
     # these actually appear and where. Detailed controller state remains on
-    # Timings, Training and Controller rather than the compact Summary.
+    # Timings, Training and IMC rather than the compact Summary.
     return [
         "CPU", "Cores / Threads", "Microcode",
         "Manufacturer", "Model", "BIOS", "AGESA",
@@ -1266,7 +1266,7 @@ class TimingGUI:
     # out because every row on it is repeated from one of these, and the
     # telemetry window is its own thing with its own statistics.
     ADVANCED_TABS = (
-        "System Info", "Timings", "Training", "Controller", "RTL"
+        "System Info", "Timings", "Training", "IMC", "RTL"
     )
 
     def advanced_entries(self):
@@ -1556,11 +1556,11 @@ class TimingGUI:
                 }
                 continue
 
-            # Timings uses three columns. Training and RTL use two; Controller
+            # Timings uses three columns. Training and RTL use two; IMC
             # uses three taller columns so the original 12px text remains
             # readable in the fixed-width window without horizontal clipping.
             uniform = None if name in SHADED_TABS else "equal"
-            if name in ("Timings", "Controller"):
+            if name in ("Timings", "IMC"):
                 column_keys = ("Left", "Middle", "Right")
             else:
                 column_keys = ("Left", "Right")
@@ -2033,7 +2033,7 @@ class TimingGUI:
     # at the compact width. Their module selector remains fixed below the
     # scrolling content where applicable.
     UNSCROLLED_TABS = (
-        "Summary", "RTL", "Controller", "Voltages",
+        "Summary", "RTL", "IMC", "Voltages",
     )
 
     # Compact fixed size. Training stacks its two logical columns and scrolls;
@@ -3434,12 +3434,12 @@ class TimingGUI:
                 left_column = ordered_sections(left_column, SKEW_SECTION_ORDER)
                 middle_column = ordered_sections(middle_column, SKEW_SECTION_ORDER)
                 right_column = ordered_sections(right_column, SKEW_SECTION_ORDER)
-            elif tab_name == "Controller":
-                left_column = ordered_sections(left_column, PHY_SECTION_ORDER)
+            elif tab_name == "IMC":
+                left_column = ordered_sections(left_column, IMC_SECTION_ORDER)
                 middle_column = ordered_sections(
-                    middle_column, PHY_SECTION_ORDER
+                    middle_column, IMC_SECTION_ORDER
                 )
-                right_column = ordered_sections(right_column, PHY_SECTION_ORDER)
+                right_column = ordered_sections(right_column, IMC_SECTION_ORDER)
             # Stack sections naturally from top to bottom. The older layout tried
             # to equalize both column heights by adding large amounts of padding
             # to the shorter column, which created visible dead space on wide or

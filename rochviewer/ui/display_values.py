@@ -52,7 +52,7 @@ def select_tab_names(timings):
     """Return the standard tabs while omitting empty platform-only pages."""
     populated = {row.get("Tab") for row in timings}
     ordered = [
-        "System Info", "Timings", "Training", "Controller", "RTL", "Voltages",
+        "System Info", "Timings", "Training", "IMC", "RTL", "Voltages",
         "Jedec",
     ]
     return ["Summary"] + [

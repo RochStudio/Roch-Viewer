@@ -22,14 +22,14 @@ The InpOut DLL contains a kernel driver and can install a persistent Windows ser
 - **System Info:** system, processor, motherboard, clocks and RAM details, followed by graphics-card identity at the bottom.
 - **Timings:** primary, secondary and tertiary timings, including per-channel values where exposed, with aligned alternating row shading and scrolling at the compact window size.
 - **Voltages:** startup snapshots of supported CPU, motherboard and memory rails. Use Telemetry for live readings.
-- **Training and Controller:** supported RTT/ODT, drive strengths, VREF, training and controller configuration fields. AMD Controller includes native preamble/postamble and ECC status (memory-controller ECC, not DDR5 on-die ECC). Granite Ridge also exposes eight raw training codes with compatibility labels; those labels are not verified physical VREF/DFE readings. Unavailable reads stay blank.
+- **Training and IMC:** supported RTT/ODT, drive strengths, VREF, training and integrated-memory-controller configuration fields. AMD IMC includes native preamble/postamble and ECC status (memory-controller ECC, not DDR5 on-die ECC). Granite Ridge also exposes eight raw training codes with compatibility labels; those labels are not verified physical VREF/DFE readings. Unavailable reads stay blank.
 - **Native telemetry:** CPU/effective clocks, temperatures, power and supported board voltages, plus each DIMM's temperature and PMIC rails. Current/minimum/maximum/average statistics and reset controls are included.
 - **Per-stick RAM details:** part number, capacity, rank and available IC information in the footer and telemetry.
 - **Shared Roch interface:** light/dark themes, consistent toolbar buttons, and YouTube | X | Discord links at the bottom-left.
 - **Advanced view:** searchable fields and a text dump for comparing configurations or reporting issues.
 - **Read-only:** no overclocking controls or voltage writes. Low-level selectors and query transactions retrieve readings only.
 
-Version 1.0.3 adds reorganized timing and training layouts, independent A1/B1 module readings, Controller and RTL views, expanded System Info, snapshot voltage reporting, and a compact 700 × 800 interface with scrolling for longer pages.
+Version 1.0.3 adds reorganized timing and training layouts, independent A1/B1 module readings, IMC and RTL views, expanded System Info, snapshot voltage reporting, and a compact 700 × 800 interface with scrolling for longer pages.
 
 ## Screenshots
 

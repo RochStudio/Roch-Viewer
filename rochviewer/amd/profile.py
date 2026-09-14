@@ -1941,7 +1941,7 @@ def build_timings(runtime):
     # is where a limit is worth watching a load against; these are the
     # settings themselves and do not move.
     def limit(name, value):
-        # Its own section rather than filed under Controller: a power ceiling
+        # Its own section rather than filed under IMC: a power ceiling
         # is not a setting the memory controller was given, and the two read
         # as different kinds of thing on the same page.
         return _row(name, value, LIMITS_CATEGORY, MISC_TAB, column="Left",

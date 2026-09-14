@@ -199,7 +199,7 @@ class DualTimingDefinitionTest(unittest.TestCase):
 
     def test_intel_summary_clock_rows_sit_on_the_summary_columns(self):
         # DRAM Frequency over tCL, BCLK over tREFI, then the clock chain in the
-        # third column. Controller-state details remain on their own tabs.
+        # third column. IMC-state details remain on their own tabs.
         blocks = summary_system_memory_blocks({
             "CPU", "Cores / Threads", "Microcode", "Manufacturer", "Model", "BIOS",
             "BCLK", "QCLK Ratio", "Uncore", "MCLK", "UCLK",
@@ -642,7 +642,7 @@ class TimingsSectionOrderTest(unittest.TestCase):
         from rochviewer.ui.main import CONTINUOUS_SECTION_TABS
 
         self.assertEqual(CONTINUOUS_SECTION_TABS,
-                     frozenset({"System Info", "Timings", "Training", "Controller",
+                     frozenset({"System Info", "Timings", "Training", "IMC",
                                 "RTL", "Voltages"}))
 
     def test_the_signal_tail_follows_the_last_vref_level(self):

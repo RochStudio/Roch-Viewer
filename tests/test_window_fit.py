@@ -158,14 +158,14 @@ class ChromeTest(unittest.TestCase):
         # without a scrollbar, content past the bottom is not reachable.
         self.assertEqual(
             TimingGUI.UNSCROLLED_TABS,
-            ("Summary", "RTL", "Controller", "Voltages"),
+            ("Summary", "RTL", "IMC", "Voltages"),
         )
         for name in ("System Info", "Timings", "Training"):
             self.assertNotIn(name, TimingGUI.UNSCROLLED_TABS)
 
-    def test_training_is_two_columns_and_controller_is_three(self):
+    def test_training_is_two_columns_and_imc_is_three(self):
         source = inspect.getsource(TimingGUI.create_widgets)
-        self.assertIn('if name in ("Timings", "Controller")', source)
+        self.assertIn('if name in ("Timings", "IMC")', source)
         self.assertIn('column_keys = ("Left", "Middle", "Right")', source)
         self.assertIn('column_keys = ("Left", "Right")', source)
         self.assertIn('stacked = name in ("Timings", "Training")', source)
@@ -184,11 +184,11 @@ class ChromeTest(unittest.TestCase):
         self.assertIn("available_columns = set(self.grid_frames[tab_name])", source)
         self.assertIn('timing.get("Column", "Left") != "Left"', source)
 
-    def test_controller_uses_the_balanced_three_column_section_order(self):
-        from rochviewer.ui.main import PHY_SECTION_ORDER
+    def test_imc_uses_the_balanced_three_column_section_order(self):
+        from rochviewer.ui.main import IMC_SECTION_ORDER
 
         self.assertEqual(
-            PHY_SECTION_ORDER,
+            IMC_SECTION_ORDER,
             ("VREF", "Command", "ODTL", "Refresh",
              "DATA", "CMD", "CLK", "CTL", "SComp",
              "MISC Additional", "Features", "Power Down"),
@@ -220,7 +220,7 @@ class ChromeTest(unittest.TestCase):
         self.assertEqual(
             VIEWPORT_SHADED_TABS,
             frozenset({
-                "System Info", "Timings", "Training", "Controller", "RTL", "Voltages",
+                "System Info", "Timings", "Training", "IMC", "RTL", "Voltages",
             }),
         )
         source = inspect.getsource(TimingGUI._on_tab_changed)

@@ -8190,14 +8190,14 @@ _promote_ddr5_module_rows()
 # shared result look as though it belonged to the selected DIMM.  Preserve
 # their existing three-column grouping on a separate PHY tab and leave Training
 # with a simple invariant: every displayed row is dual-source.
-PHY_TAB = "Controller"
+IMC_TAB = "IMC"
 
 
 def _move_shared_skew_rows_to_phy():
     for timing in TIMINGS:
         if timing.get("Tab") != "Training" or is_dual_timing(timing):
             continue
-        timing["Tab"] = PHY_TAB
+        timing["Tab"] = IMC_TAB
         # These are fixed controller/PHY fields. The reference dump
         # repeats the same register result in every DIMM context; that is not
         # four independent module sources.  Keep the scope explicit so a
@@ -8344,7 +8344,7 @@ def _combine_intel_detail_tabs():
             continue
 
         if tab == SETTINGS_TAB:
-            timing["Tab"] = PHY_TAB
+            timing["Tab"] = IMC_TAB
             timing["Column"] = PHY_SETTINGS_COLUMNS.get(
                 category, timing.get("Column", "Right")
             )
@@ -8355,7 +8355,7 @@ def _combine_intel_detail_tabs():
             timing["Column"] = SKEW_MISC_COLUMNS.get(
                 timing.get("Category"), timing.get("Column", "Left")
             )
-        elif timing.get("Tab") == PHY_TAB:
+        elif timing.get("Tab") == IMC_TAB:
             timing["Column"] = PHY_SETTINGS_COLUMNS.get(
                 timing.get("Category"), timing.get("Column", "Right")
             )
@@ -8368,7 +8368,7 @@ def _move_module_refresh_mode_to_timings():
     """Place the per-module DDR5 refresh policy beside its refresh timings.
 
     DDR4's row is one shared controller-policy source and therefore remains on
-    Controller. DDR5 reads the setting independently through both module
+    IMC. DDR5 reads the setting independently through both module
     windows, so it satisfies the Timings tab's A1/B1 source rule.
     """
     row = next(
