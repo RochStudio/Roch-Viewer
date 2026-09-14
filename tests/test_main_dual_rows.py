@@ -555,7 +555,7 @@ class GridPadxTest(unittest.TestCase):
 class TimingsSectionOrderTest(unittest.TestCase):
     """The Timings tab's sections read in a chosen order, not profile order."""
 
-    # Five columns across the two profiles. The platforms share one order but disagree on
+    # Four columns across the two profiles. The platforms share one order but disagree on
     # which column a section belongs to -- Power down is on the left for AM5
     # and the right for Intel -- so a single LEFT/RIGHT pair cannot describe
     # it, and pretending otherwise is what this class used to do.
@@ -567,9 +567,10 @@ class TimingsSectionOrderTest(unittest.TestCase):
         "Refresh timings", "Turnaround", "Read to read", "Write to write",
         "PHY",
     )
-    INTEL_LEFT = ("Primary", "Secondary", "Command")
-    INTEL_MIDDLE = ("Refresh timings", "Tertiary")
-    INTEL_RIGHT = ("CAS to CAS", "Power down", "Other Timings")
+    INTEL_LEFT = ("Primary", "Secondary", "Command", "Power down")
+    INTEL_RIGHT = (
+        "Refresh timings", "Tertiary", "CAS to CAS", "Other Timings",
+    )
 
     SKEW_ONLY = ("RTT", "ODT", "Drive Strength")
 
@@ -596,14 +597,9 @@ class TimingsSectionOrderTest(unittest.TestCase):
         self.assertEqual(self.order(reversed(self.INTEL_RIGHT)),
                          list(self.INTEL_RIGHT))
 
-    def test_the_intel_middle_column_keeps_its_order(self):
-        self.assertEqual(self.order(reversed(self.INTEL_MIDDLE)),
-                         list(self.INTEL_MIDDLE))
-
     def test_every_named_section_belongs_to_a_column_somewhere(self):
         placed = (set(self.AM5_LEFT) | set(self.AM5_RIGHT)
-                  | set(self.INTEL_LEFT) | set(self.INTEL_MIDDLE)
-                  | set(self.INTEL_RIGHT)
+                  | set(self.INTEL_LEFT) | set(self.INTEL_RIGHT)
                   | set(self.SKEW_ONLY))
         self.assertEqual(set(TIMINGS_SECTION_ORDER), placed)
 
@@ -621,7 +617,7 @@ class TimingsSectionOrderTest(unittest.TestCase):
             ["Refresh timings", "Tertiary"],
         )
 
-    def test_power_down_leads_other_timings_in_the_third_column(self):
+    def test_power_down_leads_other_timings_across_the_two_column_order(self):
         self.assertEqual(
             self.order(["Other Timings", "Power down"]),
             ["Power down", "Other Timings"],

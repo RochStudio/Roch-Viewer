@@ -29,7 +29,7 @@ The InpOut DLL contains a kernel driver and can install a persistent Windows ser
 - **Advanced view:** searchable fields and a text dump for comparing configurations or reporting issues.
 - **Read-only:** no overclocking controls or voltage writes. Low-level selectors and query transactions retrieve readings only.
 
-Version 1.0.3 adds reorganized timing and training layouts, independent A1/B1 module readings, IMC and RTL views, expanded System Info, snapshot voltage reporting, and a compact 700 × 800 interface with scrolling for longer pages.
+Version 1.0.3 adds reorganized timing and training layouts, independent A1/B1 module readings, IMC and RTL views, expanded System Info, snapshot voltage reporting, and a compact 700 × 775 interface with scrolling for longer pages.
 
 ## Screenshots
 

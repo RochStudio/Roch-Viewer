@@ -6354,18 +6354,18 @@ _install_refresh_mode_dimming()
 # tab sat empty.
 #
 # Assigning whole sections here rather than per row keeps a section in one
-# piece and puts the layout in one place where it can be checked. The three
-# columns are semantic and balanced by row count:
-# primary/secondary/command timings on the left, refresh/tertiary timings in
-# the middle, and power-down/other timings on the right.
+# piece and puts the layout in one place where it can be checked. The two
+# columns are semantic and balanced by row count: primary, secondary, command,
+# and power-down timings on the left; refresh, tertiary, CAS-to-CAS, and other
+# timings on the right.
 TIMINGS_TAB_COLUMNS = {
     "Primary": "Left",
     "Secondary": "Left",
     "Command": "Left",
-    "Refresh timings": "Middle",
-    "Tertiary": "Middle",
+    "Power down": "Left",
+    "Refresh timings": "Right",
+    "Tertiary": "Right",
     "CAS to CAS": "Right",
-    "Power down": "Right",
     "Other Timings": "Right",
 }
 
@@ -8295,6 +8295,7 @@ SKEW_MISC_COLUMNS = {
     "ODTL": "Right",
     "Command": "Right",
     "Mode Registers": "Right",
+    "DQS": "Right",
     "Preamble": "Right",
     "ECS": "Right",
 }
@@ -8338,6 +8339,11 @@ def _combine_intel_detail_tabs():
 
         if tab == MISC_TAB:
             timing["Tab"] = "Training"
+            if (category == "Mode Registers"
+                    and name in ("Read DQS Offset Timing",
+                                 "DQS Interval Timer RT")):
+                category = "DQS"
+                timing["Category"] = category
             timing["Column"] = SKEW_MISC_COLUMNS.get(
                 category, timing.get("Column", "Right")
             )

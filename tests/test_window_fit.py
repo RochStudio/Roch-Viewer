@@ -44,8 +44,8 @@ class ChromeTest(unittest.TestCase):
     def test_the_startup_size_is_the_one_that_was_asked_for(self):
         # Pinned rather than derived; scrolling absorbs longer pages.
         self.assertEqual(TimingGUI.WINDOW_WIDTH, 700)
-        self.assertEqual(TimingGUI.WINDOW_HEIGHT, 800)
-        self.assertIn("Summary", TimingGUI.UNSCROLLED_TABS)
+        self.assertEqual(TimingGUI.WINDOW_HEIGHT, 775)
+        self.assertNotIn("Summary", TimingGUI.UNSCROLLED_TABS)
         chrome = TimingGUI.TITLE_BAR_HEIGHT + TimingGUI.FOOTER_HEIGHT
         self.assertEqual(chrome, 54)
         # The rendered fit is checked separately against the live window; this
@@ -158,17 +158,17 @@ class ChromeTest(unittest.TestCase):
         # without a scrollbar, content past the bottom is not reachable.
         self.assertEqual(
             TimingGUI.UNSCROLLED_TABS,
-            ("Summary", "RTL", "IMC", "Voltages"),
+            ("RTL", "IMC", "Voltages"),
         )
-        for name in ("System Info", "Timings", "Training"):
+        for name in ("Summary", "System Info", "Timings", "Training"):
             self.assertNotIn(name, TimingGUI.UNSCROLLED_TABS)
 
-    def test_training_is_two_columns_and_imc_is_three(self):
+    def test_timings_and_training_are_two_columns_and_imc_is_three(self):
         source = inspect.getsource(TimingGUI.create_widgets)
-        self.assertIn('if name in ("Timings", "IMC")', source)
+        self.assertIn('if name == "IMC"', source)
         self.assertIn('column_keys = ("Left", "Middle", "Right")', source)
         self.assertIn('column_keys = ("Left", "Right")', source)
-        self.assertIn('stacked = name in ("Timings", "Training")', source)
+        self.assertNotIn("stacked =", source)
 
         from rochviewer.ui.main import SKEW_SECTION_ORDER
 
@@ -176,10 +176,10 @@ class ChromeTest(unittest.TestCase):
             SKEW_SECTION_ORDER,
             ("RTT", "ODT", "RON", "ODT DELAY",
              "DFE", "VREF", "ODTL",
-             "Command", "Mode Registers", "Preamble", "ECS"),
+             "Command", "Mode Registers", "DQS", "Preamble", "ECS"),
         )
 
-    def test_training_does_not_collapse_when_only_the_third_column_is_empty(self):
+    def test_training_keeps_its_right_column(self):
         source = inspect.getsource(TimingGUI.load_all_tabs_content)
         self.assertIn("available_columns = set(self.grid_frames[tab_name])", source)
         self.assertIn('timing.get("Column", "Left") != "Left"', source)

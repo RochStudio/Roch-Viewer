@@ -246,20 +246,20 @@ class SectionLayoutTest(unittest.TestCase):
             "tXP", "tXPDLL", "tXSDLL", "tXSR", "tCKCKEH", "tPPD", "tSR",
         })
 
-    def test_refresh_sits_above_tertiary_in_the_middle_column(self):
+    def test_refresh_sits_above_tertiary_in_the_right_column(self):
         from rochviewer.ui.main import TIMINGS_SECTION_ORDER
 
         columns = intel_timings.TIMINGS_TAB_COLUMNS
         self.assertEqual(columns["Refresh timings"], columns["Tertiary"])
-        self.assertEqual(columns["Refresh timings"], "Middle")
+        self.assertEqual(columns["Refresh timings"], "Right")
         self.assertLess(TIMINGS_SECTION_ORDER.index("Refresh timings"),
                         TIMINGS_SECTION_ORDER.index("Tertiary"))
 
-    def test_reorganised_sections_use_the_three_columns(self):
+    def test_reorganised_sections_use_the_two_columns(self):
         columns = intel_timings.TIMINGS_TAB_COLUMNS
         self.assertEqual(columns["Command"], "Left")
         self.assertEqual(columns["CAS to CAS"], "Right")
-        self.assertEqual(columns["Power down"], "Right")
+        self.assertEqual(columns["Power down"], "Left")
         self.assertEqual(columns["Other Timings"], "Right")
 
     def test_non_primary_rows_follow_the_declared_order(self):

@@ -14,13 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""A tab drawn without a scrollbar has to actually fit the window.
+"""Every tab either fits the compact window or provides scrolling.
 
-Summary is drawn in a plain frame so it does not give up width to a scrollbar
-gutter it never uses. The cost is that content taller than the window is not
-reachable any more -- it is cut off with nothing to say so. This builds the
-real window and measures, because the height depends on drawn row pitch and
-font metrics rather than on anything the table knows.
+This builds the real window and measures, because the height depends on drawn
+row pitch and font metrics rather than on anything the table knows.
 
 Skipped wherever a window cannot be opened, which is every headless machine.
 """
@@ -100,15 +97,15 @@ class UnscrolledTabFitTest(unittest.TestCase):
                     "rows off the tab." % (name, needed, available,
                                            needed - available))
 
-    def test_stacked_tabs_scroll_at_the_compact_window_height(self):
-        for name in ("System Info", "Timings", "Training"):
+    def test_long_tabs_scroll_at_the_compact_window_height(self):
+        for name in ("Summary", "System Info", "Timings", "Training"):
             if name not in self.app.tabview._name_list:
                 continue
             with self.subTest(tab=name):
                 holder = self.app.tab_frames[name]
                 self.assertTrue(
                     hasattr(holder, "_parent_canvas"),
-                    "%s must remain reachable at 700x800" % name,
+                    "%s must remain reachable at 700x775" % name,
                 )
 
     def test_nothing_on_any_tab_is_clipped(self):

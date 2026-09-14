@@ -293,8 +293,8 @@ PAIRED_SECTION_TABS = SHADED_TABS - CONTINUOUS_SECTION_TABS
 # Which column a section lands in comes from its rows' Column field, not from
 # here; this only orders what is already in a column. An unlisted section
 # sorts to the foot of its column, which is why Tertiary and Other Timings are
-# named: without them the Intel right-hand column read Power down before
-# Tertiary, and the left-hand one only reached Other Timings by accident.
+# named: without them the Intel right-hand column read CAS-to-CAS before
+# Refresh, and the left-hand one only reached Power down by accident.
 # One list, sorted into each column separately, so only the order of sections
 # *within* a column matters and the list as a whole need not read as a layout.
 #
@@ -307,9 +307,8 @@ PAIRED_SECTION_TABS = SHADED_TABS - CONTINUOUS_SECTION_TABS
 #                Preamble / postamble, Mode register
 #   AM5 right    Refresh timings, Turnaround, Read to read, Write to write,
 #                PHY
-#   Intel left   Primary, Secondary, Command
-#   Intel middle Refresh timings, Tertiary
-#   Intel right  CAS to CAS, Power down, Other Timings
+#   Intel left   Primary, Secondary, Command, Power down
+#   Intel right  Refresh timings, Tertiary, CAS to CAS, Other Timings
 #
 # Power down follows CAS to CAS for AM5 and precedes Other Timings for Intel;
 # the categories in between belong to different columns, so this one sequence
@@ -319,11 +318,11 @@ TIMINGS_SECTION_ORDER = (
     "Primary",
     "Secondary",
     "Command",
+    "Refresh timings",
+    "Tertiary",
     "CAS to CAS",
     "Power down",
     "Other Timings",
-    "Refresh timings",
-    "Tertiary",
     "Turnaround",
     "Read to read",
     "Write to write",
@@ -340,7 +339,7 @@ TIMINGS_SECTION_ORDER = (
     "Drive Strength",
 )
 
-# The module-aware Training page uses two taller columns at the fixed 800px
+# The module-aware Training page uses two taller columns at the fixed 700px
 # width. Keep related groups together and make their order explicit.
 SKEW_SECTION_ORDER = (
     # The termination stack stays intact in the first column.
@@ -348,7 +347,7 @@ SKEW_SECTION_ORDER = (
     # Receiver training finishes the first column; references and controller
     # training state fill the second.
     "DFE", "VREF", "ODTL",
-    "Command", "Mode Registers", "Preamble", "ECS",
+    "Command", "Mode Registers", "DQS", "Preamble", "ECS",
 )
 
 # Shared memory-controller and PHY values use three explicit columns. CMD is
@@ -766,7 +765,7 @@ class TimingGUI:
         self.setup_window_geometry()
         self.load_all_tabs_content()
         # Level every tab to the same fixed viewport. The application is
-        # intentionally 700x800; tab content no longer changes its window
+        # intentionally 700x775; tab content no longer changes its window
         # geometry after startup.
         self._stretch_tab_halves()
         self.start_live_refresh()
@@ -1556,17 +1555,14 @@ class TimingGUI:
                 }
                 continue
 
-            # Timings uses three columns. Training and RTL use two; IMC
-            # uses three taller columns so the original 12px text remains
-            # readable in the fixed-width window without horizontal clipping.
+            # Timings, Training, and RTL use two columns. IMC uses three
+            # columns so its grouped controls remain compact at 700px.
             uniform = None if name in SHADED_TABS else "equal"
-            if name in ("Timings", "IMC"):
+            if name == "IMC":
                 column_keys = ("Left", "Middle", "Right")
             else:
                 column_keys = ("Left", "Right")
-            stacked = name in ("Timings", "Training")
-            grid_columns = 1 if stacked else len(column_keys)
-            for column in range(grid_columns):
+            for column in range(len(column_keys)):
                 frame.grid_columnconfigure(column, weight=1, uniform=uniform)
             # The halves of a banded tab touch, so a row's shading runs across
             # the tab in one piece. Everywhere else they keep their gutter.
@@ -1578,10 +1574,10 @@ class TimingGUI:
                     frame, corner_radius=0, fg_color=self.BG_COLOR
                 )
                 column_frame.grid(
-                    row=column if stacked else 0,
-                    column=0 if stacked else column,
+                    row=0,
+                    column=column,
                     sticky="nsew",
-                    padx=(0, 0) if stacked else (
+                    padx=(
                         gutter if column else 0,
                         gutter if column < last else 0,
                     ),
@@ -2029,17 +2025,17 @@ class TimingGUI:
     # them whole. Anything taller than the window would be cut off unseen
     # here rather than reachable, so a tab only belongs on this list while
     # its content clears the viewport -- see the fit check in the tests.
-    # System Info, Timings, and Training stack their logical columns and scroll
-    # at the compact width. Their module selector remains fixed below the
-    # scrolling content where applicable.
+    # System Info stacks its identity groups, while Timings and Training draw
+    # two side-by-side columns. All three scroll at the compact height. Module
+    # selectors remain fixed below the scrolling content where applicable.
     UNSCROLLED_TABS = (
-        "Summary", "RTL", "IMC", "Voltages",
+        "RTL", "IMC", "Voltages",
     )
 
-    # Compact fixed size. Training stacks its two logical columns and scrolls;
-    # every shorter tab stays fully visible without giving up width to a bar.
+    # Compact fixed size. Longer tabs scroll; every shorter tab stays fully
+    # visible without giving up width to a bar.
     WINDOW_WIDTH = 700
-    WINDOW_HEIGHT = 800
+    WINDOW_HEIGHT = 775
     MIN_WINDOW_HEIGHT = 654
 
     def _stretch_tab_halves(self):
@@ -2086,7 +2082,7 @@ class TimingGUI:
                 if not used:
                     continue
                 parent = used[0].master
-                if name in ("System Info", "Timings", "Training"):
+                if name == "System Info":
                     parent.grid_columnconfigure(
                         0, minsize=parent.winfo_width(), weight=1
                     )
@@ -2102,10 +2098,14 @@ class TimingGUI:
                         # tab. RTL also reads correctly only when CHA and CHB
                         # occupy equal halves rather than leaving CHB to absorb
                         # all spare width.
+                        column_gap = (
+                            0 if name in SHADED_TABS
+                            else self.DETAIL_COLUMN_GAP
+                        )
                         half = max(
                             max(frame.winfo_reqwidth() for frame in used),
                             (min(widest, parent.winfo_width())
-                             - self.DETAIL_COLUMN_GAP + 1) // 2,
+                             - column_gap + 1) // 2,
                         )
                         half = summary_column_width(half, is_last=False)
                         for column_frame in used:
@@ -2124,6 +2124,10 @@ class TimingGUI:
                         # summary_column_width spells out: the draw engine
                         # rounds an odd fill down and leaves a hairline seam.
                         target_width = min(widest, parent.winfo_width())
+                        column_gap = (
+                            0 if name in SHADED_TABS
+                            else self.DETAIL_COLUMN_GAP
+                        )
                         allocated = 0
                         for index, column_frame in enumerate(used):
                             grid_column = int(column_frame.grid_info()["column"])
@@ -2135,7 +2139,7 @@ class TimingGUI:
                             else:
                                 width = summary_column_width(
                                     column_frame.winfo_reqwidth()
-                                    + self.DETAIL_COLUMN_GAP,
+                                    + column_gap,
                                     is_last=False,
                                 )
                             parent.grid_columnconfigure(
@@ -3637,8 +3641,8 @@ class TimingGUI:
         Detail columns hold different numbers of rows, so below wherever a
         shorter one ends, the band covered only part of the tab and stopped.
         The rows there are still rows of the same table and take the same
-        shade across it. Timings and Training have three columns; other detail tabs
-        have one or two, so the pass intentionally handles any count above one.
+        shade across it. Timings and Training have two columns; IMC has three,
+        so the pass intentionally handles any count above one.
 
         Blank rows rather than a taller fill: a fill would have to know where
         the section below it starts, while a row keeps the alternation going
@@ -3934,7 +3938,7 @@ class TimingGUI:
     # same column get more, which is what a shared column means.
     COLUMN_GAP = 20
     # Space between whole detail-table columns. This is separate from the
-    # 20px A1/B1 value-column rule above and can stay compact at 775px wide.
+    # 20px A1/B1 value-column rule above and can stay compact at 700px wide.
     DETAIL_COLUMN_GAP = 8
 
     def _align_dual_columns(self):
@@ -3954,6 +3958,15 @@ class TimingGUI:
             for frame in frames:
                 for child in frame.grid_slaves():
                     column = int(child.grid_info().get("column", 0))
+                    try:
+                        text = child.cget("text")
+                    except Exception:
+                        text = None
+                    # Timings and Training intentionally collapse A1/B1 into
+                    # the first value column. Their second value widgets stay
+                    # blank for every module choice and must not reserve width.
+                    if text == "":
+                        continue
                     if column < len(widths):
                         widths[column] = max(widths[column], child.winfo_reqwidth())
             # Each column is sized to its own longest entry, which left
@@ -4185,8 +4198,11 @@ class TimingGUI:
                 ))
             # Same alignment group as the rows, so A1 sits over the
             # channel-A values rather than wherever its own text ends.
+            alignment_parent = (
+                section_frame if tab_name == "Training" else parent
+            )
             self._dual_content_frames.setdefault(
-                (tab_name, id(parent)), []).append(header_frame)
+                (tab_name, id(alignment_parent)), []).append(header_frame)
         else:
             header.pack(fill="x", expand=True)
         if uniform_header:
@@ -4215,8 +4231,11 @@ class TimingGUI:
             # longest name anywhere on the tab set the gap for every row in
             # both columns -- tCL sat 169px from its value because
             # CounttREFIWhileRefEnOff is in the other column.
+            alignment_parent = (
+                section_frame if tab_name == "Training" else parent
+            )
             self._dual_content_frames.setdefault(
-                (tab_name, id(parent)), []).append(content_frame)
+                (tab_name, id(alignment_parent)), []).append(content_frame)
             first_dual_timing = next(
                 (t for t in section_timings if is_dual_timing(t)),
                 None
@@ -4409,8 +4428,11 @@ class TimingGUI:
             # Registered either way. Left out, a section sized its name column
             # from its own longest name, so Misc -- which has no dual row at
             # all -- put every section's values at a different x.
+            alignment_parent = (
+                section_frame if tab_name == "Training" else parent
+            )
             self._dual_content_frames.setdefault(
-                (tab_name, id(parent)), []).append(content_frame)
+                (tab_name, id(alignment_parent)), []).append(content_frame)
             data_row = 0
             for idx, timing_name in enumerate(timing_names, start=0):
                 timing = next(
