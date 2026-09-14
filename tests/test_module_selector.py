@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import Mock
-from rochviewer.ui.main import TIMINGS, TimingGUI
+from rochviewer.intel.intel_timings import TIMINGS as INTEL_TIMINGS
+from rochviewer.ui.main import TimingGUI
 
 
 class ModuleSelectorTest(unittest.TestCase):
@@ -111,7 +112,9 @@ class ModuleSelectorTest(unittest.TestCase):
         self.assertEqual(TimingGUI._misc_latency_channel({"name": ""}), "all")
 
     def test_rtl_keeps_every_controller_position_visible(self):
-        rows = [item for item in TIMINGS if item.get("Tab") == "RTL"]
+        # Validate the Intel source table directly. The UI's TIMINGS is the
+        # backend selected for the host, which is unsupported on CI runners.
+        rows = [item for item in INTEL_TIMINGS if item.get("Tab") == "RTL"]
         names = {item.get("name") for item in rows}
         self.assertIn("RTL MC0 CHA R0", names)
         self.assertIn("RTL MC1 CHA R0", names)
