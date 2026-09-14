@@ -765,7 +765,7 @@ class TimingGUI:
         self.setup_window_geometry()
         self.load_all_tabs_content()
         # Level every tab to the same fixed viewport. The application is
-        # intentionally 700x775; tab content no longer changes its window
+        # intentionally 750x800; tab content no longer changes its window
         # geometry after startup.
         self._stretch_tab_halves()
         self.start_live_refresh()
@@ -1556,7 +1556,7 @@ class TimingGUI:
                 continue
 
             # Timings, Training, and RTL use two columns. IMC uses three
-            # columns so its grouped controls remain compact at 700px.
+            # columns so its grouped controls remain compact at 750px.
             uniform = None if name in SHADED_TABS else "equal"
             if name == "IMC":
                 column_keys = ("Left", "Middle", "Right")
@@ -2034,8 +2034,8 @@ class TimingGUI:
 
     # Compact fixed size. Longer tabs scroll; every shorter tab stays fully
     # visible without giving up width to a bar.
-    WINDOW_WIDTH = 700
-    WINDOW_HEIGHT = 775
+    WINDOW_WIDTH = 750
+    WINDOW_HEIGHT = 800
     MIN_WINDOW_HEIGHT = 654
 
     def _stretch_tab_halves(self):
@@ -3938,7 +3938,7 @@ class TimingGUI:
     # same column get more, which is what a shared column means.
     COLUMN_GAP = 20
     # Space between whole detail-table columns. This is separate from the
-    # 20px A1/B1 value-column rule above and can stay compact at 700px wide.
+    # 20px A1/B1 value-column rule above and can stay compact at 750px wide.
     DETAIL_COLUMN_GAP = 8
 
     def _align_dual_columns(self):

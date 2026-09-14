@@ -105,7 +105,7 @@ class UnscrolledTabFitTest(unittest.TestCase):
                 holder = self.app.tab_frames[name]
                 self.assertTrue(
                     hasattr(holder, "_parent_canvas"),
-                    "%s must remain reachable at 700x775" % name,
+                    "%s must remain reachable at 750x800" % name,
                 )
 
     def test_nothing_on_any_tab_is_clipped(self):
