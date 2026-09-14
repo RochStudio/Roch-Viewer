@@ -44,7 +44,7 @@ class ChromeTest(unittest.TestCase):
     def test_the_startup_size_is_the_one_that_was_asked_for(self):
         # Pinned rather than derived; scrolling absorbs longer pages.
         self.assertEqual(TimingGUI.WINDOW_WIDTH, 750)
-        self.assertEqual(TimingGUI.WINDOW_HEIGHT, 800)
+        self.assertEqual(TimingGUI.WINDOW_HEIGHT, 775)
         self.assertIn("Summary", TimingGUI.UNSCROLLED_TABS)
         chrome = TimingGUI.TITLE_BAR_HEIGHT + TimingGUI.FOOTER_HEIGHT
         self.assertEqual(chrome, 54)

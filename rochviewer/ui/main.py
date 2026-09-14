@@ -765,7 +765,7 @@ class TimingGUI:
         self.setup_window_geometry()
         self.load_all_tabs_content()
         # Level every tab to the same fixed viewport. The application is
-        # intentionally 750x800; tab content no longer changes its window
+        # intentionally 750x775; tab content no longer changes its window
         # geometry after startup.
         self._stretch_tab_halves()
         self.start_live_refresh()
@@ -2039,7 +2039,7 @@ class TimingGUI:
     # Compact fixed size. Longer tabs scroll; every shorter tab stays fully
     # visible without giving up width to a bar.
     WINDOW_WIDTH = 750
-    WINDOW_HEIGHT = 800
+    WINDOW_HEIGHT = 775
     MIN_WINDOW_HEIGHT = 654
 
     def _stretch_tab_halves(self):
