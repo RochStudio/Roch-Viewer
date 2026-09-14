@@ -60,7 +60,6 @@ SAFETY — reads are unrestricted within the allowlist; writes are not:
 
 from __future__ import annotations
 
-import os
 import threading
 import time
 

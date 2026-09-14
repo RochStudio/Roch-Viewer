@@ -34,14 +34,11 @@ from rochviewer.ui.main import (
     summary_vref_row_names,
     is_dual_timing,
     summary_compact_ohm,
-    summary_rtt_display,
     summary_signal_timings,
-    summary_slash_pair,
     summary_column_count,
     summary_column_width,
     summary_system_memory_layout,
     summary_system_memory_names,
-    summary_voltage_names,
 )
 
 
@@ -398,28 +395,7 @@ class DualTimingDefinitionTest(unittest.TestCase):
             {"name": "VDDIO", "Tab": "Sensors", "rail_key": "vddio_mem"},
             {"name": "VSOC", "Tab": "Sensors", "rail_key": "vddcr_soc"},
         ]
-        self.assertEqual(summary_voltage_names(timings), ["VDDIO", "VSOC"])
         self.assertEqual(summary_column_count(timings), 3)
-
-    def test_vtt_is_hidden_from_summary_but_stays_on_the_voltages_tab(self):
-        # Filtering is on rail_key, so renaming a rail cannot change which rows
-        # Summary shows.
-        timings = [
-            {"name": "VDDIO", "Tab": "Sensors", "rail_key": "vddio_mem"},
-            {"name": "VTT", "Tab": "Sensors", "rail_key": "vtt"},
-            {"name": "DRAM VDD", "Tab": "Sensors", "rail_key": "dram_vdd"},
-        ]
-        # Summary stays short; the tab itself still carries every rail.
-        self.assertEqual(
-            summary_voltage_names(timings), ["VDDIO", "DRAM VDD"]
-        )
-
-    def test_summary_filter_survives_a_label_rename(self):
-        timings = [
-            {"name": "renamed", "Tab": "Sensors", "rail_key": "vtt"},
-            {"name": "also renamed", "Tab": "Sensors", "rail_key": "vddio_mem"},
-        ]
-        self.assertEqual(summary_voltage_names(timings), ["also renamed"])
 
     def test_am5_summary_tails_the_column_with_power_down(self):
         rows = [
@@ -442,74 +418,6 @@ class DualTimingDefinitionTest(unittest.TestCase):
         self.assertNotIn("tPHYRDL", leftover)
         self.assertNotIn("tPHYWRL", leftover)
         self.assertNotIn("tPHYWRD", leftover)
-
-    def test_summary_rtt_display_shows_compact_resistances_with_units(self):
-        # Every row in the block is a resistance, so the column reads as
-        # numbers rather than as RZQ ratios with the figure in brackets.
-        self.assertEqual(summary_rtt_display("RZQ/6 (40 Ω)"), "40 Ω")
-        self.assertEqual(summary_rtt_display("RZQ/5 (48 Ω)"), "48 Ω")
-        self.assertEqual(summary_rtt_display("RZQ/4 (60)"), "60 Ω")
-        self.assertEqual(summary_rtt_display("RZQ (240)"), "240 Ω")
-        self.assertEqual(summary_rtt_display("RZQ/0.5 (480)"), "480 Ω")
-        self.assertEqual(summary_rtt_display("40 Ω"), "40 Ω")
-
-    def test_a_termination_that_is_off_reads_as_off(self):
-        # An unterminated line belongs in the same column as the numbers.
-        # "Disabled" is in here because it is the word the DDR4 RTT tables
-        # use for code 0; without it the Summary printed "Disabled/Disabled",
-        # which does not fit the column and says in nine characters what 0
-        # says in one.
-        for text in ("RTT_OFF", "Off", "OFF", "Hi-Z", "Disabled", "DISABLED"):
-            with self.subTest(text=text):
-                self.assertEqual(summary_rtt_display(text, "RTT"), "Off")
-                self.assertEqual(summary_rtt_display(text, "ODT"), "Off")
-
-    def test_a_driver_that_is_off_reads_as_hi_z(self):
-        # The opposite state to a termination being off, and it was printing
-        # the opposite thing: zero ohms on a driver says shorted to the rail,
-        # when what the setting means is that the pin has stopped driving.
-        for category in ("Drive Strength", "RON"):
-            for text in ("Hi-Z", "HiZ", "Off", "OFF"):
-                with self.subTest(category=category, text=text):
-                    self.assertEqual(summary_rtt_display(text, category),
-                                     "Hi-Z")
-
-    def test_a_driver_with_a_real_impedance_still_reads_as_a_number(self):
-        # Only the off state changes; the column stays numeric otherwise.
-        self.assertEqual(summary_rtt_display("34.3 Ω", "Drive Strength"),
-                         "34.3 Ω")
-        self.assertEqual(summary_rtt_display("120 Ω", "Drive Strength"), "120 Ω")
-
-    def test_an_unknown_category_keeps_the_old_reading(self):
-        # The default matters: a row whose category is not passed must not
-        # silently change meaning.
-        self.assertEqual(summary_rtt_display("Off"), "Off")
-        self.assertEqual(summary_rtt_display("Off", None), "Off")
-
-    def test_a_reserved_code_is_not_turned_into_a_number(self):
-        # RFU is not a resistance, so it stays as it is rather than becoming
-        # a 0 that would read as a real termination setting.
-        self.assertEqual(summary_rtt_display("RFU"), "RFU")
-        self.assertEqual(summary_rtt_display("—"), "—")
-        self.assertEqual(summary_rtt_display(None), "")
-
-    def test_summary_slash_pair_only_exposes_channel_differences(self):
-        self.assertEqual(summary_compact_ohm("40Ω"), "40 Ω")
-        self.assertEqual(summary_slash_pair("40 Ω", "40 Ω"), "40 Ω")
-        self.assertEqual(summary_slash_pair("35", "37"), "35/37")
-        self.assertEqual(summary_slash_pair("Off", "60 Ω"), "Off/60 Ω")
-        # The two together are what the signal panel draws: both sides go
-        # through the display helper first, so the pair is bare numbers.
-        self.assertEqual(
-            summary_slash_pair(summary_rtt_display("RZQ/6 (40 Ω)"),
-                               summary_rtt_display("RZQ/6 (40)")),
-            "40 Ω",
-        )
-        self.assertEqual(
-            summary_slash_pair(summary_rtt_display("RTT_OFF"),
-                               summary_rtt_display("RTT_OFF")),
-            "Off",
-        )
 
     def test_summary_allowlist_includes_agesa_and_bclk(self):
         names = summary_system_memory_names()

@@ -14,7 +14,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import wmi
 import winreg
 import importlib
 import sys
@@ -2781,7 +2780,6 @@ TIMINGS = [
         "command": 0,
         "offset2": 0,
     },
-    "Formula": RON_FORMULA,
     "dynamic_params_b": {
         "offset_start": 0xE600,
         "value_to_find": 0x05,
@@ -2814,7 +2812,6 @@ TIMINGS = [
         "command": 0,
         "offset2": 0,
     },
-    "Formula": RON_FORMULA,
     "dynamic_params_b": {
         "offset_start": 0xE600,
         "value_to_find": 0x05,
@@ -3132,7 +3129,6 @@ TIMINGS = [
         "command": 0,  
         "offset2": 2,
     },
-    "Formula": DFE_ENABLE_FORMULA,
     "dynamic_params_b": {
         "offset_start": 0xE600,
         "value_to_find": 0xF9,
@@ -3165,7 +3161,6 @@ TIMINGS = [
         "command": 0,  
         "offset2": 2,
     },
-    "Formula": DFE_ENABLE_FORMULA,
     "dynamic_params_b": {
         "offset_start": 0xE600,
         "value_to_find": 0xF9,
@@ -3198,7 +3193,6 @@ TIMINGS = [
         "command": 0,  
         "offset2": 2,
     },
-    "Formula": DFE_ENABLE_FORMULA,
     "dynamic_params_b": {
         "offset_start": 0xE600,
         "value_to_find": 0xF9,
@@ -3231,7 +3225,6 @@ TIMINGS = [
         "command": 0,  
         "offset2": 1,
     },
-    "Formula": DFE_GAIN_FORMULA,
     "dynamic_params_b": {
         "offset_start": 0xE600,
         "value_to_find": 0xF9,
@@ -3264,7 +3257,6 @@ TIMINGS = [
         "command": 0, 
         "offset2": 2,
     },
-    "Formula": DFE_ENABLE_FORMULA,
     "dynamic_params_b": {
         "offset_start": 0xE600,
         "value_to_find": 0xF9,
@@ -3297,7 +3289,6 @@ TIMINGS = [
         "command": 0, 
         "offset2": 2, 
     },
-    "Formula": DFE_ENABLE_FORMULA,
     "dynamic_params_b": {
         "offset_start": 0xE600,
         "value_to_find": 0xF9,
@@ -3332,7 +3323,6 @@ TIMINGS = [
         "command": 0, 
         "offset2": 0, 
     },
-    "Formula": DFE_TAP_ENABLE_FORMULA,
     "dynamic_params_b": {
         "offset_start": 0xE600,
         "value_to_find": 0xF9,
@@ -3365,7 +3355,6 @@ TIMINGS = [
         "command": 0, 
         "offset2": 0, 
     },
-    "Formula": DFE_TAP1_FORMULA,
     "dynamic_params_b": {
         "offset_start": 0xE600,
         "value_to_find": 0xF9,
@@ -3400,7 +3389,6 @@ TIMINGS = [
         "command": 0, 
         "offset2": 0, 
     },
-    "Formula": DFE_TAP_ENABLE_FORMULA,
     "dynamic_params_b": {
         "offset_start": 0xE600,
         "value_to_find": 0xFB,
@@ -3433,7 +3421,6 @@ TIMINGS = [
         "command": 0, 
         "offset2": 0, 
     },
-    "Formula": DFE_TAP3_FORMULA,
     "dynamic_params_b": {
         "offset_start": 0xE600,
         "value_to_find": 0xFB,
@@ -3468,7 +3455,6 @@ TIMINGS = [
         "command": 0, 
         "offset2": 0, 
     },
-    "Formula": DFE_TAP_ENABLE_FORMULA,
     "dynamic_params_b": {
         "offset_start": 0xE600,
         "value_to_find": 0xFA,
@@ -3501,7 +3487,6 @@ TIMINGS = [
         "command": 0, 
         "offset2": 0, 
     },
-    "Formula": DFE_TAP2_FORMULA,
     "dynamic_params_b": {
         "offset_start": 0xE600,
         "value_to_find": 0xFA,
@@ -3536,7 +3521,6 @@ TIMINGS = [
         "command": 0, 
         "offset2": 0, 
     },
-    "Formula": DFE_TAP_ENABLE_FORMULA,
     "dynamic_params_b": {
         "offset_start": 0xE600,
         "value_to_find": 0xFC,
@@ -3569,7 +3553,6 @@ TIMINGS = [
         "command": 0, 
         "offset2": 0, 
     },
-    "Formula": DFE_TAP4_FORMULA,
     "dynamic_params_b": {
         "offset_start": 0xE600,
         "value_to_find": 0xFC,

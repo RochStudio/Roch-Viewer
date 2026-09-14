@@ -6,6 +6,7 @@
 - Rebalanced Training across termination, receiver/VREF and mode-register columns; moved the per-module DDR5 Refresh Mode beside its refresh timings.
 - Added independent A1/B1 module readings, dedicated Controller and RTL views, expanded System Info and snapshot voltage reporting.
 - Set the compact window to 700 × 800, made longer pages scroll, and placed Graphics at the bottom of System Info.
+- Simplified fixed-window and module-selector plumbing, removed obsolete formatting paths and imports, and added a source-integrity test that rejects duplicate dictionary keys.
 
 ## 1.0.2 (2026-09-11)
 

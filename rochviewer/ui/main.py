@@ -60,63 +60,6 @@ def summary_signal_timings(timings):
     ]
 
 
-# Terminations that are switched off, which read as zero ohms. RTT_OFF is the
-# Intel table's spelling; Hi-Z is the same state named after the impedance.
-# Compared with spaces removed and upper-cased, so "Rtt_off" and "Hi Z"
-# match too. "DISABLED" is what the DDR4 RTT tables emit for code 0 --
-# without it those rows fell through to the verbatim branch and the
-# Summary printed "Disabled/Disabled", which does not fit the column and
-# says in nine characters what 0 says in one.
-RTT_OFF_VALUES = ("RTT_OFF", "OFF", "HI-Z", "HIZ", "DISABLED")
-
-# Categories whose rows are drivers rather than terminations. Switching a
-# termination off leaves the line unterminated, and this panel has always
-# written that as zero. Switching a *driver* off is the opposite thing: the
-# pin stops driving and goes high impedance, so printing zero ohms there says
-# it is shorted to the rail rather than released.
-DRIVER_CATEGORIES = ("RON", "Drive Strength")
-
-
-def summary_rtt_display(value, category=None):
-    """Summary-only: show a compact resistance or an explicit off state.
-
-    Every row in this block is a resistance, so the column reads as compact
-    values -- 40 Ω, Off, 48 Ω -- rather than as RZQ ratios with the figure
-    buried in brackets. A slash pair appears only when the channels differ.
-
-      "RZQ/6 (40 Ω)"  -> "40 Ω"
-      "RZQ/4 (60)"    -> "60 Ω"     (Intel tables omit the unit)
-      "RZQ/0.5 (480)" -> "480 Ω"
-      "RTT_OFF"       -> "Off"      (an unterminated line)
-      "Disabled"      -> "Off"      (the DDR4 tables' word for it)
-      "40 Ω"          -> "40 Ω"
-      "RFU"           -> "RFU"      (reserved: not a resistance)
-
-    On a drive-strength row the off state keeps its name instead:
-
-      "Hi-Z"          -> "Hi-Z"     (a driver that is not driving)
-      "Off"           -> "Hi-Z"
-      "Disabled"      -> "Hi-Z"
-
-    The Timings tab keeps the full RZQ string, where the ratio is the point.
-    """
-    text = "" if value is None else str(value).strip()
-    if not text or text == "—":
-        return text
-    if text.upper().replace(" ", "") in RTT_OFF_VALUES:
-        return "Hi-Z" if category in DRIVER_CATEGORIES else "Off"
-
-    start = text.rfind("(")
-    end = text.rfind(")")
-    if start != -1 and end > start:
-        text = text[start + 1:end].strip()
-    # Whatever is left may still carry the unit, from either source.
-    bare = text.replace("Ω", "").replace("ohm", "").replace("Ohm", "").strip()
-    if bare and bare.replace(".", "", 1).isdigit():
-        return bare + " Ω"
-    return text
-
-
 def _grid_padx(info):
     """Total horizontal padding a grid_info reports, as a number.
 
@@ -143,19 +86,6 @@ def summary_compact_ohm(value):
     while "  Ω" in text:
         text = text.replace("  Ω", " Ω")
     return text
-
-
-def summary_slash_pair(value_a, value_b):
-    """Show one shared Summary value, or an A/B pair when they differ."""
-    left = summary_compact_ohm(value_a)
-    right = summary_compact_ohm(value_b)
-    if not left:
-        left = "—"
-    if not right:
-        right = "—"
-    if left == right:
-        return left
-    return f"{left}/{right}"
 
 
 def channel_slot_labels(modules=None):
@@ -344,10 +274,6 @@ VIEWPORT_SHADED_TABS = frozenset({
     "System Info", "Timings", "Training", "Controller", "RTL", "Voltages",
 })
 
-# Four compact columns keep the combined shared-PHY view within the fixed
-# height. RTL mirrors the two physical channel columns, with MC0 and MC1 stacked.
-FOUR_COLUMN_TABS = frozenset({"Controller"})
-
 # Tabs whose two halves are instead padded to a shared row grid so a band runs
 # unbroken across both. That padding is dead space -- a section is brought up
 # to the height of the one facing it, which on Timings meant nine blank rows
@@ -474,22 +400,6 @@ SENSOR_GROUP_ORDER = (
 # removed: every column broke at a different row, which put the columns out of
 # step by the height of a gap and made a shaded row impossible to carry across
 # the width. The shading does the grouping instead.
-
-
-def summary_voltage_names(timings):
-    """Return the rail rows, in the order the platform declares them.
-
-    Filtering is on rail identity rather than display label, so renaming a rail
-    can never change which rows are selected.  See
-    voltage_rails.SUMMARY_HIDDEN_RAILS for the rails held back.
-    """
-    from rochviewer.sensors.voltage_rails import SUMMARY_HIDDEN_RAILS
-
-    return [
-        timing.get("name") for timing in timings
-        if timing.get("rail_key")
-        and timing.get("rail_key") not in SUMMARY_HIDDEN_RAILS
-    ]
 
 
 def summary_column_count(_timings=None):
@@ -856,7 +766,7 @@ class TimingGUI:
         self.setup_window_geometry()
         self.load_all_tabs_content()
         # Level every tab to the same fixed viewport. The application is
-        # intentionally 800x800; tab content no longer changes its window
+        # intentionally 700x800; tab content no longer changes its window
         # geometry after startup.
         self._stretch_tab_halves()
         self.start_live_refresh()
@@ -1214,7 +1124,6 @@ class TimingGUI:
     # At 700px the complete tab list and the three utility buttons cannot
     # share one line without colliding. Keep the utilities in their own slim,
     # right-aligned strip immediately above the tabs.
-    TAB_STRIP_HEIGHT = 36
     TOOL_BUTTON_HEIGHT = 24
     TOOL_BUTTON_WIDTH = 60
 
@@ -1620,7 +1529,7 @@ class TimingGUI:
                     "Columns": compact_columns,
                 }
                 self._build_summary_module_selector(
-                    tab_page, channel_a, channel_b, column_count
+                    tab_page, channel_a, channel_b
                 )
                 continue
 
@@ -1685,7 +1594,7 @@ class TimingGUI:
                 # module choice therefore stays visible above the footer even
                 # when the timing table itself needs to scroll.
                 self._build_module_selector(
-                    tab_page, name, row=1, column_count=1
+                    tab_page, name, row=1
                 )
         self.tabview.configure(command=self._on_tab_changed)
 
@@ -1698,13 +1607,13 @@ class TimingGUI:
             )
 
     def _build_summary_module_selector(
-        self, parent, channel_a, channel_b, column_count
+        self, parent, channel_a, channel_b
     ):
         """Put the shared installed-module selector at the foot of Summary."""
         # Kept as a wrapper because older callers and tests use this method.
         self._prepare_module_choices(channel_a, channel_b)
         return self._build_module_selector(
-            parent, "Summary", row=1, column_count=1
+            parent, "Summary", row=1
         )
 
     def _prepare_module_choices(self, channel_a, channel_b):
@@ -1715,7 +1624,7 @@ class TimingGUI:
                 self._module_choices[f"{slot}: {detail}"] = channel
         self._all_modules_display = self._all_modules_label(channel_a, channel_b)
 
-    def _build_module_selector(self, parent, tab_name, row, column_count):
+    def _build_module_selector(self, parent, tab_name, row):
         """Draw one synchronized module selector below a data tab."""
         border = ctk.CTkFrame(
             parent,
@@ -1724,7 +1633,7 @@ class TimingGUI:
             border_width=0,
         )
         border.grid(
-            row=row, column=0, columnspan=column_count,
+            row=row, column=0,
             sticky="ew", padx=0, pady=(3, 1),
         )
         values = list(self._module_choices)
@@ -2086,22 +1995,20 @@ class TimingGUI:
         grip.bind("<B1-Motion>", self.resize_window)
 
     def open_twitter(self, event=None):
-        try:
-            webbrowser.open_new_tab(self.TWITTER_URL)
-        except Exception as exc:
-            print(f"Error opening {self.TWITTER_URL}: {exc}")
+        self._open_url(self.TWITTER_URL)
 
     def open_youtube(self, event=None):
-        try:
-            webbrowser.open_new_tab(self.YOUTUBE_URL)
-        except Exception as exc:
-            print(f"Error opening {self.YOUTUBE_URL}: {exc}")
+        self._open_url(self.YOUTUBE_URL)
 
     def open_discord(self, event=None):
+        self._open_url(self.DISCORD_URL)
+
+    @staticmethod
+    def _open_url(url):
         try:
-            webbrowser.open_new_tab(self.DISCORD_URL)
+            webbrowser.open_new_tab(url)
         except Exception as exc:
-            print(f"Error opening {self.DISCORD_URL}: {exc}")
+            print(f"Error opening {url}: {exc}")
 
     def setup_window_geometry(self):
         screen_width = self.root.winfo_screenwidth()
@@ -2109,24 +2016,14 @@ class TimingGUI:
 
         # Fixed application size. Content is laid out inside this viewport;
         # the number of Summary columns does not resize the top-level window.
-        target_width = self.WINDOW_WIDTH
-        target_height = self.WINDOW_HEIGHT
-        min_width = target_width
-        window_width = min(target_width, max(min_width, screen_width - 80))
-        window_height = min(target_height,
+        window_width = self.WINDOW_WIDTH
+        window_height = min(self.WINDOW_HEIGHT,
                             max(self.MIN_WINDOW_HEIGHT, screen_height - 120))
         x = max(0, (screen_width - window_width) // 2)
         y = max(0, (screen_height - window_height) // 2)
 
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
-        self.root.minsize(min_width, self.MIN_WINDOW_HEIGHT)
-        # Both kept because the fitted-width pass runs before the window has
-        # been mapped, where winfo_width() and winfo_height() answer with Tk's
-        # 200x200 default rather than with what was just asked for. Comparing
-        # the tabs' requirement against that default made every tab look too
-        # wide for the window and grew it every time.
-        self._window_width = window_width
-        self._window_height = window_height
+        self.root.minsize(self.WINDOW_WIDTH, self.MIN_WINDOW_HEIGHT)
 
     # Tabs drawn without a scrollbar, because the window is sized to fit
     # them whole. Anything taller than the window would be cut off unseen
@@ -2144,76 +2041,6 @@ class TimingGUI:
     WINDOW_WIDTH = 700
     WINDOW_HEIGHT = 800
     MIN_WINDOW_HEIGHT = 654
-
-    # Chrome around the two halves of a tab: the notebook border, the padding
-    # either side, and the vertical scrollbar the long tabs carry.
-    TAB_CHROME_WIDTH = 46
-
-    def required_tab_width(self):
-        """The width the widest tab needs to show its columns whole.
-
-        Measured rather than fixed. The startup size is fitted to the Summary,
-        which is the narrowest tab; Timings and Misc are wider, and grew wider
-        again as rows were added, so a constant tuned against one tab clipped
-        the others -- the right-hand channel of a dual row was cut off mid
-        value, and a decoded string like "Timer Stops at 2048th clocks" simply
-        ended.
-        """
-        widest = 0
-        for frames in self.grid_frames.values():
-            # Most tabs hold {side: frame}; some hold a plain list of frames.
-            halves = frames.values() if hasattr(frames, "values") else frames
-            needed = 0
-            used = 0
-            for frame in halves:
-                if frame is None or not hasattr(frame, "winfo_reqwidth"):
-                    continue
-                # System Info keeps an ungridded right-hand placeholder
-                # for callers that expect both keys. Counted, it added
-                # its width to a tab that does not draw it and the
-                # window came out wider than any tab's content.
-                if not frame.winfo_manager():
-                    continue
-                try:
-                    needed += frame.winfo_reqwidth()
-                    used += 1
-                except Exception:
-                    continue
-            # _stretch_tab_halves allocates one logical COLUMN_GAP after each
-            # leading column even though the shaded frames physically touch.
-            # Leaving those allocations out made Controller seven pixels
-            # wider than its viewport and clipped the end of Disabled.
-            detail_gap = getattr(
-                self, "DETAIL_COLUMN_GAP", TimingGUI.DETAIL_COLUMN_GAP
-            )
-            needed += detail_gap * max(0, used - 1)
-            widest = max(widest, needed)
-        return widest + self.TAB_CHROME_WIDTH if widest else 0
-
-    def _widen_to_fit_tabs(self):
-        """Grow the window if a tab needs more width than the startup size."""
-        try:
-            self.root.update_idletasks()
-            needed = self.required_tab_width()
-            if not needed:
-                return
-            current = getattr(self, "_window_width", self.root.winfo_width())
-            screen = self.root.winfo_screenwidth()
-            if needed <= current:
-                return
-            target = min(needed, screen - 80)
-            if target <= current:
-                return
-            height = getattr(self, "_window_height", self.root.winfo_height())
-            x = max(0, (screen - target) // 2)
-            self.root.geometry(f"{target}x{height}+{x}+{self.root.winfo_y()}")
-            self.root.minsize(min(target, screen - 80),
-                              self.MIN_WINDOW_HEIGHT)
-            self._window_width = target
-        except Exception:
-            # A tab that cannot be measured keeps the startup width; a clipped
-            # column is better than no window.
-            pass
 
     def _stretch_tab_halves(self):
         """Give every tab the same content width, so a band crosses it whole.

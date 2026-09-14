@@ -22,18 +22,17 @@ release where those disagree is one where the binary cannot be identified
 from its own properties.
 """
 
-import io
-import os
+from pathlib import Path
 import re
 import unittest
 
 from rochviewer import version
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def read(name):
-    return io.open(os.path.join(ROOT, name), encoding="utf-8").read()
+    return (ROOT / name).read_text(encoding="utf-8")
 
 
 class VersionTest(unittest.TestCase):

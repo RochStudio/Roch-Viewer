@@ -14,16 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""The window is sized to the widest tab, not to the narrowest.
-
-The startup size was fitted to Summary, which is the narrowest tab. Timings
-and Misc are wider, and grew wider as rows were added, so the right-hand
-channel of a dual row was cut off mid value and decoded strings simply ended.
-"""
+"""The fixed compact window keeps every unscrolled tab reachable."""
 
 import os
 import struct
-import types
 import inspect
 import unittest
 
@@ -44,82 +38,11 @@ def icon_widths():
             for i in range(struct.unpack_from("<H", data, 4)[0])]
 
 
-def frame(width, managed=True):
-    """A stand-in for a half. ``managed`` mirrors winfo_manager()."""
-    return types.SimpleNamespace(
-        winfo_reqwidth=lambda width=width: width,
-        winfo_manager=lambda managed=managed: "grid" if managed else "",
-    )
-
-
-def gui(grid_frames):
-    stand_in = types.SimpleNamespace(
-        grid_frames=grid_frames,
-        TAB_CHROME_WIDTH=TimingGUI.TAB_CHROME_WIDTH,
-        COLUMN_GAP=TimingGUI.COLUMN_GAP,
-        DETAIL_COLUMN_GAP=TimingGUI.DETAIL_COLUMN_GAP,
-    )
-    return TimingGUI.required_tab_width(stand_in)
-
-
-class RequiredWidthTest(unittest.TestCase):
-    def test_it_takes_the_widest_tab_not_the_first(self):
-        # Summary narrow, Misc wide: the answer has to be Misc's.
-        width = gui({
-            "Summary": {"Left": frame(320), "Right": frame(320)},
-            "Misc": {"Left": frame(433), "Right": frame(433)},
-        })
-        self.assertEqual(
-            width, 866 + TimingGUI.DETAIL_COLUMN_GAP + TimingGUI.TAB_CHROME_WIDTH
-        )
-
-    def test_both_halves_of_a_tab_are_counted(self):
-        self.assertEqual(gui({"Timings": {"Left": frame(399),
-                                          "Right": frame(399)}}),
-                         798 + TimingGUI.DETAIL_COLUMN_GAP
-                         + TimingGUI.TAB_CHROME_WIDTH)
-
-    def test_all_three_timing_columns_are_counted(self):
-        self.assertEqual(
-            gui({"Timings": {
-                "Left": frame(310),
-                "Middle": frame(320),
-                "Right": frame(330),
-            }}),
-            960 + 2 * TimingGUI.DETAIL_COLUMN_GAP + TimingGUI.TAB_CHROME_WIDTH,
-        )
-
-    def test_a_tab_held_as_a_list_is_measured_too(self):
-        # Not every tab stores its halves in a dict.
-        self.assertEqual(gui({"Training": [frame(400), frame(400)]}),
-                         800 + TimingGUI.DETAIL_COLUMN_GAP
-                         + TimingGUI.TAB_CHROME_WIDTH)
-
-    def test_an_ungridded_placeholder_is_not_counted(self):
-        # System Info keeps a right-hand placeholder it never grids,
-        # so callers can expect both keys. Counted, it made the
-        # window wider than any tab actually draws.
-        width = gui({"System Info": {"Left": frame(598),
-                                     "Right": frame(200, managed=False)}})
-        self.assertEqual(width, 598 + TimingGUI.TAB_CHROME_WIDTH)
-
-    def test_an_unbuilt_or_empty_tab_contributes_nothing(self):
-        self.assertEqual(gui({}), 0)
-        self.assertEqual(gui({"Timings": {"Left": None, "Right": None}}), 0)
-
-    def test_a_frame_that_cannot_be_measured_is_skipped(self):
-        broken = types.SimpleNamespace()
-        width = gui({"Timings": {"Left": broken, "Right": frame(400)}})
-        self.assertEqual(width, 400 + TimingGUI.TAB_CHROME_WIDTH)
-
-
 class ChromeTest(unittest.TestCase):
     """The app's own title bar and footer, and what they cost the tabs."""
 
     def test_the_startup_size_is_the_one_that_was_asked_for(self):
-        # Pinned rather than derived. The title bar and footer sit inside the
-        # window rather than in a frame around it, so 850 has to carry them
-        # as well as the tabs: the two take 54px, and Summary needs 644.
+        # Pinned rather than derived; scrolling absorbs longer pages.
         self.assertEqual(TimingGUI.WINDOW_WIDTH, 700)
         self.assertEqual(TimingGUI.WINDOW_HEIGHT, 800)
         self.assertIn("Summary", TimingGUI.UNSCROLLED_TABS)
@@ -137,7 +60,7 @@ class ChromeTest(unittest.TestCase):
         source = inspect.getsource(TimingGUI.__init__)
         self.assertNotIn("self._widen_to_fit_tabs()", source)
         geometry = inspect.getsource(TimingGUI.setup_window_geometry)
-        self.assertIn("target_width = self.WINDOW_WIDTH", geometry)
+        self.assertIn("window_width = self.WINDOW_WIDTH", geometry)
         self.assertNotIn("extra_columns", geometry)
 
     def test_the_logo_picks_a_size_it_can_actually_draw(self):
@@ -286,7 +209,7 @@ class ChromeTest(unittest.TestCase):
         # Putting the selector inside ``frame`` makes it disappear below the
         # scrollable timing table until the user scrolls to its end.
         self.assertIn('holder.grid(row=0, column=0, sticky="nsew")', source)
-        self.assertIn('tab_page, name, row=1, column_count=1', source)
+        self.assertIn('tab_page, name, row=1', source)
         selector = inspect.getsource(TimingGUI._build_module_selector)
         self.assertIn("CTkOptionMenu", selector)
         self.assertIn("fg_color=self.BRAND_COLOR", selector)
