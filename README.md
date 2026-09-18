@@ -1,6 +1,8 @@
-# Roch Viewer 1.0.3
+# Roch Viewer 1.0.4
 
-Download version 1.0.3 from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/tag/v1.0.3).
+Version 1.0.4 is the current development version. The published 1.0.3 release remains available from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/tag/v1.0.3).
+
+1.0.4 removes duplicate DDR4 DQ/DQS ODT rows, shows one DRAM RON row, and adds raw MR1 evidence to Advanced/Dump. On the tested ASUS Z790-A D4 BIOS 3202 / 0x11F system, the user confirmed matching 34/48-ohm readouts with **DIMM RON Training** and **MRC Fast Boot** disabled. See [DDR4 RON validation](docs/ddr4-ron-validation.md) for the evidence and scope.
 
 A read-only Windows memory-timing and hardware-monitoring tool for supported Intel and AMD systems. View clocks, timings, per-channel settings, RAM details and native CPU/memory telemetry in a compact light/dark interface. No HWiNFO dependency.
 

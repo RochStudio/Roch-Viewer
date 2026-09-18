@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.4 (unreleased)
+
+- LGA1700 DDR4: removed DQ/DQS ODT NOM/WR/PARK aliases; retained RTT values and IMC VREF controls.
+- Replaced duplicate pull-up/down RON rows with one DRAM RON reading from MR1 controller shadows. DDR5 still has separate driver rows.
+- Reject empty/unmapped RON sources and expose differing or missing windows without assuming they are ranks.
+- Added raw packed MR0/MR1 and extracted MR1/ODI fields to Advanced/Dump for controlled BIOS comparisons. The user confirmed that 34/48-ohm BIOS selections produce matching viewer changes on ASUS Z790-A D4 BIOS 3202 / 0x11F with DIMM RON Training and MRC Fast Boot disabled. This validates the readout response on that configuration, not measured resistance.
+
 ## 1.0.3 (2026-09-13)
 
 - Reorganized Intel Timings into balanced command, refresh, tertiary, CAS-to-CAS, power-down and other groups while preserving Primary.

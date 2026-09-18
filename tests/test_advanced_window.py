@@ -91,6 +91,15 @@ class EntryListTest(unittest.TestCase):
         ])
         self.assertEqual([name for _, _, name, _ in entries], ["tCL"])
 
+    def test_opted_in_diagnostics_are_available_for_dump(self):
+        entries = build_entries([
+            {"name": "MR1 raw", "Tab": "Training", "Category": "RON diagnostics",
+             "diagnostic": True, "advanced_only": True},
+            {"name": "Hidden", "Tab": "Training", "diagnostic": True},
+        ])
+        self.assertEqual([name for _, _, name, _ in entries], ["MR1 raw"])
+        self.assertEqual(entries[0][3](), "<MR1 raw>")
+
     def test_each_row_reads_its_own_timing(self):
         # The readers are built in a loop; without per-row binding every row
         # would report the last timing's value.

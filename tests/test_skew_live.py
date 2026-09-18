@@ -100,7 +100,7 @@ class ReferenceSignalLabelTest(unittest.TestCase):
 
         common = {
             "RTT": {"RTT Wr", "RTT Park"},
-            "RON": {"Pull Up Drv", "Pull Down Drv"},
+            "RON": {"DRAM RON"},
             "VREF": {
                 "Dq Vref Up", "Dq Vref Dn",
                 "Dq Odt Vref Up", "Dq Odt Vref Dn",

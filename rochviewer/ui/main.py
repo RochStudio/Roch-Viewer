@@ -1282,7 +1282,9 @@ class TimingGUI:
         entries = []
         for tab in self.ADVANCED_TABS:
             for timing in TIMINGS:
-                if timing.get("Tab") != tab or timing.get("diagnostic"):
+                if timing.get("Tab") != tab:
+                    continue
+                if timing.get("diagnostic") and not timing.get("advanced_only"):
                     continue
                 name = timing.get("name")
                 # The tables use blank rows as spacers; they are layout, not

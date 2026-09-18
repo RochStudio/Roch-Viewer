@@ -4216,7 +4216,12 @@ def _reorder_power_down_timings():
 
 _reorder_power_down_timings()
 
-# --- DDR4 live RTT / RON reader (verified on Alder/Raptor Lake DDR4 register shadows).
+# --- DDR4 RTT / RON controller-shadow readers.
+# RTT has BIOS comparison evidence. On 2026-09-18 the user confirmed that
+# ASUS Z790-A D4 BIOS 3202 / 0x11F RON selections 34/48 track the viewer with
+# DIMM RON Training and MRC Fast Boot disabled. Earlier dumps stayed at 48.
+# This validates the readout response on that configuration, not measured
+# resistance or the rank/slot mapping of each shadow. See docs/ddr4-ron-validation.md.
 # DDR5 keeps the project's original Training-tab readers until its register mapping is verified.
 DDR4_RTT_NOM_PARK_FORMULA = {
     0b000: "Disabled",
@@ -4298,13 +4303,52 @@ def get_ddr4_rtt_park(base):
     )
 
 
+DDR4_RON_SHADOW_OFFSETS = (0xE5A0, 0xF5A0)
+
+
+def _read_ddr4_ron_shadow(base, offset):
+    """Read a packed MR0/MR1 shadow; reject empty/unmapped windows."""
+    try:
+        raw = read_physical_memory_int(base + offset, 4)
+    except Exception:
+        return None
+    if raw is None or not 0 < int(raw) < 0xFFFFFFFF:
+        return None
+    return int(raw)
+
+
+def _ddr4_ron_from_shadow(raw):
+    # MR1 occupies the upper halfword. Its A2:A1 field is 00=34, 01=48;
+    # 10/11 are reserved. ASUS Setup's Auto/34/48 enum (0/1/2) is unrelated.
+    # Source: ISSI IS43/46QR81024A, Mode Register 1 (MR1), page 19.
+    if raw is None:
+        return "N/A"
+    mr1 = (raw >> 16) & 0xFFFF
+    return DDR4_RON_LIVE_FORMULA[(mr1 >> 1) & 0b11]
+
+
 def get_ddr4_ron(base):
-    # DDR4 MR1 A2:A1 selects the nominal output-driver impedance. The selected
-    # driver applies to both pull-up and pull-down, so both UI rows are read from
-    # the same live field instead of using motherboard-specific preset values.
-    return _decode_live_rank_pair(
-        base, (0xE5A0, 0xF5A0), 17, 2, DDR4_RON_LIVE_FORMULA
-    )
+    """Nominal DRAM RON decoded from controller shadows, not measured ohms.
+
+    Keep differing or unavailable windows visible. Their mapping to physical
+    ranks/DIMMs has not been established, so do not label them R0/R1.
+    """
+    values = [_ddr4_ron_from_shadow(_read_ddr4_ron_shadow(base, offset))
+              for offset in DDR4_RON_SHADOW_OFFSETS]
+    if values[0] == values[1]:
+        return values[0]
+    return f"W0 {values[0]} / W1 {values[1]}"
+
+
+def get_ddr4_ron_evidence(base, offset, mr1_only=False):
+    """Raw source for Advanced/Dump comparisons after a BIOS RON change."""
+    raw = _read_ddr4_ron_shadow(base, offset)
+    if raw is None:
+        return None
+    if mr1_only:
+        mr1 = (raw >> 16) & 0xFFFF
+        return f"0x{mr1:04X} (ODI {(mr1 >> 1) & 3:02b})"
+    return f"0x{raw:08X}"
 
 
 def _make_dual_live_row(name, category, read, base_a=MCHBAR,
@@ -4360,14 +4404,7 @@ def _install_ddr4_skew_live_rows():
             "RTT PARK", "RTT", get_ddr4_rtt_park,
         ),
     ]
-    ron_rows = [
-        _make_dual_live_row(
-            "PULL UP", "RON", get_ddr4_ron,
-        ),
-        _make_dual_live_row(
-            "PULL DN", "RON", get_ddr4_ron,
-        ),
-    ]
+    ron_rows = [_make_dual_live_row("DRAM RON", "RON", get_ddr4_ron)]
 
     # Preserve the original Training order: RTT, ODT, RON, then the remaining sections.
     first_skew = next(
@@ -4432,8 +4469,8 @@ _reorder_main_secondary_timings()
 
 
 # --- DDR4-aware ODT section.
-# The CA/CS/CK Group A/B fields are DDR5-only. On DDR4 the live DRAM ODT
-# settings are the DQ/DQS RTT_NOM, RTT_WR, and RTT_PARK values.
+# The CA/CS/CK Group A/B fields are DDR5-only. DDR4's RTT rows already
+# report NOM/WR/PARK; do not duplicate them under DQ/DQS ODT labels.
 def _install_ddr4_odt_rows():
     global TIMINGS
     if detect_ddr_generation() != "DDR4":
@@ -4447,33 +4484,6 @@ def _install_ddr4_odt_rows():
             and timing.get("Category") == "ODT"
         )
     ]
-
-    odt_rows = [
-        _make_dual_live_row(
-            "DQ/DQS ODT NOM", "ODT", get_ddr4_rtt_nom,
-        ),
-        _make_dual_live_row(
-            "DQ/DQS ODT WR", "ODT", get_ddr4_rtt_wr,
-        ),
-        _make_dual_live_row(
-            "DQ/DQS ODT PARK", "ODT", get_ddr4_rtt_park,
-        ),
-    ]
-
-    # Keep the Training order as RTT -> ODT -> RON.
-    insert_at = next(
-        (
-            i for i, timing in enumerate(TIMINGS)
-            if timing.get("Tab") == "Training"
-            and timing.get("Category") == "RON"
-        ),
-        next(
-            (i for i, timing in enumerate(TIMINGS) if timing.get("Tab") == "Training"),
-            len(TIMINGS),
-        ),
-    )
-    TIMINGS[insert_at:insert_at] = odt_rows
-
 
 _install_ddr4_odt_rows()
 
@@ -8510,3 +8520,19 @@ _install_reference_signal_presentation()
 # pass. Reapply the stable section ordering once the table is complete so late
 # rows such as tRFC2 land beside their family instead of at the section tail.
 _group_timings_sections()
+
+
+def _install_ddr4_ron_diagnostics():
+    if active_platform() != LGA1700_DDR4:
+        return
+    for offset in DDR4_RON_SHADOW_OFFSETS:
+        for mr1_only, label in ((False, "MR0/MR1"), (True, "MR1 ODI")):
+            row = _make_dual_live_row(
+                f"DDR4 {label} @{offset:04X}", "RON shadow diagnostics",
+                partial(get_ddr4_ron_evidence, offset=offset, mr1_only=mr1_only),
+            )
+            row.update(diagnostic=True, advanced_only=True)
+            TIMINGS.append(row)
+
+
+_install_ddr4_ron_diagnostics()
