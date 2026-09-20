@@ -124,6 +124,12 @@ class Ddr5LabelTest(unittest.TestCase):
             names = {t.get("name") for t in built.TIMINGS}
         self.assertIn("tRFC", names)
         self.assertNotIn("tRFC2", names)
+        self.assertNotIn("tRFCpb", names)
+
+    def test_a_ddr5_table_keeps_per_bank_refresh(self):
+        with table_for(LGA1700_DDR5) as built:
+            names = {t.get("name") for t in built.TIMINGS}
+        self.assertIn("tRFCpb", names)
 
     def test_the_renamed_rows_keep_what_reads_them(self):
         # The rename runs last precisely so the passes that match rows by name

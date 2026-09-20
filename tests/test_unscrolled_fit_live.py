@@ -76,14 +76,20 @@ class UnscrolledTabFitTest(unittest.TestCase):
         if self.root is None:
             self.skipTest("no display to draw into")
 
+    def show_tab_at_its_requested_size(self, name):
+        """Draw a tab at the exact custom size this test is validating."""
+        self.app.tabview.set(name)
+        width, height = self.app.TAB_WINDOW_SIZES[name]
+        self.root.geometry("%dx%d" % (width, height))
+        self.root.update_idletasks()
+        self.root.update()
+
     def test_every_unscrolled_tab_fits_the_window(self):
         for name in self.app.UNSCROLLED_TABS:
             if name not in self.app.tabview._name_list:
                 continue
             with self.subTest(tab=name):
-                self.app.tabview.set(name)
-                self.root.update_idletasks()
-                self.root.update()
+                self.show_tab_at_its_requested_size(name)
                 holder = self.app.tab_frames[name]
                 self.assertFalse(
                     hasattr(holder, "_parent_canvas"),
@@ -93,7 +99,7 @@ class UnscrolledTabFitTest(unittest.TestCase):
                 self.assertLessEqual(
                     needed, available,
                     "%s needs %dpx and has %dpx: %dpx of it is cut off with "
-                    "no scrollbar to reach it. Raise WINDOW_HEIGHT or take "
+                    "no scrollbar to reach it. Raise the tab height or take "
                     "rows off the tab." % (name, needed, available,
                                            needed - available))
 
@@ -102,23 +108,81 @@ class UnscrolledTabFitTest(unittest.TestCase):
         tools = self.app.appearance_toolbar
         self.assertLessEqual(
             abs(tools.winfo_rooty() - tabs.winfo_rooty()), 1,
-            "Telemetry, Advanced and Light are not aligned with the tabs",
+            "Telemetry and Advanced are not aligned with the tabs",
         )
         self.assertGreaterEqual(
             tools.winfo_rootx(), tabs.winfo_rootx() + tabs.winfo_width(),
             "utility buttons overlap the main tabs",
         )
 
-    def test_long_tabs_scroll_at_the_compact_window_height(self):
-        for name in ("System Info", "Timings", "Training"):
-            if name not in self.app.tabview._name_list:
-                continue
-            with self.subTest(tab=name):
-                holder = self.app.tab_frames[name]
-                self.assertTrue(
-                    hasattr(holder, "_parent_canvas"),
-                    "%s must remain reachable at 750x775" % name,
-                )
+    def test_training_values_align_within_each_detail_column(self):
+        if "Training" not in self.app.tabview._name_list:
+            self.skipTest("Training is not available for this profile")
+        self.show_tab_at_its_requested_size("Training")
+        groups = [
+            frames for (tab_name, _parent_id), frames
+            in self.app._dual_content_frames.items()
+            if tab_name == "Training"
+        ]
+        self.assertEqual(
+            len(groups), len(self.app.grid_frames["Training"]),
+            "each Training column should own one alignment group",
+        )
+        for frames in groups:
+            starts = []
+            for frame in frames:
+                for child in frame.grid_slaves():
+                    if int(child.grid_info().get("column", -1)) != 1:
+                        continue
+                    try:
+                        text = child.cget("text")
+                    except Exception:
+                        continue
+                    if text:
+                        starts.append(child.winfo_rootx())
+            self.assertTrue(starts)
+            self.assertEqual(
+                len(set(starts)), 1,
+                "Training values do not share one x-position in a column",
+            )
+
+    def test_imc_columns_have_equal_widths(self):
+        if "IMC" not in self.app.tabview._name_list:
+            self.skipTest("IMC is not available for this profile")
+        self.show_tab_at_its_requested_size("IMC")
+        widths = [
+            frame.winfo_width()
+            for frame in self.app.grid_frames["IMC"].values()
+            if frame.winfo_manager()
+        ]
+        self.assertEqual(len(widths), 2)
+        self.assertLessEqual(
+            max(widths) - min(widths), 1,
+            "IMC columns do not divide the viewport evenly",
+        )
+
+    def test_tab_height_changes_only_at_the_bottom_edge(self):
+        self.root.geometry("750x750+100+20")
+        self.root.update_idletasks()
+        self.root.update()
+        x, y = self.root.winfo_x(), self.root.winfo_y()
+
+        self.app._resize_for_tab("Timings")
+        self.root.update_idletasks()
+        self.root.update()
+
+        self.assertEqual((self.root.winfo_x(), self.root.winfo_y()), (x, y))
+        self.assertEqual(self.root.winfo_width(), 750)
+        self.assertEqual(self.root.winfo_height(), 775)
+
+    def test_imc_has_no_scrollbar(self):
+        if "IMC" not in self.app.tabview._name_list:
+            self.skipTest("IMC is not available for this profile")
+        holder = self.app.tab_frames["IMC"]
+        self.assertFalse(
+            hasattr(holder, "_parent_canvas"),
+            "IMC should fit without a scrollbar at 750x1100",
+        )
 
     def test_nothing_on_any_tab_is_clipped(self):
         clipped = []
@@ -138,9 +202,7 @@ class UnscrolledTabFitTest(unittest.TestCase):
                 walk(child, tab)
 
         for name in self.app.tabview._name_list:
-            self.app.tabview.set(name)
-            self.root.update_idletasks()
-            self.root.update()
+            self.show_tab_at_its_requested_size(name)
             walk(self.app.tabview.tab(name), name)
         self.assertEqual(clipped, [], "labels cut off at this window width")
 
@@ -152,9 +214,7 @@ class UnscrolledTabFitTest(unittest.TestCase):
             holder = self.app.tab_frames.get(name)
             if holder is None:
                 continue
-            self.app.tabview.set(name)
-            self.root.update_idletasks()
-            self.root.update()
+            self.show_tab_at_its_requested_size(name)
             right_edge = holder.winfo_rootx() + holder.winfo_width()
             for key, frame in frames.items():
                 if not hasattr(frame, "winfo_manager") or not frame.winfo_manager():

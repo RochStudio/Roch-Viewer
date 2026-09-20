@@ -23,6 +23,8 @@ from rochviewer.hardware.pci_mcfg import McfgAllocation, ecam_address
 from rochviewer.intel.intel_pch_smbus import (
     ALLOWED_ADDRESSES,
     CONTROL_START,
+    DDR4_SPD_PAGE_SELECT_ADDRESSES,
+    PROTOCOL_BYTE,
     PROTOCOL_WORD_DATA,
     REG_HOST_ADDRESS,
     REG_HOST_COMMAND,
@@ -207,6 +209,50 @@ class Ddr5ByteReadTest(unittest.TestCase):
              REG_HOST_CONTROL},
         )
 
+
+class Ddr4SpdPageTest(unittest.TestCase):
+    """EE1004 page selection can only reach SPA0/SPA1, never EEPROM data."""
+
+    def test_page_one_uses_send_byte_at_the_fixed_spa1_address(self):
+        io = _FakeIo()
+        make_reader(io).select_ddr4_spd_page(1)
+        by_port = {}
+        for port, value in io.writes:
+            by_port.setdefault(port, []).append(value)
+        self.assertEqual(
+            by_port[BASE + REG_HOST_ADDRESS],
+            [(DDR4_SPD_PAGE_SELECT_ADDRESSES[1] << 1) & 0xFE],
+        )
+        self.assertEqual(by_port[BASE + REG_HOST_COMMAND], [0x00])
+        self.assertEqual(
+            by_port[BASE + REG_HOST_CONTROL],
+            [PROTOCOL_BYTE | CONTROL_START],
+        )
+
+    def test_only_pages_zero_and_one_are_accepted(self):
+        for page in (-1, 2, 255):
+            io = _FakeIo()
+            with self.subTest(page=page), self.assertRaises(ValueError):
+                make_reader(io).select_ddr4_spd_page(page)
+            self.assertEqual(io.writes, [])
+
+    def test_upper_page_read_restores_page_zero(self):
+        io = _FakeIo(data=(0xA5, 0x00))
+        values = make_reader(io).read_ddr4_spd(0x51, 0x140, 2)
+        self.assertEqual(values, {0x140: 0xA5, 0x141: 0xA5})
+        selector_addresses = [
+            value >> 1 for port, value in io.writes
+            if port == BASE + REG_HOST_ADDRESS and not value & 1
+        ]
+        self.assertEqual(selector_addresses, [0x37, 0x36])
+
+    def test_range_cannot_leave_the_512_byte_spd(self):
+        io = _FakeIo()
+        reader = make_reader(io)
+        for offset, length in ((-1, 1), (0, -1), (0x1FF, 2)):
+            with self.subTest(offset=offset, length=length), self.assertRaises(ValueError):
+                reader.read_ddr4_spd(0x50, offset, length)
+        self.assertEqual(io.writes, [])
 
 class BaseDiscoveryTest(unittest.TestCase):
     def test_the_smbus_function_is_found_and_its_bar_masked(self):

@@ -111,7 +111,7 @@ class DualTimingDefinitionTest(unittest.TestCase):
         layout = summary_system_memory_layout(self._am5_names())
         self.assertEqual(layout, [
             ["CPU", "Cores / Threads", "Microcode"],
-            ["Manufacturer", "Model", "BIOS"],
+            ["Model", "BIOS"],
             ["AGESA"],
             ["DRAM Frequency", "BCLK", "MCLK"],
             ["Memory Capacity", "DRAM Ratio", "FCLK", "Power Down Mode"],
@@ -129,7 +129,7 @@ class DualTimingDefinitionTest(unittest.TestCase):
         blocks = summary_system_memory_blocks(self._am5_names())
         aligned = {tuple(names): flag for names, flag in blocks}
         self.assertFalse(aligned[("CPU", "Cores / Threads", "Microcode")])
-        self.assertFalse(aligned[("Manufacturer", "Model", "BIOS")])
+        self.assertFalse(aligned[("Model", "BIOS")])
         self.assertTrue(aligned[("DRAM Frequency", "BCLK", "MCLK")])
         self.assertTrue(aligned[("UCLK:MCLK", "Nitro Rx/Tx/Ctrl", "UCLK", "Gear Down Mode")])
 
@@ -189,7 +189,7 @@ class DualTimingDefinitionTest(unittest.TestCase):
             # names both halves -- the same shape the AM5 block already used.
             # Microcode joins them: it is a firmware revision like the BIOS
             # beside it, rather than a CPU fact stranded mid memory block.
-            ["Manufacturer", "Model", "BIOS"],
+            ["Model", "BIOS"],
             # Down the columns: what the kit is, what clocks it, what it
             # yields. Every cell filled, so no column carries a hole.
             ["DRAM Frequency", "BCLK", "MCLK"],
@@ -255,7 +255,10 @@ class DualTimingDefinitionTest(unittest.TestCase):
             "Clk Vref Up", "Clk Vref Dn", "CkeCs Vref Up",
             "DQ VREF", "CA VREF", "CS VREF",
         ]
-        rows = [{"Category": "VREF", "name": name} for name in skew]
+        rows = [
+            {"Tab": "IMC", "Category": "VREF", "name": name}
+            for name in skew
+        ]
         rows.append({"Category": "RTT", "name": "RTT WR"})
 
         self.assertEqual(
@@ -267,8 +270,8 @@ class DualTimingDefinitionTest(unittest.TestCase):
 
     def test_summary_vref_keeps_table_order(self):
         rows = [
-            {"Category": "VREF", "name": "WrDSClk Up"},
-            {"Category": "VREF", "name": "WrDS Up"},
+            {"Tab": "IMC", "Category": "VREF", "name": "WrDSClk Up"},
+            {"Tab": "IMC", "Category": "VREF", "name": "WrDS Up"},
         ]
         self.assertEqual(
             summary_vref_row_names(rows), ["WrDSClk Up", "WrDS Up"]
@@ -278,7 +281,7 @@ class DualTimingDefinitionTest(unittest.TestCase):
         # Arrow Lake drops the up/down block, so these three are the only VREF
         # readings on that platform and must not be filtered away.
         rows = [
-            {"Category": "VREF", "name": name}
+            {"Tab": "IMC", "Category": "VREF", "name": name}
             for name in DDR5_MODE_REGISTER_VREF
         ]
         self.assertEqual(
@@ -287,8 +290,9 @@ class DualTimingDefinitionTest(unittest.TestCase):
 
     def test_summary_vref_ignores_other_categories(self):
         rows = [
-            {"Category": "RTT", "name": "RTT WR"},
-            {"Category": "Primary", "name": "tCL"},
+            {"Tab": "IMC", "Category": "RTT", "name": "RTT WR"},
+            {"Tab": "Timings", "Category": "Primary", "name": "tCL"},
+            {"Tab": "Training", "Category": "VREF", "name": "Cmd Vref Up"},
         ]
         self.assertEqual(summary_vref_row_names(rows), [])
 
@@ -369,11 +373,11 @@ class DualTimingDefinitionTest(unittest.TestCase):
         self.assertEqual(leftover, ["tRDRDSCL", "tRDWR"])  # tREFI absent here
 
 
-    def test_the_board_row_contains_manufacturer_model_and_bios(self):
+    def test_the_board_row_contains_model_and_bios_without_manufacturer(self):
         layout = summary_system_memory_layout({"Manufacturer", "Model", "CPU"})
         row = next(row for row in layout if "Model" in row)
-        self.assertEqual(row, ["Manufacturer", "Model"])
-        self.assertIn("Manufacturer", summary_system_memory_names())
+        self.assertEqual(row, ["Model"])
+        self.assertNotIn("Manufacturer", summary_system_memory_names())
 
     def test_the_board_row_survives_a_missing_manufacturer(self):
         # A platform that reports only half the board identity still gets a
@@ -623,8 +627,10 @@ class TimingsSectionOrderTest(unittest.TestCase):
             ["Power down", "Other Timings"],
         )
 
-    def test_a1_b1_gap_is_twenty_pixels(self):
-        self.assertEqual(TimingGUI.COLUMN_GAP, 20)
+    def test_name_value_gap_is_twenty_five_pixels(self):
+        self.assertEqual(TimingGUI.COLUMN_GAP, 25)
+        self.assertEqual(TimingGUI.TRAINING_COLUMN_GAP, 25)
+        self.assertEqual(TimingGUI.DETAIL_COLUMN_GAP, 25)
 
     def test_the_timings_tab_is_shaded(self):
         self.assertIn("Timings", SHADED_TABS)
@@ -655,9 +661,9 @@ class TimingsSectionOrderTest(unittest.TestCase):
 
     def test_the_signal_tail_is_not_a_vref_row(self):
         # It rides in the VREF name list but does not come from that category.
-        # summary_vref_row_names reads the Training tab's VREF rows so the two
-        # displays cannot drift; a tail row appearing in there would mean it
-        # had been added to the wrong place.
+        # summary_vref_row_names reads IMC's VREF rows so the two displays
+        # cannot drift; a tail row appearing there would mean it was added to
+        # the wrong source group.
         from rochviewer.ui import main
         from rochviewer.ui.main import SUMMARY_SIGNAL_TAIL_ROWS, summary_vref_row_names
 
@@ -677,14 +683,16 @@ class TimingsSectionOrderTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(name, present)
 
-    def test_only_rtl_rows_follow_the_turnaround_block(self):
+    def test_only_rtl_rows_follow_twrpre(self):
         from rochviewer.ui.main import (SUMMARY_DFE_BIAS_ROWS, SUMMARY_RTL_ROWS,
                           insert_summary_rtl_after)
 
-        placed = insert_summary_rtl_after(["tWRWR_dd", "tRDPRE"], "tWRWR_dd")
+        placed = insert_summary_rtl_after(
+            ["tRDPRE", "tWRPRE", "tMOD"], "tWRPRE"
+        )
         self.assertEqual(
             placed,
-            ["tWRWR_dd"] + list(SUMMARY_RTL_ROWS) + ["tRDPRE"],
+            ["tRDPRE", "tWRPRE"] + list(SUMMARY_RTL_ROWS) + ["tMOD"],
         )
         self.assertEqual(SUMMARY_DFE_BIAS_ROWS, ())
 
@@ -718,7 +726,7 @@ class TimingsSectionOrderTest(unittest.TestCase):
         self.assertIn('self._detail_channel_text(timing, "a")', source)
         self.assertNotIn("summary_rtt_display", source)
 
-    def test_summary_electrical_groups_exclude_vref_and_keep_compact_rtl(self):
+    def test_summary_adds_filtered_imc_vref_and_keeps_compact_rtl(self):
         from rochviewer.ui import main
 
         self.assertEqual(
@@ -726,12 +734,15 @@ class TimingsSectionOrderTest(unittest.TestCase):
             (("RTT",), ("ODT",), ("RON",)),
         )
         source = inspect.getsource(TimingGUI.build_summary_tab)
-        self.assertNotIn("summary_vref_row_names", source)
+        self.assertIn("summary_vref_row_names", source)
         self.assertIn('"show_header": False', source)
-        _primary, tertiary = main.intel_summary_timing_columns(main.TIMINGS)
+        primary, tertiary = main.intel_summary_timing_columns(main.TIMINGS)
         self.assertEqual(
-            [row for row in tertiary if main.is_summary_pair(row)],
+            [row for row in primary if main.is_summary_pair(row)],
             list(main.SUMMARY_RTL_ROWS),
+        )
+        self.assertEqual(
+            [row for row in tertiary if main.is_summary_pair(row)], []
         )
 
     def test_summary_leaves_the_whole_ccd_group_to_the_timings_tab(self):

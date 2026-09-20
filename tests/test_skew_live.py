@@ -100,7 +100,7 @@ class ReferenceSignalLabelTest(unittest.TestCase):
 
         common = {
             "RTT": {"RTT Wr", "RTT Park"},
-            "RON": {"DRAM RON"},
+            "RON": {"RON"},
             "VREF": {
                 "Dq Vref Up", "Dq Vref Dn",
                 "Dq Odt Vref Up", "Dq Odt Vref Dn",
@@ -141,7 +141,7 @@ class ReferenceSignalLabelTest(unittest.TestCase):
             for row in rows:
                 with self.subTest(name=row.get("name")):
                     self.assertEqual(row.get("Tab"), SKEW_TAB)
-                    self.assertEqual(row.get("Column"), "Right")
+                    self.assertEqual(row.get("Column"), "Middle")
                     self.assertTrue(module.is_dual_timing(row))
                     self.assertEqual(
                         row["dynamic_params_a"]["mchbar"], module.MCHBAR
@@ -161,7 +161,7 @@ class ReferenceSignalLabelTest(unittest.TestCase):
             for row in rows:
                 with self.subTest(name=row.get("name")):
                     self.assertEqual(row.get("Tab"), SKEW_TAB)
-                    self.assertEqual(row.get("Column"), "Right")
+                    self.assertEqual(row.get("Column"), "Middle")
                     self.assertTrue(module.is_dual_timing(row))
                     self.assertEqual(
                         row["dynamic_params_a"]["mchbar"], module.MCHBAR
@@ -427,9 +427,9 @@ class ReferenceNameTest(unittest.TestCase):
             "RTT": "Left", "ODT": "Left", "RON": "Left",
             "ODT DELAY": "Left", "DFE": "Left",
             "MISC Additional": "Right",
-            "DATA": "Middle", "CMD": "Middle",
-            "CLK": "Middle", "CTL": "Middle",
-            "SComp": "Middle",
+            "DATA": "Right", "CMD": "Right",
+            "CLK": "Right", "CTL": "Right",
+            "SComp": "Right",
         }
         present = {row.get("Category") for row in skew_rows()}
         for category, column in expected.items():
@@ -441,16 +441,13 @@ class ReferenceNameTest(unittest.TestCase):
                     if row.get("Category") == category
                 ))
 
-        # Module VREF/ODTL belong to Training's right column; any fixed
-        # generation-specific form remains in the IMC layout.
+        # The final two-column Training/IMC layout keeps VREF and ODTL in the
+        # left column on DDR4.
         for row in skew_rows():
             category = row.get("Category")
             if category not in {"VREF", "ODTL"}:
                 continue
-            expected_column = (
-                "Right" if row.get("Tab") == SKEW_TAB
-                else intel_timings.PHY_SETTINGS_COLUMNS[category]
-            )
+            expected_column = "Left"
             with self.subTest(name=row.get("name")):
                 self.assertEqual(row.get("Column"), expected_column)
 

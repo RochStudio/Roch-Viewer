@@ -37,7 +37,9 @@ import customtkinter as ctk
 POLL_MS = 1000
 
 # Tall enough for two panels; a four-DIMM board scrolls.
-WINDOW_SIZE = "600x800"
+WINDOW_WIDTH = 600
+WINDOW_HEIGHT = 800
+WINDOW_SIZE = f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}"
 
 # (key, label, unit, decimals). Order is the order they are shown.
 PARAMETERS = (
@@ -231,7 +233,8 @@ class DimmTelemetryWindow(ctk.CTkToplevel):
 
     def __init__(self, master, theme, read_telemetry, read_modules,
                  on_close=None, poll_ms=POLL_MS, auto_open=False,
-                 on_auto_open=None, sensor_groups=(), icon_path=None):
+                 on_auto_open=None, sensor_groups=(), icon_path=None,
+                 position=None):
         super().__init__(master)
         # [(group title, [(label, read() -> displayed text)])]
         self._sensor_groups = list(sensor_groups)
@@ -266,7 +269,10 @@ class DimmTelemetryWindow(ctk.CTkToplevel):
         # setting ours has to happen after that, or the default one wins.
         if icon_path:
             self.after(300, lambda: self._set_icon(icon_path))
-        self.geometry(WINDOW_SIZE)
+        geometry = WINDOW_SIZE
+        if position is not None:
+            geometry += f"{int(position[0]):+d}{int(position[1]):+d}"
+        self.geometry(geometry)
         self.protocol("WM_DELETE_WINDOW", self.close)
 
         self._body = ctk.CTkScrollableFrame(

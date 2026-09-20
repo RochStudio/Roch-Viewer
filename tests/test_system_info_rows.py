@@ -88,6 +88,20 @@ def os_parts(revision, display_version):
 
 
 class PresenceTest(unittest.TestCase):
+    def test_model_does_not_repeat_the_board_revision(self):
+        with mock.patch.object(
+            intel_timings,
+            "_baseboard",
+            side_effect=lambda field: {
+                "Product": "ROG STRIX Z790-A GAMING WIFI D4",
+                "Version": "Rev 1.xx",
+            }.get(field, ""),
+        ):
+            self.assertEqual(
+                intel_timings.get_board_model(),
+                "ROG STRIX Z790-A GAMING WIFI D4",
+            )
+
     def test_every_new_row_is_on_the_tab_exactly_once(self):
         names = row_names()
         for name in NEW_ROWS:
@@ -185,6 +199,19 @@ class PresenceTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertFalse(callable(row.get("value")))
                 self.assertFalse(row.get("live"))
+
+    def test_cpu_temperature_cannot_shadow_the_summary_cpu_name(self):
+        cpu_rows = [row for row in intel_timings.TIMINGS
+                    if row.get("name") == "CPU"]
+        self.assertEqual(len(cpu_rows), 1)
+        self.assertEqual(cpu_rows[0].get("Tab"), intel_timings.SYSTEM_INFO_TAB)
+
+        temperature = next(
+            row for row in intel_timings.TIMINGS
+            if row.get("name") == "CPU Temp"
+        )
+        self.assertEqual(temperature.get("display_name"), "CPU")
+        self.assertEqual(temperature.get("Tab"), intel_timings.SENSOR_TAB)
 
     def test_the_module_rows_read_the_module_without_going_on_the_timer(self):
         # These come off the DIMM over SMBus rather than from WMI, so they are
@@ -290,15 +317,18 @@ class PresenceTest(unittest.TestCase):
                 "System": "Left",
                 "Processor": "Left",
                 "Motherboard": "Left",
+                "Graphics": "Left",
                 "Clocks": "Right",
                 "Memory": "Right",
-                "Graphics": "Right",
             },
         )
 
-    def test_graphics_is_the_final_system_info_section(self):
+    def test_columns_follow_the_requested_section_order(self):
         self.assertEqual(
-            intel_timings.SYSTEM_INFO_SECTIONS[-1][0], "Graphics"
+            [title for title, _column, _names
+             in intel_timings.SYSTEM_INFO_SECTIONS],
+            ["System", "Processor", "Motherboard", "Graphics",
+             "Clocks", "Memory"],
         )
 
     def test_no_new_row_leaked_onto_another_tab(self):

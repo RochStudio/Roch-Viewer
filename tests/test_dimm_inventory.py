@@ -279,6 +279,22 @@ class SlotDecodeTest(unittest.TestCase):
         self.assertIsNone(modules[0]["slot"])
         self.assertIsNone(modules[0]["channel"])
 
+    def test_duplicate_channel_labels_are_disambiguated_by_controller(self):
+        modules = read_modules(FakeConnection([
+            FakeModule(DeviceLocator="Controller0-ChannelA-DIMM1"),
+            FakeModule(DeviceLocator="Controller1-ChannelA-DIMM1"),
+        ]))
+        self.assertEqual(
+            [(module["slot"], module["channel"]) for module in modules],
+            [("A2", "A"), ("B2", "B")],
+        )
+
+    def test_unique_channel_label_remains_authoritative(self):
+        modules = read_modules(FakeConnection([
+            FakeModule(DeviceLocator="Controller0-ChannelB-DIMM1"),
+        ]))
+        self.assertEqual(modules[0]["slot"], "B2")
+
 
 class SerialNumberTest(unittest.TestCase):
     """SMBIOS carries the serial firmware read off the module at POST.

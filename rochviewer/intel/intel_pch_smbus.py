@@ -31,7 +31,7 @@ does: measured on the Z790 target, CF8/CFC returned 0xFFFFFFFF for every
 device including the 00:00.0 host bridge, which always exists. The ports are
 not a usable transport here, so they are not used at all.
 
-SAFETY - this module reads, plus one allowlisted selector write:
+SAFETY - this module reads, plus narrowly fixed selector writes:
 
   * Every read assembles the transmit-slave-address byte with the read
     direction bit set, from a code path that has no direction parameter. Reads
@@ -51,6 +51,10 @@ SAFETY - this module reads, plus one allowlisted selector write:
     ``write_byte``, which refuses them outright: ``select_spd_page`` names the
     page register itself rather than accepting one, so nothing can steer a
     write at the EEPROM window, where it would corrupt a module's SPD.
+  * DDR4's EE1004 EEPROM page is selected only through
+    ``select_ddr4_spd_page``. The caller supplies page 0 or 1; the method maps
+    it to JEDEC's fixed SPA0/SPA1 addresses 0x36/0x37 and always sends data
+    byte zero. No EEPROM address or register is accepted from the caller.
   * That write exists because the PMIC's measured rails cannot be reached
     without it. The ADC is a multiplexer: R30h selects a channel and R31h
     holds the sample, so a read-only transport can report what the rails are
@@ -105,6 +109,9 @@ REG_HOST_DATA1 = 0x06
 # write-protocol constant to widen.
 PROTOCOL_WORD_DATA = 0x0C
 PROTOCOL_BYTE_DATA = 0x08
+# Send/Receive Byte. DDR4 EE1004 uses Send Byte to select one of its two
+# 256-byte pages at the fixed SPA0/SPA1 addresses below.
+PROTOCOL_BYTE = 0x04
 # Process Call: two bytes out, two back, in one transaction. Used on exactly
 # one register; see select_spd_page for why it has to be this protocol.
 PROTOCOL_PROC_CALL = 0x10
@@ -138,6 +145,12 @@ DDR5_ADDRESSES = frozenset(SPD_HUB_ADDRESSES + PMIC_ADDRESSES)
 # accepted so a caller written against either transport passes the same
 # arguments; anything else is refused rather than silently treated as zero.
 CONTROLLER_OFFSETS = (0x00,)
+
+# DDR4 EE1004 page selectors. A Send Byte to 0x36 selects page 0; the same
+# transaction to 0x37 selects page 1. These addresses never expose EEPROM
+# data, so the selector cannot be redirected into the writable SPD array.
+DDR4_SPD_PAGE_SELECT_ADDRESSES = (0x36, 0x37)
+DDR4_SPD_PAGE_SIZE = 0x100
 
 # The PMIC's ADC channel selector.
 PMIC_TELEMETRY_SELECT_REGISTER = 0x30
@@ -433,6 +446,47 @@ class PchSmbusReader:
                     self.last_error = "SPD page restore failed: %s" % exc
         return values
 
+    def read_ddr4_spd(self, address, offset, length, controller_offset=0x00):
+        """Read an EE1004 DDR4 SPD range and restore the conventional page 0.
+
+        Page selection and every dependent byte read share one lock. The only
+        write is a Send Byte to JEDEC's fixed SPA0/SPA1 selector addresses;
+        no write is sent to the module's 0x50-0x57 EEPROM address.
+        """
+        address = int(address)
+        offset = int(offset)
+        length = int(length)
+        if address not in SPD_HUB_ADDRESSES:
+            raise ValueError("0x%02X is not an SPD EEPROM address" % address)
+        if controller_offset not in CONTROLLER_OFFSETS:
+            raise ValueError(
+                "Unknown SMBus controller offset 0x%02X" % controller_offset
+            )
+        if offset < 0 or length < 0 or offset + length > 2 * DDR4_SPD_PAGE_SIZE:
+            raise ValueError("DDR4 SPD range is outside the 512-byte EEPROM")
+
+        values = {}
+        with self._lock, self._mutex:
+            current_page = None
+            try:
+                for position in range(offset, offset + length):
+                    page, within = divmod(position, DDR4_SPD_PAGE_SIZE)
+                    if page != current_page:
+                        self._select_ddr4_spd_page_locked(page)
+                        current_page = page
+                    try:
+                        values[position] = self._read_byte_locked(
+                            address, within
+                        )
+                    except (OSError, TimeoutError):
+                        continue
+            finally:
+                try:
+                    self._select_ddr4_spd_page_locked(0)
+                except (OSError, TimeoutError) as exc:
+                    self.last_error = "DDR4 SPD page restore failed: %s" % exc
+        return values
+
     def probe_address(self, address, controller_offset=0x00, register=0x00):
         """Return True when a device answers at ``address``."""
         try:
@@ -503,6 +557,38 @@ class PchSmbusReader:
             )
         with self._lock, self._mutex:
             self._select_page_locked(address, page)
+
+    def select_ddr4_spd_page(self, page, controller_offset=0x00):
+        """Select DDR4 SPD page 0 or 1 through the fixed EE1004 address."""
+        if controller_offset not in CONTROLLER_OFFSETS:
+            raise ValueError(
+                "Unknown SMBus controller offset 0x%02X" % controller_offset
+            )
+        page = int(page)
+        if not 0 <= page < len(DDR4_SPD_PAGE_SELECT_ADDRESSES):
+            raise ValueError("DDR4 SPD page must be 0 or 1")
+        with self._lock, self._mutex:
+            self._select_ddr4_spd_page_locked(page)
+
+    def _select_ddr4_spd_page_locked(self, page):
+        """Issue EE1004's Send Byte page command while the bus is locked."""
+        page = int(page)
+        if not 0 <= page < len(DDR4_SPD_PAGE_SELECT_ADDRESSES):
+            raise ValueError("DDR4 SPD page must be 0 or 1")
+        address = DDR4_SPD_PAGE_SELECT_ADDRESSES[page]
+        base = self.base
+        port_status = base + REG_HOST_STATUS
+        self._wait_not_busy(port_status)
+        self._io.outb(port_status, STATUS_CLEAR_MASK)
+        self._io.outb(base + REG_HOST_ADDRESS, (address << 1) & 0xFE)
+        self._io.outb(base + REG_HOST_COMMAND, 0x00)
+        self._io.outb(
+            base + REG_HOST_CONTROL, PROTOCOL_BYTE | CONTROL_START
+        )
+        try:
+            self._wait_complete(port_status)
+        finally:
+            self._io.outb(port_status, STATUS_CLEAR_MASK)
 
     def _select_page_locked(self, address, page):
         """Select a page. Caller must already hold the lock and the mutex."""

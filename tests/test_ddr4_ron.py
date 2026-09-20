@@ -25,7 +25,7 @@ class Ddr4RonTest(unittest.TestCase):
     def test_both_standard_codes_and_reserved_codes(self):
         m = self.module
         # Low halfword is MR0: toggling its bits 2:1 must not select RON.
-        for code, expected in ((0, "34 Ohm"), (1, "48 Ohm"),
+        for code, expected in ((0, "34 RZQ/7"), (1, "48 RZQ/5"),
                                (2, "Reserved (10b)"), (3, "Reserved (11b)")):
             for mr0 in (0x0000, 0x0006, 0xFFFF):
                 with self.subTest(code=code, mr0=mr0):
@@ -38,13 +38,13 @@ class Ddr4RonTest(unittest.TestCase):
         m = self.module
         words = {m.MCHBAR + o: 0x00011234 for o in (0xE5A0, 0xF5A0)}
         words.update({m.CHANNEL_B + o: 0x00031234 for o in (0xE5A0, 0xF5A0)})
-        row = next(r for r in m.TIMINGS if r.get("name") == "DRAM RON")
+        row = next(r for r in m.TIMINGS if r.get("name") == "RON")
         with self.reader(words):
-            self.assertEqual(row["value_a"](), "34 Ohm")
-            self.assertEqual(row["value_b"](), "48 Ohm")
+            self.assertEqual(row["value_a"](), "34 RZQ/7")
+            self.assertEqual(row["value_b"](), "48 RZQ/5")
             words[m.MCHBAR + 0xE5A0] = 0x00031234
-            self.assertEqual(row["value_a"](), "W0 48 Ohm / W1 34 Ohm")
-            self.assertEqual(row["value_b"](), "48 Ohm")
+            self.assertEqual(row["value_a"](), "W0 48 RZQ/5 / W1 34 RZQ/7")
+            self.assertEqual(row["value_b"](), "48 RZQ/5")
 
     def test_unreadable_or_empty_windows_do_not_fabricate_34_or_hide_missing_peer(self):
         m = self.module
@@ -52,32 +52,30 @@ class Ddr4RonTest(unittest.TestCase):
             with self.subTest(raw=raw), self.reader({
                 m.MCHBAR + 0xE5A0: raw, m.MCHBAR + 0xF5A0: 0x00031234,
             }):
-                self.assertEqual(m.get_ddr4_ron(m.MCHBAR), "W0 N/A / W1 48 Ohm")
+                self.assertEqual(m.get_ddr4_ron(m.MCHBAR), "W0 N/A / W1 48 RZQ/5")
             with self.reader({m.MCHBAR + o: raw for o in (0xE5A0, 0xF5A0)}):
                 self.assertEqual(m.get_ddr4_ron(m.MCHBAR), "N/A")
         with patch.object(m, "read_physical_memory_int", side_effect=OSError("read failed")):
             self.assertEqual(m.get_ddr4_ron(m.MCHBAR), "N/A")
 
-    def test_advanced_evidence_reports_the_same_full_word_and_mr1_field(self):
-        m = self.module
-        rows = [r for r in m.TIMINGS if r.get("advanced_only")]
-        self.assertEqual(len(rows), 4)
-        words = {m.MCHBAR + 0xE5A0: 0x00031234, m.MCHBAR + 0xF5A0: 0x00015678,
-                 m.CHANNEL_B + 0xE5A0: 0x0003ABCD, m.CHANNEL_B + 0xF5A0: 0x0005ABCD}
-        with self.reader(words):
-            values = {r["name"]: (r["value_a"](), r["value_b"]()) for r in rows}
-            self.assertEqual(values["DDR4 MR0/MR1 @E5A0"], ("0x00031234", "0x0003ABCD"))
-            self.assertEqual(values["DDR4 MR1 ODI @F5A0"],
-                             ("0x0001 (ODI 00)", "0x0005 (ODI 10)"))
-        self.assertTrue(all(r["diagnostic"] for r in rows))
+    def test_advanced_has_no_ron_shadow_diagnostics(self):
+        rows = [r for r in self.module.TIMINGS
+                if r.get("Category") == "RON shadow diagnostics"]
+        self.assertEqual(rows, [])
 
     def test_ddr4_has_one_ron_and_keeps_rtt_without_duplicate_odt(self):
         rows = [r for r in self.module.TIMINGS if r.get("Tab") == "Training"]
         self.assertEqual([r["name"] for r in rows if r.get("Category") == "RON"],
-                         ["DRAM RON"])
+                         ["RON"])
         self.assertFalse(any(r.get("Category") == "ODT" for r in rows))
         self.assertEqual({r["name"] for r in rows if r.get("Category") == "RTT"},
-                         {"RTT Wr", "RTT NOM", "RTT Park"})
+                         {"RTT Wr", "RTT Nom", "RTT Park"})
+
+    def test_ddr4_rtt_and_ron_use_reference_rzq_notation(self):
+        m = self.module
+        self.assertEqual(m.DDR4_RTT_NOM_PARK_FORMULA[0b110], "80 RZQ/3")
+        self.assertEqual(m.DDR4_RTT_NOM_PARK_FORMULA[0b000], "0 RZQ OFF")
+        self.assertEqual(m.DDR4_RON_LIVE_FORMULA[0b01], "48 RZQ/5")
 
 
 class Ddr5UnchangedTest(unittest.TestCase):

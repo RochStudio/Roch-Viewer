@@ -23,6 +23,7 @@ import unittest
 
 from rochviewer.ui.main import (
     PAIRED_SECTION_TABS, TimingGUI, VIEWPORT_SHADED_TABS,
+    timings_three_column_layout,
 )
 
 
@@ -41,27 +42,88 @@ def icon_widths():
 class ChromeTest(unittest.TestCase):
     """The app's own title bar and footer, and what they cost the tabs."""
 
-    def test_the_startup_size_is_the_one_that_was_asked_for(self):
-        # Pinned rather than derived; scrolling absorbs longer pages.
+    def test_summary_owns_the_startup_size(self):
         self.assertEqual(TimingGUI.WINDOW_WIDTH, 750)
-        self.assertEqual(TimingGUI.WINDOW_HEIGHT, 775)
+        self.assertEqual(TimingGUI.WINDOW_HEIGHT, 750)
+        self.assertEqual(
+            TimingGUI.window_size_for_tab("Summary"), (750, 750)
+        )
         self.assertIn("Summary", TimingGUI.UNSCROLLED_TABS)
+        self.assertIn("System Info", TimingGUI.UNSCROLLED_TABS)
         chrome = TimingGUI.TITLE_BAR_HEIGHT + TimingGUI.FOOTER_HEIGHT
         self.assertEqual(chrome, 54)
-        # The rendered fit is checked separately against the live window; this
-        # assertion records the requested fixed size itself.
+
+    def test_each_main_tab_has_its_own_size(self):
+        self.assertEqual(TimingGUI.TAB_WINDOW_SIZES, {
+            "Summary": (750, 750),
+            "System Info": (750, 800),
+            "Timings": (750, 775),
+            "Training": (750, 800),
+            "IMC": (750, 1100),
+            "RTL": (750, 654),
+            "Voltages": (750, 654),
+        })
+        self.assertEqual(
+            TimingGUI.window_size_for_tab("unknown"), (750, 750)
+        )
+
+    def test_a_short_screen_caps_each_tab_height(self):
+        self.assertEqual(
+            TimingGUI.window_size_for_tab("IMC", screen_height=800),
+            (750, 680),
+        )
 
     def test_summary_top_pairs_have_readable_spacing(self):
         source = inspect.getsource(TimingGUI._summary_about_pair)
-        self.assertIn('padx=(0, 4)', source)
-        self.assertIn('padx=(0, 8)', source)
+        self.assertIn('padx=(0, self.COLUMN_GAP)', source)
+        self.assertIn('padx=(0, self.DETAIL_COLUMN_GAP)', source)
 
-    def test_tabs_do_not_expand_the_fixed_window_after_startup(self):
+    def test_tab_changes_apply_their_own_window_size(self):
         source = inspect.getsource(TimingGUI.__init__)
         self.assertNotIn("self._widen_to_fit_tabs()", source)
         geometry = inspect.getsource(TimingGUI.setup_window_geometry)
-        self.assertIn("window_width = self.WINDOW_WIDTH", geometry)
+        self.assertIn("self.window_size_for_tab", geometry)
         self.assertNotIn("extra_columns", geometry)
+        changed = inspect.getsource(TimingGUI._on_tab_changed)
+        self.assertIn("self._resize_for_tab(tab_name)", changed)
+
+    def test_popouts_are_placed_on_their_requested_side(self):
+        root = type("Root", (), {
+            "update_idletasks": lambda self: None,
+            "winfo_x": lambda self: 900,
+            "winfo_y": lambda self: 100,
+            "winfo_width": lambda self: 750,
+            "winfo_screenwidth": lambda self: 2560,
+            "winfo_screenheight": lambda self: 1440,
+        })()
+        app = type("App", (), {"root": root})()
+        place = TimingGUI.adjacent_window_position
+        self.assertEqual(place(app, "right", 520, 800), (1658, 100))
+        self.assertEqual(place(app, "left", 600, 800), (292, 100))
+
+    def test_popouts_fall_back_to_the_other_side_at_a_screen_edge(self):
+        root = type("Root", (), {
+            "update_idletasks": lambda self: None,
+            "winfo_x": lambda self: 20,
+            "winfo_y": lambda self: 700,
+            "winfo_width": lambda self: 750,
+            "winfo_screenwidth": lambda self: 1920,
+            "winfo_screenheight": lambda self: 1080,
+        })()
+        app = type("App", (), {"root": root})()
+        self.assertEqual(
+            TimingGUI.adjacent_window_position(app, "left", 600, 800),
+            (778, 280),
+        )
+
+    def test_tab_switch_does_not_force_a_layout_at_the_old_size(self):
+        resize = inspect.getsource(TimingGUI._resize_for_tab)
+        self.assertNotIn("update_idletasks()", resize)
+        changed = inspect.getsource(TimingGUI._on_tab_changed)
+        self.assertIn("after_cancel", changed)
+        self.assertIn("_finish_tab_shading", changed)
+        shading = inspect.getsource(TimingGUI._extend_tab_shading_to_viewport)
+        self.assertIn("self._shading_viewports.get(tab_name)", shading)
 
     def test_the_logo_picks_a_size_it_can_actually_draw(self):
         # Tk cannot scale an image up, so the entry chosen has to be at or
@@ -101,6 +163,8 @@ class ChromeTest(unittest.TestCase):
         # drift, palette entries cannot.
         title = inspect.getsource(TimingGUI.build_title_bar)
         footer = inspect.getsource(TimingGUI.build_footer)
+        self.assertIn("fg_color=self.BG_COLOR", title)
+        self.assertNotIn("HEADER_COLOR", title)
         self.assertIn("text_color=self.TEXT_COLOR", title)
         self.assertNotIn("text_color=self.BRAND_COLOR", title)
         self.assertIn("text_color=self.BRAND_COLOR", footer)
@@ -119,11 +183,29 @@ class ChromeTest(unittest.TestCase):
         self.assertIn('self.TAB_SELECTED_COLOR = ("#B91C1C", "#5D1A1A")',
                       source)
 
+    def test_title_bar_uses_clean_windows_style_symbols(self):
+        source = inspect.getsource(TimingGUI.build_title_bar)
+        self.assertIn('("×", self.root.destroy', source)
+        self.assertIn('("−", self.minimize_window', source)
+        self.assertNotIn('"✕"', source)
+        self.assertNotIn('"–"', source)
+
+    def test_theme_toggle_is_an_icon_left_of_minimize(self):
+        title = inspect.getsource(TimingGUI.build_title_bar)
+        tools = inspect.getsource(TimingGUI.build_tab_strip_tools)
+        self.assertIn("self.appearance_button", title)
+        self.assertIn("self.appearance_toggle_icon()", title)
+        self.assertNotIn("self.appearance_button", tools)
+        self.assertEqual(TimingGUI.LIGHT_MODE_ICON, "☀")
+        self.assertEqual(TimingGUI.DARK_MODE_ICON, "☾")
+        self.assertGreater(
+            title.index("self.appearance_button"),
+            title.index("self.minimize_window"),
+        )
+
     def test_the_tab_strip_is_the_only_thing_on_the_selected_colour(self):
-        # The Light/Dark pair used to share that colour and needed the same
-        # readable text on it. It is one plain button now, drawn on the
-        # unselected colour like Telemetry and Advanced beside it, so the
-        # strip is the only place the selected red is a background.
+        # The title-bar theme icon and the two tab tools do not use the selected
+        # red, so the active tab remains the only selected-colour background.
         source = inspect.getsource(TimingGUI.create_widgets)
         self.assertEqual(source.count("_selected_text_color"), 1)
         tools = inspect.getsource(TimingGUI.build_tab_strip_tools)
@@ -131,16 +213,15 @@ class ChromeTest(unittest.TestCase):
         self.assertNotIn("TAB_SELECTED_COLOR", tools)
 
     def test_the_theme_control_is_a_single_button(self):
-        # A pair spent half its width naming the mode you are not in.
-        tools = inspect.getsource(TimingGUI.build_tab_strip_tools)
-        self.assertNotIn("CTkSegmentedButton", tools)
-        self.assertIn("self.appearance_button", tools)
+        title = inspect.getsource(TimingGUI.build_title_bar)
+        self.assertNotIn("CTkSegmentedButton", title)
+        self.assertEqual(title.count("self.appearance_button ="), 1)
         self.assertNotIn("appearance_selector", inspect.getsource(TimingGUI))
 
     def test_the_tools_share_the_tab_header(self):
         source = inspect.getsource(TimingGUI.build_tab_strip_tools)
         self.assertIn("self.tabview", source)
-        self.assertIn('bar.place(relx=1.0, x=-8, y=10, anchor="ne")', source)
+        self.assertIn('bar.place(relx=1.0, x=-4, y=10, anchor="ne")', source)
         self.assertNotIn("before=self.tabview", source)
 
     def test_an_unused_half_is_taken_out_of_the_grid(self):
@@ -152,31 +233,61 @@ class ChromeTest(unittest.TestCase):
         self.assertIn("unused.grid_remove()", source)
         self.assertIn("grid_column, minsize=0, weight=0", source)
 
+    def test_imc_uses_equal_width_columns(self):
+        source = inspect.getsource(TimingGUI._stretch_tab_halves)
+        self.assertIn('name in ("IMC", "RTL") and len(used) == 2', source)
+
     def test_only_tabs_that_fit_are_drawn_without_scrollbars(self):
         # They give up no width to gutters they do not use. Whether they fit is
         # measured against the drawn window in test_unscrolled_fit_live --
         # without a scrollbar, content past the bottom is not reachable.
         self.assertEqual(
             TimingGUI.UNSCROLLED_TABS,
-            ("Summary", "RTL", "IMC", "Voltages"),
+            ("Summary", "System Info", "Timings", "Training", "IMC", "RTL",
+             "Voltages"),
         )
-        for name in ("System Info", "Timings", "Training"):
-            self.assertNotIn(name, TimingGUI.UNSCROLLED_TABS)
 
-    def test_timings_and_training_are_two_columns_and_imc_is_three(self):
+    def test_dense_intel_tables_use_three_columns(self):
         source = inspect.getsource(TimingGUI.create_widgets)
-        self.assertIn('if name == "IMC"', source)
+        self.assertIn('or training_has_middle', source)
         self.assertIn('column_keys = ("Left", "Middle", "Right")', source)
         self.assertIn('column_keys = ("Left", "Right")', source)
         self.assertNotIn("stacked =", source)
+
+    def test_intel_timings_sections_balance_across_three_columns(self):
+        layout = timings_three_column_layout({
+            "Primary", "Secondary", "Command", "Refresh timings",
+            "Tertiary", "CAS to CAS", "Power down", "Other Timings",
+        })
+        self.assertEqual(
+            [layout[name] for name in (
+                "Primary", "Secondary", "Command", "Refresh timings",
+                "Tertiary", "CAS to CAS", "Power down", "Other Timings",
+            )],
+            ["Left", "Left", "Left", "Middle", "Middle",
+             "Right", "Right", "Right"],
+        )
+
+    def test_am5_timings_sections_use_all_three_columns(self):
+        layout = timings_three_column_layout({
+            "Primary", "Secondary", "Refresh timings", "CAS to CAS",
+            "Power down", "Stagger", "Mode register", "Turnaround",
+            "Read to read", "Write to write", "PHY",
+            "Preamble / postamble",
+        })
+        self.assertEqual(layout["Primary"], "Left")
+        self.assertEqual(layout["Power down"], "Middle")
+        self.assertEqual(layout["Refresh timings"], "Right")
 
         from rochviewer.ui.main import SKEW_SECTION_ORDER
 
         self.assertEqual(
             SKEW_SECTION_ORDER,
-            ("RTT", "ODT", "RON", "ODT DELAY",
-             "DFE", "VREF", "ODTL",
-             "Command", "Mode Registers", "DQS", "Preamble", "ECS"),
+            ("RTT", "ODT", "RON", "ODT DELAY", "VREF",
+             "DLL / LATENCY", "DATA CONTROL", "DFE", "ODTL", "MPR / WRITE",
+             "Command", "PARITY / CRC", "REFRESH / POWER",
+             "PREAMBLE / PPR", "MR0 / MR1", "MR2 / MR3", "MR4",
+             "MR5 / MR6", "Mode Registers", "DQS", "Preamble", "ECS"),
         )
 
     def test_training_keeps_its_right_column(self):
@@ -184,22 +295,37 @@ class ChromeTest(unittest.TestCase):
         self.assertIn("available_columns = set(self.grid_frames[tab_name])", source)
         self.assertIn('timing.get("Column", "Left") != "Left"', source)
 
+    def test_training_sections_share_value_alignment_per_column(self):
+        source = inspect.getsource(TimingGUI.create_section)
+        self.assertNotIn(
+            'section_frame if tab_name == "Training" else parent', source
+        )
+        self.assertGreaterEqual(source.count('(tab_name, id(parent))'), 3)
+
     def test_imc_uses_the_balanced_three_column_section_order(self):
         from rochviewer.ui.main import IMC_SECTION_ORDER
 
         self.assertEqual(
             IMC_SECTION_ORDER,
-            ("VREF", "Command", "ODTL", "Refresh",
+            ("VREF", "Command", "ODTL", "Refresh", "Power Down",
              "DATA", "CMD", "CLK", "CTL", "SComp",
-             "MISC Additional", "Features", "Power Down"),
+             "MISC Additional", "Features",
+             "MR0 / MR1", "MR2 / MR3", "MR4", "MR5 / MR6"),
         )
+
+    def test_tab_height_grows_below_a_fixed_top_edge(self):
+        resize = inspect.getsource(TimingGUI._resize_for_tab)
+        self.assertIn("x = self.root.winfo_x()", resize)
+        self.assertIn("y = self.root.winfo_y()", resize)
+        self.assertNotIn("centre_x", resize)
+        self.assertNotIn("centre_y", resize)
 
     def test_module_selector_is_built_for_summary_and_module_aware_tabs(self):
         source = inspect.getsource(TimingGUI.create_widgets)
         self.assertNotIn("bottom_part_number_frame", source)
         summary_branch = source[
             source.index('if name == "Summary"'):
-            source.index('if name == "System Info"')
+            source.index("# Timings uses three columns")
         ]
         self.assertIn("_build_summary_module_selector", summary_branch)
         self.assertEqual(source.count("_build_summary_module_selector"), 1)
@@ -224,15 +350,35 @@ class ChromeTest(unittest.TestCase):
             }),
         )
         source = inspect.getsource(TimingGUI._on_tab_changed)
-        self.assertIn("_extend_tab_shading_to_viewport", source)
+        self.assertIn("_finish_tab_shading", source)
+        self.assertIn("after_cancel", source)
         self.assertIn("after_idle", source)
+        finish = inspect.getsource(TimingGUI._finish_tab_shading)
+        self.assertIn("_extend_tab_shading_to_viewport", finish)
         extension = inspect.getsource(TimingGUI._extend_tab_shading_to_viewport)
+        self.assertIn("_shading_viewports", extension)
         self.assertIn("self.tabview.tab(tab_name)", extension)
+        self.assertIn("table_top", extension)
+        self.assertIn("(bottom - table_top) / float(pitch)", extension)
 
-    def test_system_info_columns_stack_without_cross_column_padding(self):
-        # Four identity sections face only two clock/memory sections. Pairing
-        # them inserts blank rows between Processor and Motherboard.
+    def test_system_info_columns_are_independent(self):
+        # Four left sections face two right sections. Pairing them would insert
+        # blank rows between Processor and Motherboard instead of stacking each
+        # column naturally from its own top.
         self.assertNotIn("System Info", PAIRED_SECTION_TABS)
+
+    def test_system_info_uses_two_side_by_side_columns(self):
+        source = inspect.getsource(TimingGUI.create_widgets)
+        self.assertNotIn("left_info_frame", source)
+        self.assertIn('column_keys = ("Left", "Right")', source)
+        self.assertEqual(TimingGUI.SYSTEM_INFO_TEXT_INSET, 0)
+        self.assertIn("padx=0", source)
+
+    def test_system_info_spacing_preserves_continuous_row_shading(self):
+        source = inspect.getsource(TimingGUI.create_section)
+        self.assertIn("SYSTEM_INFO_TEXT_INSET", source)
+        self.assertIn('parent is system_info_frames.get("Right")', source)
+        self.assertGreaterEqual(source.count("padx=name_padx"), 5)
 
     def test_system_info_section_names_are_shaded_rows(self):
         from rochviewer.ui.main import CONTINUOUS_SECTION_TABS
@@ -243,6 +389,14 @@ class ChromeTest(unittest.TestCase):
             "self.VALUE_COLOR if uniform_header else self.SUBTITLE_COLOR",
             source,
         )
+
+    def test_hidden_columns_are_grouped_by_widget_for_shading(self):
+        source = inspect.getsource(TimingGUI._extend_column_shading)
+        self.assertIn('section["body"].master.master', source)
+        self.assertNotIn("winfo_rootx()", source)
+        self.assertIn("tab_name in CONTINUOUS_SECTION_TABS", source)
+        self.assertIn('sum(1 + section["drawn"]', source)
+        self.assertIn("(delta + pitch - 1) // pitch", source)
 
     def test_the_footer_links_to_the_handle_it_names(self):
         self.assertEqual(TimingGUI.TWITTER_URL,

@@ -14,21 +14,20 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""DDR4 SPD identity: the serial and build date, read off the module.
+"""DDR4 SPD identity, read from the module's EE1004 EEPROM.
 
-SMBIOS carries no build date at all and reports a serial only when firmware
-found one, so these two rows have nothing behind them unless the module's own
-SPD is read. On DDR5 that is :mod:`ddr5_spd`; this is the DDR4 half.
+SMBIOS carries no build date and may omit the serial and DRAM vendor, so these
+rows need the module's own SPD. On DDR5 that is :mod:`ddr5_spd`; this is the
+DDR4 half.
 
-Nothing here writes. That is the whole design constraint, and it is what makes
-the module different from its DDR5 counterpart:
+Nothing here can write EEPROM data. DDR4 page selection does require the
+standard volatile EE1004 Send Byte command at fixed SPA0/SPA1 addresses; the
+transport exposes that selector directly and never accepts an EEPROM write.
 
 A DDR4 module's SPD is 512 bytes exposed 256 at a time, and the manufacturing
-block -- bytes 320 to 352 -- is in the upper half. Selecting which half the
-EEPROM presents is a write, to the separate SPA0/SPA1 addresses, and this
-project's SMBus transport does not write outside its allowlist. So this module
-does not select anything: it reads the window as the firmware left it and
-proves, from the bytes themselves, which half it is looking at.
+block -- bytes 320 to 352 -- is in the upper half. The reader selects page 1,
+reads the identity bytes while holding the shared SMBus mutex, then restores
+page 0 for the next tool.
 
 The proof is the part number. Bytes 329-348 are twenty ASCII characters, and
 on the Z790-P bench registers 0x49-0x5C read "F4-3600C14-16GVKA" -- which is
@@ -38,15 +37,15 @@ agree: 0x04CD at register 0x40 is G.Skill, the module maker, and 0x80CE at
 0x5E is Samsung, the DRAM maker. Three fields from three different parts of
 the block, all landing where the upper half puts them.
 
-If that check fails -- a module whose window is on the lower half, or an
-unreadable bus -- this reports nothing and the rows fall back to SMBIOS. It
-never decodes a block it has not first confirmed the alignment of.
+If that check fails because the bus is unreadable, this reports nothing and
+the rows fall back to SMBIOS. It never decodes a block it has not first
+confirmed from the part number.
 
-Both sticks on the bench read zero for the location, the date, the serial, the
-module revision and the DRAM stepping: G.Skill ships this kit with the whole
-optional part of the block unprogrammed. That is why those rows show nothing
-here, and it is a reading rather than a failure to read -- the part number two
-registers along comes back perfectly from the same transaction.
+Optional bytes may be unprogrammed even when the read succeeded. The original
+G.Skill bench kit has zeros across that optional block. The Acer
+BL.9BWWR.298 kit used for the 1.0.5 fix supplies week 10 of 2022 and Samsung
+stepping 0x42, while its serial is zero; firmware and the reference display it
+state as ``0``.
 """
 
 from rochviewer.memory.ddr5_spd import EM_DASH, decode_jep106_id, decode_manufacture_date
@@ -99,11 +98,11 @@ def decode_part_number(values):
 
 
 def decode_serial_number(values):
-    """The serial as eight hex digits, or an em dash.
+    """The serial as eight hex digits, ``0``, or an em dash.
 
-    All four bytes zero is an unprogrammed block, not a serial of zero. Both
-    bench sticks read that way, and printing 00000000 would put a serial on a
-    module that never gave one.
+    Some DDR4 modules leave all four bytes zero. Firmware and the reference expose that
+    state as serial ``0``, so preserve it rather than making a successful SPD
+    read look unavailable. An all-FF block is still an erased/unreadable value.
     """
     digits = ""
     for offset in range(SPD_SERIAL_NUMBER,
@@ -112,7 +111,9 @@ def decode_serial_number(values):
         if byte is None:
             return EM_DASH
         digits += "%02X" % (int(byte) & 0xFF)
-    if not digits.strip("0") or not digits.strip("F"):
+    if not digits.strip("0"):
+        return "0"
+    if not digits.strip("F"):
         return EM_DASH
     return digits
 
@@ -143,9 +144,8 @@ def decode_identity(values):
     }
 
 
-# Every register the block needs, read one at a time. There is no block read
-# here: read_spd is the DDR5 hub protocol and selects pages, which is exactly
-# what this module must not do.
+# Registers needed from DDR4's upper manufacturing page. The transport reads
+# their contiguous range after selecting EE1004 page 1.
 IDENTITY_REGISTERS = (
     tuple(range(SPD_MODULE_MFG_ID, SPD_MODULE_MFG_ID + 2))
     + (SPD_MFG_LOCATION, SPD_MFG_YEAR, SPD_MFG_WEEK)
@@ -211,9 +211,15 @@ def _read_one(reader, address, controller):
     try:
         if not reader.probe_address(address, controller):
             return None
-        values = {}
-        for register in IDENTITY_REGISTERS:
-            values[register] = reader.read_byte(address, register, controller)
+        start = 0x100 + min(IDENTITY_REGISTERS)
+        end = 0x100 + max(IDENTITY_REGISTERS) + 1
+        absolute = reader.read_ddr4_spd(
+            address, start, end - start, controller
+        )
+        values = {
+            position - 0x100: value
+            for position, value in absolute.items()
+        }
     except (OSError, TimeoutError, ValueError):
         return None
     identity = decode_identity(values)

@@ -169,9 +169,9 @@ def summary_system_memory_blocks(available_names):
         #
         # The effective DRAM Ratio sits below BCLK, followed by Nitro.
         #
-        # Processor identity occupies the first row above. The second is the
-        # board identity in the same order as System Info: maker, model, BIOS.
-        add(("Manufacturer", "Model", "BIOS"))
+        # Processor identity occupies the first row above. The second keeps
+        # the board model and BIOS; its manufacturer remains on System Info.
+        add(("Model", "BIOS"))
         add(("AGESA",))
         add_aligned(("DRAM Frequency", "BCLK", "MCLK"))
         add_aligned(("Memory Capacity", "DRAM Ratio", "FCLK", "Power Down Mode"))
@@ -206,7 +206,7 @@ def summary_system_memory_blocks(available_names):
     # -- it is an AM5 clock, and the AM5 block above places it. Adding a name
     # here that never resolves would cost a permanent hole in the row.
     #
-    add(("Manufacturer", "Model", "BIOS"))
+    add(("Model", "BIOS"))
     # Three compact columns keep the strip readable in the fixed-width window.
     add_aligned(("DRAM Frequency", "BCLK", "MCLK"))
     add_aligned(("Memory Capacity", "QCLK Ratio", "Uncore"))
@@ -339,24 +339,66 @@ TIMINGS_SECTION_ORDER = (
     "Drive Strength",
 )
 
+# Timings is wide enough for three columns.  Keep whole sections together and
+# use the third column to make the full table fit vertically without a
+# scrollbar.  Intel and AM5 expose different section sets, so each platform
+# gets a layout that follows its own natural reading groups.
+INTEL_TIMINGS_THREE_COLUMN_LAYOUT = {
+    "Primary": "Left",
+    "Secondary": "Left",
+    "Command": "Left",
+    "Refresh timings": "Middle",
+    "Tertiary": "Middle",
+    "CAS to CAS": "Right",
+    "Power down": "Right",
+    "Other Timings": "Right",
+}
+
+AM5_TIMINGS_THREE_COLUMN_LAYOUT = {
+    "Primary": "Left",
+    "Secondary": "Left",
+    "CAS to CAS": "Left",
+    "Power down": "Middle",
+    "Stagger": "Middle",
+    "Mode register": "Middle",
+    "Preamble / postamble": "Middle",
+    "Refresh timings": "Right",
+    "Turnaround": "Right",
+    "Read to read": "Right",
+    "Write to write": "Right",
+    "PHY": "Right",
+}
+
+
+def timings_three_column_layout(categories):
+    """Return the balanced Timings layout for the active platform."""
+    categories = set(categories)
+    if categories & {"Command", "Tertiary", "Other Timings"}:
+        return INTEL_TIMINGS_THREE_COLUMN_LAYOUT
+    return AM5_TIMINGS_THREE_COLUMN_LAYOUT
+
 # The module-aware Training page uses two taller columns at the fixed 700px
 # width. Keep related groups together and make their order explicit.
 SKEW_SECTION_ORDER = (
     # The termination stack stays intact in the first column.
-    "RTT", "ODT", "RON", "ODT DELAY",
-    # Receiver training finishes the first column; references and controller
-    # training state fill the second.
-    "DFE", "VREF", "ODTL",
-    "Command", "Mode Registers", "DQS", "Preamble", "ECS",
+    "RTT", "ODT", "RON", "ODT DELAY", "VREF",
+    # Latency and data controls follow the termination/reference stack.
+    "DLL / LATENCY", "DATA CONTROL", "DFE", "ODTL", "MPR / WRITE",
+    # Command, integrity, refresh, and preamble state share the third column.
+    "Command", "PARITY / CRC", "REFRESH / POWER", "PREAMBLE / PPR",
+    # Legacy section names remain as fallbacks for other memory generations.
+    "MR0 / MR1", "MR2 / MR3", "MR4", "MR5 / MR6",
+    "Mode Registers", "DQS", "Preamble", "ECS",
 )
 
 # Shared memory-controller and PHY values use three explicit columns. CMD is
 # the signal-compensation group; Command is the controller configuration
 # group, so both names are intentionally present.
 IMC_SECTION_ORDER = (
-    "VREF", "Command", "ODTL", "Refresh",
+    "VREF", "Command", "ODTL", "Refresh", "Power Down",
     "DATA", "CMD", "CLK", "CTL", "SComp",
-    "MISC Additional", "Features", "Power Down",
+    "MISC Additional", "Features",
+    "MR0 / MR1", "MR2 / MR3", "MR4", "MR5 / MR6",
 )
 
 
@@ -462,7 +504,7 @@ def summary_system_memory_names():
     # Timings, Training and IMC rather than the compact Summary.
     return [
         "CPU", "Cores / Threads", "Microcode",
-        "Manufacturer", "Model", "BIOS", "AGESA",
+        "Model", "BIOS", "AGESA",
         "BCLK", "QCLK Ratio", "Uncore", "FCLK", "MCLK", "UCLK",
         "DRAM Frequency",
         "DRAM Ratio", "UCLK:MCLK", "Gear Mode",
@@ -543,10 +585,11 @@ SUMMARY_SIGNAL_TAIL_ANCHOR = "Clk Vref Dn"
 
 
 def summary_vref_row_names(timings):
-    """Return the VREF rows for the Summary signal panel, in table order."""
+    """Return the IMC VREF rows Summary keeps, in their table order."""
     names = [
         timing.get("name") for timing in timings
-        if timing.get("Category") == "VREF"
+        if timing.get("Tab") == "IMC"
+        and timing.get("Category") == "VREF"
         and not str(timing.get("name")).startswith(
             SUMMARY_EXCLUDED_VREF_PREFIXES
         )
@@ -675,10 +718,14 @@ def intel_summary_timing_columns(timings):
         name for name in wanted("Tertiary")
         if name not in ("tREFI", "tREFIx9", "tCKE", "tXP")
     ]
-    # tMOD follows the final write-to-write turnaround. The four compact RTL
-    # pairs sit directly below it; the full per-rank table remains on RTL.
+    # tMOD follows the final write-to-write turnaround. The full per-rank RTL
+    # table remains on its dedicated tab; Summary's four pairs sit with the
+    # precharge timings in the first column below tWRPRE.
     tertiary = insert_summary_rows_after(tertiary, "tWRWR_dd", ["tMOD"])
-    return primary_secondary, insert_summary_rtl_after(tertiary, "tMOD")
+    primary_secondary = insert_summary_rtl_after(
+        primary_secondary, "tWRPRE"
+    )
+    return primary_secondary, tertiary
 
 
 def am5_summary_timing_columns(timings):
@@ -760,13 +807,17 @@ class TimingGUI:
         # Section heading labels on continuous tabs, so their height can be
         # matched to a measured data row once the rows exist.
         self._section_headers = {}
+        # Tab switches resize first and finish viewport-only shading once the
+        # geometry settles. Cache completed sizes and keep only the newest
+        # idle callback so rapid clicks do not queue redundant full layouts.
+        self._shading_viewports = {}
+        self._tab_shading_job = None
         self.build_title_bar()
         self.create_widgets()
         self.setup_window_geometry()
         self.load_all_tabs_content()
-        # Level every tab to the same fixed viewport. The application is
-        # intentionally 750x775; tab content no longer changes its window
-        # geometry after startup.
+        # Align the columns after every page has its real requested size.
+        # Window geometry itself follows the per-tab presets below.
         self._stretch_tab_halves()
         self.start_live_refresh()
         self.root.after(BLANK_RETRY_MS, self._retry_blank_values)
@@ -788,6 +839,12 @@ class TimingGUI:
     # the resize border (a grip sits in the footer instead).
     TITLE_BAR_HEIGHT = 30
     TITLE_BUTTON_WIDTH = 44
+    TITLE_CLOSE_FONT = ("Segoe UI Symbol", 20)
+    TITLE_MINIMIZE_FONT = ("Segoe UI Symbol", 18)
+    TITLE_THEME_FONT = ("Segoe UI Symbol", 18)
+    TITLE_THEME_WIDTH = 36
+    LIGHT_MODE_ICON = "☀"
+    DARK_MODE_ICON = "☾"
     CLOSE_HOVER_COLOR = "#C42B1C"
 
     def build_title_bar(self):
@@ -796,7 +853,7 @@ class TimingGUI:
         self.restore_taskbar_button()
 
         bar = ctk.CTkFrame(self.root, height=self.TITLE_BAR_HEIGHT,
-                           corner_radius=0, fg_color=self.HEADER_COLOR)
+                           corner_radius=0, fg_color=self.BG_COLOR)
         bar.pack(fill="x", side="top")
         bar.pack_propagate(False)
         self.title_bar = bar
@@ -825,16 +882,34 @@ class TimingGUI:
         )
         title.pack(side="left", padx=(6, 10))
 
-        for text, command, hover in (
-            ("✕", self.root.destroy, self.CLOSE_HOVER_COLOR),
-            ("–", self.minimize_window, self.TAB_UNSELECTED_HOVER_COLOR),
+        for text, command, hover, font in (
+            ("×", self.root.destroy, self.CLOSE_HOVER_COLOR,
+             self.TITLE_CLOSE_FONT),
+            ("−", self.minimize_window, self.TAB_UNSELECTED_HOVER_COLOR,
+             self.TITLE_MINIMIZE_FONT),
         ):
             ctk.CTkButton(
                 bar, text=text, command=command,
                 width=self.TITLE_BUTTON_WIDTH, height=self.TITLE_BAR_HEIGHT,
                 corner_radius=0, fg_color="transparent", hover_color=hover,
-                text_color=self.TEXT_COLOR, font=self.COMPACT_BOLD,
+                text_color=self.TEXT_COLOR, font=font,
             ).pack(side="right")
+
+        # The icon names the mode the button will switch to. Packed after the
+        # minimize control so it lands immediately to its left.
+        self.appearance_button = ctk.CTkButton(
+            bar,
+            text=self.appearance_toggle_icon(),
+            command=self.toggle_appearance_mode,
+            width=self.TITLE_THEME_WIDTH,
+            height=self.TITLE_BAR_HEIGHT,
+            corner_radius=0,
+            fg_color="transparent",
+            hover_color=self.TAB_UNSELECTED_HOVER_COLOR,
+            text_color=self.TEXT_COLOR,
+            font=self.TITLE_THEME_FONT,
+        )
+        self.appearance_button.pack(side="right")
 
         # The strip, its title and the logo all drag: a widget sitting on the
         # bar would otherwise be a dead patch in the middle of it.
@@ -1022,6 +1097,8 @@ class TimingGUI:
         self.COMPACT_FONT_SIZE = 12
         self.COMPACT_FONT = (self.GLOBAL_FONT_FAMILY, self.COMPACT_FONT_SIZE)
         self.COMPACT_BOLD = (self.GLOBAL_FONT_FAMILY, self.COMPACT_FONT_SIZE, "bold")
+        self.TRAINING_FONT = self.COMPACT_FONT
+        self.TRAINING_BOLD = self.COMPACT_BOLD
         self.HEADER_FONT = (self.GLOBAL_FONT_FAMILY, 12, "bold")
         self.TAB_FONT = (self.GLOBAL_FONT_FAMILY, 13, "bold")
         self.ROW_PADX = 0
@@ -1062,7 +1139,6 @@ class TimingGUI:
         # blue it replaced was light enough to carry it.
         self.TAB_SELECTED_TEXT_COLOR = ("#FFFFFF", "#FFFFFF")
         self.TAB_UNSELECTED_HOVER_COLOR = ("#C5D2E0", "#343434")
-        self.HEADER_COLOR = ("#E2E8F0", "#1C1C1C")
         self.SUBTITLE_COLOR = ("#475569", "#B0B0B0")
         # A rule between Summary blocks: visible against both backgrounds
         # without competing with the values, which are the loudest thing on
@@ -1120,7 +1196,7 @@ class TimingGUI:
             return str(mode).title()
         return "Dark"
 
-    # The 750px window has room for the tab list and the three utility
+    # The compact window has room for the tab list and the two utility
     # buttons on one line. Overlay the tools on the tab header so both groups
     # share the same baseline without taking height from the active page.
     TOOL_BUTTON_HEIGHT = 24
@@ -1130,10 +1206,12 @@ class TimingGUI:
     def build_tab_strip_tools(self):
         bar = ctk.CTkFrame(
             self.tabview, corner_radius=0, fg_color="transparent",
-            width=self.TOOL_BUTTON_WIDTH * 3 + self.TOOL_BUTTON_GAP * 2,
+            width=self.TOOL_BUTTON_WIDTH * 2 + self.TOOL_BUTTON_GAP,
             height=self.TOOL_BUTTON_HEIGHT,
         )
-        bar.place(relx=1.0, x=-8, y=10, anchor="ne")
+        # Four pixels from the right keeps the two tools clear of the tab
+        # strip even on Summary's 700px preset.
+        bar.place(relx=1.0, x=-4, y=10, anchor="ne")
         self.appearance_toolbar = bar
 
         def tool(text, command):
@@ -1146,15 +1224,6 @@ class TimingGUI:
                 hover_color=self.TAB_UNSELECTED_HOVER_COLOR,
                 text_color=self.TEXT_COLOR, font=self.TAB_FONT,
             )
-
-        # The label names the action: in dark mode it offers Light, and in
-        # light mode it offers Dark.
-        next_mode = "Light" if self.appearance_mode == "Dark" else "Dark"
-        self.appearance_button = tool(next_mode,
-                                      self.toggle_appearance_mode)
-        self.appearance_button.pack(
-            side="right", padx=(self.TOOL_BUTTON_GAP, 0)
-        )
 
         # Every row from the reading tabs in one searchable list. The tabs are
         # laid out for reading a set at a glance, which is the wrong shape
@@ -1170,11 +1239,18 @@ class TimingGUI:
         self.telemetry_button.pack(side="right")
 
     def toggle_appearance_mode(self):
-        """Swap Light for Dark, and say which one is now on."""
+        """Swap Light for Dark and update the title-bar action icon."""
         self.change_appearance_mode(
             "Light" if self.appearance_mode == "Dark" else "Dark")
-        next_mode = "Light" if self.appearance_mode == "Dark" else "Dark"
-        self.appearance_button.configure(text=next_mode)
+        self.appearance_button.configure(text=self.appearance_toggle_icon())
+
+    def appearance_toggle_icon(self):
+        """Sun in dark mode, moon in light mode: the mode a click applies."""
+        return (
+            self.LIGHT_MODE_ICON
+            if self.appearance_mode == "Dark"
+            else self.DARK_MODE_ICON
+        )
 
     def change_appearance_mode(self, mode):
         """Apply and remember the selected Light or Dark appearance."""
@@ -1251,7 +1327,7 @@ class TimingGUI:
                 existing = []
                 groups.append((title, existing))
             existing.append(
-                (timing.get("name", ""),
+                (timing.get("display_name", timing.get("name", "")),
                  lambda item=timing: self._read_compact_value(item),
                  timing.get("Parent"))
             )
@@ -1311,7 +1387,9 @@ class TimingGUI:
             existing.focus()
             return
         try:
-            from rochviewer.ui.advanced_window import AdvancedWindow
+            from rochviewer.ui.advanced_window import (
+                WINDOW_HEIGHT, WINDOW_WIDTH, AdvancedWindow,
+            )
         except Exception as exc:
             print(f"Advanced window unavailable: {exc}")
             return
@@ -1335,6 +1413,9 @@ class TimingGUI:
             channel_labels=self._channel_headers(None, "A1", "B1"),
             on_close=lambda: setattr(self, "_advanced_window", None),
             icon_path=self.icon_path(),
+            position=self.adjacent_window_position(
+                "right", WINDOW_WIDTH, WINDOW_HEIGHT
+            ),
         )
 
     def open_dimm_telemetry(self):
@@ -1346,7 +1427,9 @@ class TimingGUI:
             return
         try:
             from rochviewer.memory.ddr5_telemetry import read_dimm_telemetry
-            from rochviewer.ui.dimm_telemetry_window import DimmTelemetryWindow
+            from rochviewer.ui.dimm_telemetry_window import (
+                WINDOW_HEIGHT, WINDOW_WIDTH, DimmTelemetryWindow,
+            )
         except Exception as exc:
             print(f"DIMM telemetry unavailable: {exc}")
             return
@@ -1375,7 +1458,33 @@ class TimingGUI:
             ),
             sensor_groups=self.sensor_groups(),
             icon_path=self.icon_path(),
+            position=self.adjacent_window_position(
+                "left", WINDOW_WIDTH, WINDOW_HEIGHT
+            ),
         )
+
+    def adjacent_window_position(self, side, popup_width, popup_height,
+                                 gap=8):
+        """Place a pop-out beside the main viewer, falling back on-screen."""
+        self.root.update_idletasks()
+        main_x = self.root.winfo_x()
+        main_y = self.root.winfo_y()
+        main_width = self.root.winfo_width()
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+
+        left = main_x - popup_width - gap
+        right = main_x + main_width + gap
+        if side == "left":
+            x = left if left >= 0 else right
+        elif side == "right":
+            x = right if right + popup_width <= screen_width else left
+        else:
+            raise ValueError(f"Unknown adjacent window side: {side}")
+
+        x = max(0, min(int(x), max(0, screen_width - popup_width)))
+        y = max(0, min(int(main_y), max(0, screen_height - popup_height)))
+        return x, y
 
     def get_memory_part_numbers(self):
         """Return the installed modules per channel, named by the board's own
@@ -1431,7 +1540,9 @@ class TimingGUI:
         channel_a, channel_b = self.get_memory_part_numbers()
         self._prepare_module_choices(channel_a, channel_b)
         self.main_frame = ctk.CTkFrame(self.root, corner_radius=6, fg_color=self.BG_COLOR)
-        self.main_frame.pack(fill="both", expand=True, padx=5, pady=(2, 4))
+        # Keep the compact chrome inset while leaving the three-column
+        # Timings table enough usable width inside the 750px window.
+        self.main_frame.pack(fill="both", expand=True, padx=2, pady=(2, 4))
 
         self.build_footer()
         self.build_driver_notice()
@@ -1521,10 +1632,9 @@ class TimingGUI:
                     column_frame = ctk.CTkFrame(
                         frame, corner_radius=0, fg_color=self.BG_COLOR
                     )
-                    # Equal-width columns, top-aligned content, full panel width.
-                    # No gutter: the row shading has to carry across the
-                    # whole tab, and a gap between columns would break every
-                    # band into three.
+                    # Columns touch so a shaded row remains continuous. The
+                    # layout pass reserves the 25px content gap inside each
+                    # leading column instead of cutting a hole between frames.
                     column_frame.grid(row=1, column=column, sticky="nsew")
                     column_frame.grid_columnconfigure(0, weight=1)
                     compact_columns.append(column_frame)
@@ -1537,41 +1647,27 @@ class TimingGUI:
                 )
                 continue
 
-            if name == "System Info":
-                # The two logical columns stack at the compact 700px width.
-                # The tab scrolls, so every optional hardware row remains
-                # reachable without shrinking the restored 12px font.
-                frame.grid_columnconfigure(0, weight=1)
-                frame.grid_rowconfigure(0, weight=0)
-                frame.grid_rowconfigure(1, weight=0)
-                left_info_frame = ctk.CTkFrame(
-                    frame, corner_radius=0, fg_color=self.BG_COLOR
-                )
-                left_info_frame.grid(row=0, column=0, sticky="nsew")
-                left_info_frame.grid_columnconfigure(0, weight=1)
-                right_info_frame = ctk.CTkFrame(
-                    frame, corner_radius=0, fg_color=self.BG_COLOR
-                )
-                right_info_frame.grid(row=1, column=0, sticky="nsew")
-                right_info_frame.grid_columnconfigure(0, weight=1)
-                self.grid_frames[name] = {
-                    "Left": left_info_frame,
-                    "Right": right_info_frame,
-                }
-                continue
-
-            # Timings, Training, and RTL use two columns. IMC uses three
-            # columns so its grouped controls remain compact at 750px.
+            # Timings uses three columns. Training selects three only when its
+            # active profile still has a middle group; the tall DDR4 layout
+            # and the tall IMC layout use two wider columns.
             uniform = None if name in SHADED_TABS else "equal"
-            if name == "IMC":
+            training_has_middle = (
+                name == "Training"
+                and any(
+                    timing.get("Tab") == "Training"
+                    and timing.get("Column") == "Middle"
+                    for timing in TIMINGS
+                )
+            )
+            if name == "Timings" or training_has_middle:
                 column_keys = ("Left", "Middle", "Right")
             else:
                 column_keys = ("Left", "Right")
             for column in range(len(column_keys)):
                 frame.grid_columnconfigure(column, weight=1, uniform=uniform)
-            # The halves of a banded tab touch, so a row's shading runs across
-            # the tab in one piece. Everywhere else they keep their gutter.
-            gutter = 0 if name in SHADED_TABS else 3
+            # Columns touch so row shading crosses the full table. The 25px
+            # content gap is reserved by _stretch_tab_halves inside every
+            # leading column rather than left as an unpainted frame gutter.
             detail_columns = {}
             last = len(column_keys) - 1
             for column, key in enumerate(column_keys):
@@ -1582,10 +1678,7 @@ class TimingGUI:
                     row=0,
                     column=column,
                     sticky="nsew",
-                    padx=(
-                        gutter if column else 0,
-                        gutter if column < last else 0,
-                    ),
+                    padx=0,
                 )
                 column_frame.grid_columnconfigure(0, weight=1)
                 detail_columns[key] = column_frame
@@ -1600,12 +1693,24 @@ class TimingGUI:
         self.tabview.configure(command=self._on_tab_changed)
 
     def _on_tab_changed(self):
-        """Finish the empty portion of short banded tabs when they are shown."""
+        """Apply the active page's size and finish any empty table bands."""
         tab_name = self.tabview.get()
+        self._resize_for_tab(tab_name)
+        if self._tab_shading_job is not None:
+            try:
+                self.root.after_cancel(self._tab_shading_job)
+            except Exception:
+                pass
+            self._tab_shading_job = None
         if tab_name in VIEWPORT_SHADED_TABS:
-            self.root.after_idle(
-                lambda name=tab_name: self._extend_tab_shading_to_viewport(name)
+            self._tab_shading_job = self.root.after_idle(
+                lambda name=tab_name: self._finish_tab_shading(name)
             )
+
+    def _finish_tab_shading(self, tab_name):
+        """Run only the newest tab's post-resize shading pass."""
+        self._tab_shading_job = None
+        self._extend_tab_shading_to_viewport(tab_name)
 
     def _build_summary_module_selector(
         self, parent, channel_a, channel_b
@@ -2015,33 +2120,75 @@ class TimingGUI:
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
 
-        # Fixed application size. Content is laid out inside this viewport;
-        # the number of Summary columns does not resize the top-level window.
-        window_width = self.WINDOW_WIDTH
-        window_height = min(self.WINDOW_HEIGHT,
-                            max(self.MIN_WINDOW_HEIGHT, screen_height - 120))
+        window_width, window_height = self.window_size_for_tab(
+            self.tabview.get(), screen_height
+        )
         x = max(0, (screen_width - window_width) // 2)
-        y = max(0, (screen_height - window_height) // 2)
+        # Choose the vertical position from the tallest tab. Shorter tabs then
+        # grow downward from the same title-bar position when selected.
+        tallest_height = max(
+            self.window_size_for_tab(name, screen_height)[1]
+            for name in self.TAB_WINDOW_SIZES
+        )
+        y = max(0, (screen_height - tallest_height) // 2)
 
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
-        self.root.minsize(self.WINDOW_WIDTH, self.MIN_WINDOW_HEIGHT)
+        self.root.minsize(self.MIN_WINDOW_WIDTH, self.MIN_WINDOW_HEIGHT)
+
+    @classmethod
+    def window_size_for_tab(cls, tab_name, screen_height=None):
+        """Return the requested width and height for one main tab."""
+        width, height = cls.TAB_WINDOW_SIZES.get(
+            tab_name, (cls.WINDOW_WIDTH, cls.WINDOW_HEIGHT)
+        )
+        if screen_height is not None:
+            height = min(
+                height,
+                max(cls.MIN_WINDOW_HEIGHT, int(screen_height) - 120),
+            )
+        return max(cls.MIN_WINDOW_WIDTH, width), max(
+            cls.MIN_WINDOW_HEIGHT, height
+        )
+
+    def _resize_for_tab(self, tab_name):
+        """Change tab height below the fixed current top-left corner."""
+        # The tab command runs after the selection changed. Flushing idle work
+        # here draws that dense page once at the previous tab's dimensions and
+        # again after geometry(), which makes every switch visibly stutter.
+        # winfo geometry is already current from the preceding event loop, so
+        # resize immediately and let Tk perform one layout at the target size.
+        screen_height = self.root.winfo_screenheight()
+        width, height = self.window_size_for_tab(tab_name, screen_height)
+
+        x = self.root.winfo_x()
+        y = self.root.winfo_y()
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
 
     # Tabs drawn without a scrollbar, because the window is sized to fit
     # them whole. Anything taller than the window would be cut off unseen
     # here rather than reachable, so a tab only belongs on this list while
     # its content clears the viewport -- see the fit check in the tests.
-    # Summary fits at the requested height. System Info stacks its identity
-    # groups, while Timings and Training draw two side-by-side columns; those
-    # longer pages scroll. Module selectors remain fixed below scrolling
-    # content where applicable.
+    # Every main tab fits at its requested height, including the tall IMC
+    # table, so none gives up width to a scrollbar gutter.
     UNSCROLLED_TABS = (
-        "Summary", "RTL", "IMC", "Voltages",
+        "Summary", "System Info", "Timings", "Training", "IMC", "RTL",
+        "Voltages",
     )
 
-    # Compact fixed size. Longer tabs scroll; every shorter tab stays fully
-    # visible without giving up width to a bar.
-    WINDOW_WIDTH = 750
-    WINDOW_HEIGHT = 775
+    # Each page gets enough room for its own column count and row density.
+    # Training stays compact while IMC gets extra width for its three dense
+    # controller-data columns.
+    TAB_WINDOW_SIZES = {
+        "Summary": (750, 750),
+        "System Info": (750, 800),
+        "Timings": (750, 775),
+        "Training": (750, 800),
+        "IMC": (750, 1100),
+        "RTL": (750, 654),
+        "Voltages": (750, 654),
+    }
+    WINDOW_WIDTH, WINDOW_HEIGHT = TAB_WINDOW_SIZES["Summary"]
+    MIN_WINDOW_WIDTH = 700
     MIN_WINDOW_HEIGHT = 654
 
     def _stretch_tab_halves(self):
@@ -2088,15 +2235,38 @@ class TimingGUI:
                 if not used:
                     continue
                 parent = used[0].master
-                if name == "System Info":
-                    parent.grid_columnconfigure(
-                        0, minsize=parent.winfo_width(), weight=1
-                    )
-                    continue
                 # Detail tabs use two to four columns, each as wide as its
                 # content needs to be with the gap between them.
                 if len(used) > 1:
-                    if name == "RTL" and len(used) == 2:
+                    if name == "IMC" and len(used) == 3:
+                        # IMC is one three-column table. Content-first widths
+                        # squeezed the middle group to its shortest labels,
+                        # put the right heading against its final value, and
+                        # left all spare width beyond the right group. Equal
+                        # thirds keep both inter-column gaps consistent.
+                        # Keep the three painted frames equal. Requiring one
+                        # content gap beyond the widest natural column keeps
+                        # adjacent text apart without an unshaded gutter.
+                        third = max(
+                            max(
+                                frame.winfo_reqwidth()
+                                + self.DETAIL_COLUMN_GAP
+                                for frame in used
+                            ),
+                            max(1, parent.winfo_width()) // len(used),
+                        )
+                        for column_frame in used:
+                            grid_column = int(
+                                column_frame.grid_info()["column"]
+                            )
+                            parent.grid_columnconfigure(
+                                grid_column,
+                                minsize=third,
+                                weight=1,
+                                uniform="imc_columns",
+                            )
+                        allocated = third * len(used)
+                    elif name in ("IMC", "RTL") and len(used) == 2:
                         # These are deliberately balanced left/right views.
                         # Applying the normal content-first allocation while
                         # System Info's grid still has ``uniform`` doubles the
@@ -2104,10 +2274,7 @@ class TimingGUI:
                         # tab. RTL also reads correctly only when CHA and CHB
                         # occupy equal halves rather than leaving CHB to absorb
                         # all spare width.
-                        column_gap = (
-                            0 if name in SHADED_TABS
-                            else self.DETAIL_COLUMN_GAP
-                        )
+                        column_gap = self.DETAIL_COLUMN_GAP
                         half = max(
                             max(frame.winfo_reqwidth() for frame in used),
                             (min(widest, parent.winfo_width())
@@ -2130,10 +2297,7 @@ class TimingGUI:
                         # summary_column_width spells out: the draw engine
                         # rounds an odd fill down and leaves a hairline seam.
                         target_width = min(widest, parent.winfo_width())
-                        column_gap = (
-                            0 if name in SHADED_TABS
-                            else self.DETAIL_COLUMN_GAP
-                        )
+                        column_gap = self.DETAIL_COLUMN_GAP
                         allocated = 0
                         for index, column_frame in enumerate(used):
                             grid_column = int(column_frame.grid_info()["column"])
@@ -2155,8 +2319,14 @@ class TimingGUI:
                             allocated += width
                 else:
                     grid_column = int(used[0].grid_info()["column"])
+                    # A one-column tab still fills its own viewport, but it
+                    # must not inherit a wider multi-column tab's total width.
+                    # That pushed Voltages past the right edge after Timings
+                    # gained its third column.
                     parent.grid_columnconfigure(
-                        grid_column, minsize=widest, weight=1
+                        grid_column,
+                        minsize=min(widest, parent.winfo_width()),
+                        weight=1,
                     )
                     # An empty half still asks for CustomTkinter's default
                     # 200px frame, and the grid hands it a slice of the tab
@@ -2698,7 +2868,10 @@ class TimingGUI:
                 text_color=self.TEXT_COLOR,
                 fg_color=bg,
             )
-            name.grid(row=row_index, column=name_column, sticky="nsew")
+            name.grid(
+                row=row_index, column=name_column, sticky="nsew",
+                padx=(0, self.COLUMN_GAP),
+            )
 
             value = ctk.CTkLabel(
                 body,
@@ -2712,7 +2885,13 @@ class TimingGUI:
                 text_color=self.VALUE_COLOR,
                 fg_color=bg,
             )
-            value.grid(row=row_index, column=value_column, sticky="nsew")
+            value.grid(
+                row=row_index, column=value_column, sticky="nsew",
+                padx=(
+                    0,
+                    self.DETAIL_COLUMN_GAP if pair_index == 0 else 0,
+                ),
+            )
 
         return row + 1
 
@@ -3103,7 +3282,10 @@ class TimingGUI:
                 anchor="w", padx=self.ROW_PADX, pady=self.ROW_PADY,
                 text_color=self.TEXT_COLOR, fg_color=bg, bg_color=bg,
             )
-            name_label.grid(row=0, column=column, sticky="w", padx=(0, 4))
+            name_label.grid(
+                row=0, column=column, sticky="w",
+                padx=(0, self.COLUMN_GAP),
+            )
             column += 1
         value_label = ctk.CTkLabel(
             parent,
@@ -3114,7 +3296,10 @@ class TimingGUI:
             padx=self.ROW_PADX, pady=self.ROW_PADY,
             text_color=self.VALUE_COLOR, fg_color=bg, bg_color=bg,
         )
-        value_label.grid(row=0, column=column, sticky="w", padx=(0, 8))
+        value_label.grid(
+            row=0, column=column, sticky="w",
+            padx=(0, self.DETAIL_COLUMN_GAP),
+        )
         # Drawn once and never looked at again, which is why a lost first read
         # stuck here: this is the strip UCLK:MCLK sat blank on.
         self._register_live_value(timing, value_label)
@@ -3144,7 +3329,7 @@ class TimingGUI:
                 # four pixels inside the column it is meant to start on --
                 # and no amount of widening the column could close that,
                 # because the offset was inside the cell.
-                padx=(0, 0 if column == column_count - 1 else 8),
+                padx=0,
             )
             self._summary_about_pair(cell, timing, label_overrides, 0, bg)
 
@@ -3269,13 +3454,21 @@ class TimingGUI:
             primary_secondary_names, "tRC", ("CR",)
         )
 
-        # Summary keeps the high-level electrical groups only. Detailed VREF
-        # levels remain on Training, while the third column reads in the
-        # requested order: Voltages, RTT, ODT, RON.
+        # Summary keeps the high-level electrical groups and the useful IMC
+        # VREF levels. Per-device DQ VREF, QX/RX diagnostics and CKeCs Vref Up
+        # remain on IMC. The third column reads Voltages, RTT, ODT, RON, VREF.
         third_column_sections = [
             {"summary_signal": categories}
             for categories in SUMMARY_SIGNAL_GROUPS
         ]
+        vref_names = summary_vref_row_names(TIMINGS)
+        if vref_names:
+            third_column_sections.append({
+                "title": "VREF",
+                "categories": ("VREF",),
+                "timing_names": vref_names,
+                "show_header": False,
+            })
 
         middle_sections = [{
             "title": "Tertiary",
@@ -3403,6 +3596,12 @@ class TimingGUI:
                     categories.append((category, []))
                     current_category = category
                 categories[-1][1].append(timing["name"])
+            timings_layout = (
+                timings_three_column_layout(cat for cat, _names in categories)
+                if tab_name == "Timings"
+                and "Middle" in self.grid_frames[tab_name]
+                else {}
+            )
             left_column = []
             center_left_column = []
             middle_column = []
@@ -3420,6 +3619,7 @@ class TimingGUI:
             for cat, names in categories:
                 timing_entry = next((t for t in tab_timings if t["Category"] == cat), None)
                 column = timing_entry.get("Column", "Left") if timing_entry else "Left"
+                column = timings_layout.get(cat, column)
                 if single_column:
                     column = "Left"
                 if column == "Left":
@@ -3662,13 +3862,55 @@ class TimingGUI:
 
         halves = {}
         for section in sections:
-            halves.setdefault(section["body"].winfo_rootx(), []).append(section)
+            # Group by the actual detail-column widget rather than screen x.
+            # Hidden tabs report the same root coordinate for both columns,
+            # which collapsed System Info into one group and skipped the fill
+            # rows needed beside the longer Graphics column.
+            column = section["body"].master.master
+            halves.setdefault(column, []).append(section)
         if len(halves) < 2:
+            return
+
+        if tab_name in CONTINUOUS_SECTION_TABS:
+            # Hidden widgets do not have dependable screen heights, but a
+            # continuous column has an exact logical depth: one heading plus
+            # its data rows for every section. Fill by that count so System
+            # Info's short Clock/Memory column reaches Driver Date even while
+            # the tab is still hidden during startup.
+            depths = {
+                column: sum(1 + section["drawn"] for section in group)
+                for column, group in halves.items()
+            }
+            target_depth = max(depths.values())
+            for column, group in halves.items():
+                depth = depths[column]
+                missing = target_depth - depth
+                if missing <= 0:
+                    continue
+                last = max(group, key=lambda item: item["row"])
+                body = last["body"]
+                next_row = last["first_row"] + last["drawn"]
+                for step in range(missing):
+                    bg = (
+                        self.HIGHLIGHT_COLOR
+                        if (depth + step) % 2 else "transparent"
+                    )
+                    body.grid_rowconfigure(
+                        next_row + step, weight=0, minsize=self.ROW_HEIGHT
+                    )
+                    spacer = ctk.CTkLabel(
+                        body, text="", height=self.ROW_HEIGHT,
+                        fg_color=bg, corner_radius=0,
+                    )
+                    spacer.grid(
+                        row=next_row + step, column=0,
+                        columnspan=self.ROW_FILL_SPAN, sticky="nsew",
+                    )
             return
 
         pitch = 0
         feet = {}
-        for x, group in halves.items():
+        for column, group in halves.items():
             for section in group:
                 body = section["body"]
                 for data_row in range(section["drawn"]):
@@ -3676,14 +3918,19 @@ class TimingGUI:
                     if bbox and bbox[3]:
                         pitch = max(pitch, bbox[3])
                 bottom = body.winfo_rooty() + body.winfo_height()
-                if bottom > feet.get(x, (0, None))[0]:
-                    feet[x] = (bottom, section)
+                if bottom > feet.get(column, (0, None))[0]:
+                    feet[column] = (bottom, section)
         if not pitch or len(feet) < 2:
             return
 
         deepest = max(bottom for bottom, _section in feet.values())
-        for x, (bottom, section) in feet.items():
-            missing = int(round((deepest - bottom) / float(pitch)))
+        for column, (bottom, section) in feet.items():
+            delta = deepest - bottom
+            # A section header or font metric can leave the difference just
+            # under an exact row count. Rounding down then stops one stripe
+            # above the longer column (System Info's Driver Date row). Carry
+            # any remainder into one final row so the band reaches the foot.
+            missing = int((delta + pitch - 1) // pitch)
             if missing <= 0:
                 continue
             body = section["body"]
@@ -3715,6 +3962,11 @@ class TimingGUI:
         sections = self._section_bodies.get(tab_name) or []
         if not sections:
             return
+        viewport_size = self.window_size_for_tab(
+            tab_name, self.root.winfo_screenheight()
+        )
+        if self._shading_viewports.get(tab_name) == viewport_size:
+            return
         self.root.update_idletasks()
         viewport = self.tabview.tab(tab_name)
         target_bottom = viewport.winfo_rooty() + viewport.winfo_height() - 2
@@ -3724,6 +3976,19 @@ class TimingGUI:
             body = section["body"]
             if body.winfo_ismapped():
                 groups.setdefault(body.winfo_rootx(), []).append(section)
+
+        # Every continuous column starts at the same y. Derive blank-row
+        # parity from that shared origin instead of from the shorter column's
+        # last widget: its last section can have the opposite local parity,
+        # which made the final System Info stripe disagree across the width.
+        table_top = min(
+            (
+                section["body"].master.winfo_rooty()
+                for section in sections
+                if section["body"].winfo_ismapped()
+            ),
+            default=target_bottom,
+        )
 
         for x, group in groups.items():
             deepest = max(
@@ -3749,16 +4014,13 @@ class TimingGUI:
                 pitch = self.ROW_HEIGHT
 
             next_row = body.grid_size()[1]
-            previous_row = max(0, next_row - 1)
-            shaded = any(
-                "#" in str(child.cget("fg_color"))
-                for child in body.grid_slaves(row=previous_row)
-                if hasattr(child, "cget")
-            )
+            next_band = int(round((bottom - table_top) / float(pitch)))
             while remaining > 0:
-                shaded = not shaded
                 height = min(pitch, remaining)
-                bg = self.HIGHLIGHT_COLOR if shaded else "transparent"
+                bg = (
+                    self.HIGHLIGHT_COLOR
+                    if next_band % 2 else "transparent"
+                )
                 body.grid_rowconfigure(next_row, weight=0, minsize=height)
                 spacer = ctk.CTkLabel(
                     body, text="", height=height, fg_color=bg, corner_radius=0,
@@ -3766,7 +4028,9 @@ class TimingGUI:
                 spacer.grid(row=next_row, column=0,
                             columnspan=self.ROW_FILL_SPAN, sticky="nsew")
                 next_row += 1
+                next_band += 1
                 remaining -= height
+        self._shading_viewports[tab_name] = viewport_size
 
     def _align_summary_value_columns(self):
         """Give every section in a Summary column one name-column width.
@@ -3915,8 +4179,10 @@ class TimingGUI:
         last = len(widths) - 1
         parent = columns[0].master
         for index, width in enumerate(widths):
+            # Reserve the inter-column gap inside the painted column so the
+            # zebra band stays continuous through the spacing.
             width = summary_column_width(
-                width, is_last=index == last, gap=self.COLUMN_GAP
+                width, is_last=index == last, gap=self.DETAIL_COLUMN_GAP
             )
             parent.grid_columnconfigure(
                 index, minsize=width, weight=1 if index == last else 0
@@ -3942,10 +4208,12 @@ class TimingGUI:
     # column beside it: the name column against its first value, and
     # the channel-A column against channel B. Shorter entries in the
     # same column get more, which is what a shared column means.
-    COLUMN_GAP = 20
-    # Space between whole detail-table columns. This is separate from the
-    # 20px A1/B1 value-column rule above and can stay compact at 750px wide.
-    DETAIL_COLUMN_GAP = 8
+    COLUMN_GAP = 25
+    TRAINING_COLUMN_GAP = 25
+    # One consistent gutter between whole table columns on every tab.
+    DETAIL_COLUMN_GAP = 25
+    # The shared column gutter now supplies System Info's separation.
+    SYSTEM_INFO_TEXT_INSET = 0
 
     def _align_dual_columns(self):
         """Line the ChA/ChB columns of every dual section on a tab up with each other.
@@ -3959,7 +4227,7 @@ class TimingGUI:
         split the same way everywhere and the columns end up at the same x.
         """
         self.root.update_idletasks()
-        for frames in self._dual_content_frames.values():
+        for (tab_name, _parent_id), frames in self._dual_content_frames.items():
             widths = [0, 0, 0]
             for frame in frames:
                 for child in frame.grid_slaves():
@@ -3990,8 +4258,12 @@ class TimingGUI:
                 (index for index, width in enumerate(widths) if width),
                 default=0,
             )
+            gap = (
+                self.TRAINING_COLUMN_GAP
+                if tab_name == "Training" else self.COLUMN_GAP
+            )
             for column in range(last_used):
-                widths[column] += self.COLUMN_GAP
+                widths[column] += gap
             for frame in frames:
                 for column, width in enumerate(widths):
                     # No weight, so the measured width is the width. With the
@@ -4104,6 +4376,19 @@ class TimingGUI:
         value_pady = (
             self.ROW_PADY if tab_name in ("Timings", "Training") else 4
         )
+        content_font = (
+            self.TRAINING_FONT if tab_name == "Training" else self.COMPACT_FONT
+        )
+        content_bold = (
+            self.TRAINING_BOLD if tab_name == "Training" else self.COMPACT_BOLD
+        )
+        system_info_frames = self.grid_frames.get("System Info", {})
+        name_padx = (
+            self.SYSTEM_INFO_TEXT_INSET
+            if tab_name == "System Info"
+            and parent is system_info_frames.get("Right")
+            else self.ROW_PADX
+        )
         section_frame = ctk.CTkFrame(
             parent,
             corner_radius=0,
@@ -4157,7 +4442,7 @@ class TimingGUI:
             text=section_name.upper(),
             font=self.HEADER_FONT,
             anchor="w",
-            padx=self.ROW_PADX,
+            padx=name_padx,
             # On a continuous tab the heading is a row among rows, so it takes
             # the value colour to stand out from the names beside it. The
             # muted subtitle colour reads as a dimmed row there rather than as
@@ -4188,7 +4473,7 @@ class TimingGUI:
                         a_text, b_text, output_column, tab_name
                     ),
                     font=self.HEADER_FONT,
-                    anchor="w", padx=self.ROW_PADX,
+                    anchor="w", padx=name_padx,
                     text_color=self.SUBTITLE_COLOR,
                     **header_kwargs,
                 )
@@ -4204,11 +4489,8 @@ class TimingGUI:
                 ))
             # Same alignment group as the rows, so A1 sits over the
             # channel-A values rather than wherever its own text ends.
-            alignment_parent = (
-                section_frame if tab_name == "Training" else parent
-            )
             self._dual_content_frames.setdefault(
-                (tab_name, id(alignment_parent)), []).append(header_frame)
+                (tab_name, id(parent)), []).append(header_frame)
         else:
             header.pack(fill="x", expand=True)
         if uniform_header:
@@ -4237,11 +4519,8 @@ class TimingGUI:
             # longest name anywhere on the tab set the gap for every row in
             # both columns -- tCL sat 169px from its value because
             # CounttREFIWhileRefEnOff is in the other column.
-            alignment_parent = (
-                section_frame if tab_name == "Training" else parent
-            )
             self._dual_content_frames.setdefault(
-                (tab_name, id(alignment_parent)), []).append(content_frame)
+                (tab_name, id(parent)), []).append(content_frame)
             first_dual_timing = next(
                 (t for t in section_timings if is_dual_timing(t)),
                 None
@@ -4261,10 +4540,10 @@ class TimingGUI:
             parameter_header = ctk.CTkLabel(
                 content_frame,
                 text=parameter_header_text,
-                font=self.COMPACT_BOLD,
+                font=content_bold,
                 height=self.ROW_HEIGHT,
                 anchor="w",
-                padx=self.ROW_PADX,
+                padx=name_padx,
                 pady=self.ROW_PADY,
                 text_color=self.TEXT_COLOR
             )
@@ -4274,7 +4553,7 @@ class TimingGUI:
                 text=self._detail_channel_header(
                     a_header_text, b_header_text, "a", tab_name
                 ),
-                font=self.COMPACT_BOLD,
+                font=content_bold,
                 height=self.ROW_HEIGHT,
                 anchor="w",
                 padx=4,
@@ -4287,7 +4566,7 @@ class TimingGUI:
                 text=self._detail_channel_header(
                     a_header_text, b_header_text, "b", tab_name
                 ),
-                font=self.COMPACT_BOLD,
+                font=content_bold,
                 height=self.ROW_HEIGHT,
                 anchor="w",
                 padx=4,
@@ -4323,10 +4602,10 @@ class TimingGUI:
                 name_label = ctk.CTkLabel(
                     content_frame,
                     text=timing.get("display_name", timing["name"]),
-                    font=self.COMPACT_FONT,
+                    font=content_font,
                     height=self.ROW_HEIGHT,
                     anchor="w",
-                    padx=self.ROW_PADX,
+                    padx=name_padx,
                     pady=self.ROW_PADY,
                     text_color=self.TEXT_COLOR,
                     fg_color=bg_color, bg_color=bg_color
@@ -4338,7 +4617,7 @@ class TimingGUI:
                     value_a_label = ctk.CTkLabel(
                         content_frame,
                         text=value_a,
-                        font=self.COMPACT_FONT,
+                        font=content_font,
                         height=self.ROW_HEIGHT,
                         anchor="w",
                         padx=5,
@@ -4351,7 +4630,7 @@ class TimingGUI:
                     value_b_label = ctk.CTkLabel(
                         content_frame,
                         text=value_b,
-                        font=self.COMPACT_FONT,
+                        font=content_font,
                         height=self.ROW_HEIGHT,
                         anchor="w",
                         padx=5,
@@ -4375,7 +4654,7 @@ class TimingGUI:
                     value_label = ctk.CTkLabel(
                         content_frame,
                         text=value,
-                        font=self.COMPACT_FONT,
+                        font=content_font,
                         height=self.ROW_HEIGHT,
                         anchor="w",
                         padx=5,
@@ -4388,7 +4667,7 @@ class TimingGUI:
                     empty_label = ctk.CTkLabel(
                         content_frame,
                         text="",
-                        font=self.COMPACT_FONT,
+                        font=content_font,
                         height=self.ROW_HEIGHT,
                         anchor="w",
                         padx=5,
@@ -4434,11 +4713,8 @@ class TimingGUI:
             # Registered either way. Left out, a section sized its name column
             # from its own longest name, so Misc -- which has no dual row at
             # all -- put every section's values at a different x.
-            alignment_parent = (
-                section_frame if tab_name == "Training" else parent
-            )
             self._dual_content_frames.setdefault(
-                (tab_name, id(alignment_parent)), []).append(content_frame)
+                (tab_name, id(parent)), []).append(content_frame)
             data_row = 0
             for idx, timing_name in enumerate(timing_names, start=0):
                 timing = next(
@@ -4468,10 +4744,10 @@ class TimingGUI:
                         if is_misc_latency
                         else timing.get("display_name", timing["name"])
                     ),
-                    font=self.COMPACT_FONT,
+                    font=content_font,
                     height=self.ROW_HEIGHT,
                     anchor="w",
-                    padx=self.ROW_PADX,
+                    padx=name_padx,
                     pady=self.ROW_PADY,
                     text_color=self.TEXT_COLOR,
                     fg_color=bg_color, bg_color=bg_color
@@ -4485,7 +4761,7 @@ class TimingGUI:
                 value_label = ctk.CTkLabel(
                     content_frame,
                     text=value,
-                    font=self.COMPACT_FONT,
+                    font=content_font,
                     height=self.ROW_HEIGHT,
                     anchor="w",
                     justify="left",

@@ -471,14 +471,14 @@ def get_core_ratio():
 def get_tx():
     try:
         tx = read_timing(MCHBAR + 0x5E00, bit_start=17, bit_length=10) / 200
-        return f"{tx:.3f}V"
+        return f"{tx:.3f} V"
     except Exception:
         return "Error"
 
 def get_sa():
     try:
         sa = read_timing(MCHBAR + 0x591C, bit_start=8, bit_length=23)/8192
-        return f"{round(sa, 3)}V"
+        return f"{sa:.3f} V"
     except Exception:
         return "Error"
     
@@ -918,12 +918,8 @@ def get_board_manufacturer():
 
 
 def get_board_model():
-    """The board itself, with the revision SMBIOS carries beside it."""
-    product = _baseboard("Product")
-    version = _baseboard("Version")
-    if version and version not in product:
-        return ("%s (%s)" % (product, version)).strip()
-    return product or "Unknown"
+    """The board product name; revision is displayed in its own row."""
+    return _baseboard("Product") or "Unknown"
 
 
 # The card, in the order CPU-Z's Graphics tab reads it: what board it is, what
@@ -4224,30 +4220,30 @@ _reorder_power_down_timings()
 # resistance or the rank/slot mapping of each shadow. See docs/ddr4-ron-validation.md.
 # DDR5 keeps the project's original Training-tab readers until its register mapping is verified.
 DDR4_RTT_NOM_PARK_FORMULA = {
-    0b000: "Disabled",
-    0b001: "60 Ohm",
-    0b010: "120 Ohm",
-    0b011: "40 Ohm",
-    0b100: "240 Ohm",
-    0b101: "48 Ohm",
-    0b110: "80 Ohm",
-    0b111: "34 Ohm",
+    0b000: "0 RZQ OFF",
+    0b001: "60 RZQ/4",
+    0b010: "120 RZQ/2",
+    0b011: "40 RZQ/6",
+    0b100: "240 RZQ",
+    0b101: "48 RZQ/5",
+    0b110: "80 RZQ/3",
+    0b111: "34 RZQ/7",
 }
 
 DDR4_RTT_WR_LIVE_FORMULA = {
-    0b000: "Disabled",
-    0b001: "120 Ohm",
-    0b010: "240 Ohm",
+    0b000: "0 RZQ OFF",
+    0b001: "120 RZQ/2",
+    0b010: "240 RZQ",
     0b011: "High-Z",
-    0b100: "80 Ohm",
+    0b100: "80 RZQ/3",
     0b101: "Reserved (101b)",
     0b110: "Reserved (110b)",
     0b111: "Reserved (111b)",
 }
 
 DDR4_RON_LIVE_FORMULA = {
-    0b00: "34 Ohm",
-    0b01: "48 Ohm",
+    0b00: "34 RZQ/7",
+    0b01: "48 RZQ/5",
     0b10: "Reserved (10b)",
     0b11: "Reserved (11b)",
 }
@@ -4340,17 +4336,6 @@ def get_ddr4_ron(base):
     return f"W0 {values[0]} / W1 {values[1]}"
 
 
-def get_ddr4_ron_evidence(base, offset, mr1_only=False):
-    """Raw source for Advanced/Dump comparisons after a BIOS RON change."""
-    raw = _read_ddr4_ron_shadow(base, offset)
-    if raw is None:
-        return None
-    if mr1_only:
-        mr1 = (raw >> 16) & 0xFFFF
-        return f"0x{mr1:04X} (ODI {(mr1 >> 1) & 3:02b})"
-    return f"0x{raw:08X}"
-
-
 def _make_dual_live_row(name, category, read, base_a=MCHBAR,
                         base_b=CHANNEL_B):
     """A per-channel Training row that reads both controllers on every refresh.
@@ -4404,7 +4389,7 @@ def _install_ddr4_skew_live_rows():
             "RTT PARK", "RTT", get_ddr4_rtt_park,
         ),
     ]
-    ron_rows = [_make_dual_live_row("DRAM RON", "RON", get_ddr4_ron)]
+    ron_rows = [_make_dual_live_row("RON", "RON", get_ddr4_ron)]
 
     # Preserve the original Training order: RTT, ODT, RON, then the remaining sections.
     first_skew = next(
@@ -5689,7 +5674,7 @@ def _dram_rail(key):
         volts = read_dram_rails(
             PchSmbusReader, CONTROLLER_OFFSETS, PMIC_ADDRESSES
         ).get(key)
-        return None if volts is None else f"{volts:.3f}V"
+        return None if volts is None else f"{volts:.3f} V"
     except Exception:
         return None
 
@@ -5957,6 +5942,72 @@ SENSOR_ROWS = (
     ("DRAM VPP", "Voltages", lambda: _dram_rail("dram_vpp"), "Left"),
 ) + GRAPHICS_SENSOR_ROWS + ERROR_SENSOR_ROWS
 
+# Extra NCT6798D readings shown by HWiNFO on the ASUS Z790-A D4. The common
+# rows above already provide Vcore, VTT, DRAM, CPU VCCSA and VCCIN_AUX; these
+# complete that chip's voltage block and its two additional CPU temperatures.
+# They are installed only when the detected board sensor is an NCT6798D, so
+# another Super I/O does not gain a page of blank, board-specific inputs.
+NCT6798D_SENSOR_ROWS = (
+    ("CPU (Weighted Value)", "Thermal & Power",
+     lambda: _board_temperature("cpu_weighted"), "Right"),
+    ("CPU Package", "Thermal & Power",
+     lambda: _board_temperature("cpu_package"), "Right"),
+    ("+5V", "Voltages", lambda: _board_rail("plus5v"), "Left"),
+    ("AVSB", "Voltages", lambda: _board_rail("avsb"), "Left"),
+    ("3VCC", "Voltages", lambda: _board_rail("v3cc"), "Left"),
+    ("+12V", "Voltages", lambda: _board_rail("plus12v"), "Left"),
+    ("VIN8", "Voltages", lambda: _board_rail("vin8"), "Left"),
+    ("VIN4", "Voltages", lambda: _board_rail("vin4"), "Left"),
+    ("3VSB_ATX", "Voltages", lambda: _board_rail("v3sb_atx"), "Left"),
+    ("BAT_3V", "Voltages", lambda: _board_rail("bat_3v"), "Left"),
+    ("CPU L2", "Voltages", lambda: _board_rail("cpu_l2"), "Left"),
+    ("VIN2", "Voltages", lambda: _board_rail("vin2"), "Left"),
+    ("VIN9", "Voltages", lambda: _board_rail("vin9"), "Left"),
+    ("VHIF", "Voltages", lambda: _board_rail("vhif"), "Left"),
+)
+
+
+def sensor_rows_for_chip(chip_name):
+    """Return live rows for the detected board-monitor chip."""
+    if str(chip_name or "").upper() != "NCT6798D":
+        return SENSOR_ROWS
+
+    rows = SENSOR_ROWS + NCT6798D_SENSOR_ROWS
+    thermal_order = (
+        "DIMM A Temp", "DIMM B Temp", "VRM Temp", "System Temp",
+        "CPU (Weighted Value)", "CPU Package", "CPU Temp", "Core Max",
+        "CPU Socket Temp", "PCH Temp", "CPU Package Power",
+        "CPU Cores Power",
+    )
+    voltage_order = (
+        "DLVR Vcore", "+5V", "AVSB", "3VCC", "+12V", "VIN8", "VIN4",
+        "3VSB_ATX", "BAT_3V", "VTT", "DRAM", "CPU L2", "VIN2",
+        "CPU SA (VRM)", "CPU AUX", "VIN9", "VHIF",
+    )
+
+    def ordered_category(category, names):
+        group = [row for row in rows if row[1] == category]
+        rank = {name: index for index, name in enumerate(names)}
+        return sorted(group, key=lambda row: rank.get(row[0], len(rank)))
+
+    return tuple(
+        [row for row in rows if row[1] == "Clocks"]
+        + ordered_category("Thermal & Power", thermal_order)
+        + ordered_category("Voltages", voltage_order)
+        + [row for row in rows if row[1] == "Graphics"]
+        + [row for row in rows if row[1] == "Errors"]
+    )
+
+
+def _board_sensor_chip_name():
+    try:
+        from rochviewer.sensors.board_sensors import board_sensor_profile
+
+        profile = board_sensor_profile()
+        return getattr(profile.get("reader"), "chip_name", None) if profile else None
+    except Exception:
+        return None
+
 # Rows the sensor rows replace, wherever the earlier passes left them.
 SUPERSEDED_SENSOR_ROWS = {
     ("VCCSA", "System Info"),
@@ -6039,8 +6090,10 @@ LGA1700_DDR5_PER_DIMM_SENSOR_ROWS = (
 
 # Rows an LGA 1700 DDR4 board has no reading for. Two kinds, both absences:
 #
-#   VDD2        the DDR5 memory supply. DDR4 has no such rail -- the module
-#               runs off VDDQ, which the DRAM row already carries.
+#   VDD2        DDR4 has no VDD2 rail.  NCT6798D input 10 is the board's DIMM
+#               voltage on the ASUS Z790-A D4, so this platform exposes that
+#               live channel as DRAM instead.  The same input is VDD2 on the
+#               tested DDR5 Z790 APEX; the platform filter chooses the label.
 #   CPU VNNAON  an LGA 1851 rail, as on the DDR5 list. Raptor Lake has none.
 #   VTT         DDR4 terminates the command bus at half VDDQ, but that is
 #               derived on the module. The separate VTT supply this row was
@@ -6107,7 +6160,10 @@ LGA1700_DDR5_DUPLICATE_SENSOR_ROWS = (
 # the DDR5 half left the DDR4 board saying "DLVR" for a stage it does not have.
 LGA1700_SENSOR_ROW_LABELS = {
     "DLVR Vcore": "Vcore",
-    "CPU SA (VRM)": "SA",
+    "CPU SA (VRM)": "CPU VCCSA",
+    "CPU Temp": "CPU",
+    "PCH Temp": "PCH",
+    "System Temp": "Motherboard",
 }
 
 SENSOR_ROW_LABELS = {
@@ -6274,23 +6330,36 @@ def _install_sensors_tab():
     ]
 
     platform = active_platform()
+    chip_name = _board_sensor_chip_name()
     absent = absent_sensor_rows(platform, is_arrow_lake_platform(),
                                 get_board_manufacturer())
+    if str(chip_name or "").upper() == "NCT6798D":
+        # This chip exposes the 1.040 V VTT input shown by HWiNFO. Other
+        # LGA1700 board profiles keep the platform fallback that omits it.
+        absent = tuple(name for name in absent if name != "VTT")
 
     TIMINGS.extend(_voltage_snapshot_rows(platform, absent))
 
-    for name, category, getter, column in SENSOR_ROWS:
+    for name, category, getter, column in sensor_rows_for_chip(chip_name):
         if name in absent:
             continue
-        TIMINGS.append({
-            "name": sensor_row_label(platform, name),
+        label = sensor_row_label(platform, name)
+        row = {
+            # Keep the declared name as the lookup key.  LGA1700 displays
+            # "CPU Temp" as HWiNFO's shorter "CPU", but making that display
+            # label the key collides with the processor identity row and lets
+            # Summary show a temperature where the CPU model belongs.
+            "name": name,
             "value": getter,
             "Category": category,
             "Tab": SENSOR_TAB,
             "Column": column,
             "read_type": "standard",
             "live": True,
-        })
+        }
+        if label != name:
+            row["display_name"] = label
+        TIMINGS.append(row)
         if name == CORE_EFFECTIVE_CLOCK_ROW:
             TIMINGS.extend(_per_core_clock_rows(category, column))
 
@@ -6787,9 +6856,8 @@ def _named_or_nothing(module, field):
 
 
 # Fields the module's own SPD answers, and what stands in when the bus cannot
-# be reached -- no driver, no admin, or DDR4, whose identity block this
-# transport cannot get at. A None fallback means nothing else on the machine
-# carries the field, so the row reports nothing rather than inventing it:
+# be reached -- no driver or no admin access. A None fallback means nothing
+# else on the machine carries the field, so the row reports nothing:
 # SMBIOS has no build date at all, and the maker/die lookup is keyed on the
 # part number and so cannot know an unlisted kit.
 #
@@ -6805,24 +6873,27 @@ SPD_IDENTITY_FIELDS = {
     "dram_die": _ic_lookup,
 }
 
-# What the DDR4 SPD is asked for. Only the two fields nothing else on the
-# machine carries: SMBIOS has no build date at all, and reports a serial only
-# when firmware found one.
+# What the DDR4 SPD is asked for. The DRAM manufacturer, build date, and serial
+# come directly from the module. The module vendor stays on the SMBIOS path
+# because some valid DDR4 vendor IDs are not named by our local JEP106 table.
 #
 # The rest are deliberately left on the path that already answers them. The
 # DDR4 block does carry a DRAM maker and a stepping, but the stepping is the
 # byte the die name would come from and it reads 0x00 on this kit -- taking
 # SPD first there would turn a "B-die" that the part-number table gets right
 # into a "0x00" that is technically what the module said and no use to anyone.
-DDR4_SPD_FIELDS = ("serial_number", "manufacture_date")
+DDR4_SPD_FIELDS = (
+    "serial_number",
+    "manufacture_date",
+    "dram_manufacturer",
+)
 
 
 def _spd_identity(field):
     """What the modules themselves say about one field, or None.
 
-    Two readers, picked by generation: the SPD layouts share no offsets and
-    the DDR5 one reaches its block through a page-select write that a DDR4
-    module would take as a write to its own SPD array. See ddr4_spd.
+    Two readers are picked by generation because the SPD layouts and page
+    selection protocols differ. See ddr4_spd and ddr5_spd.
     """
     from rochviewer.memory.dimm_inventory import EM_DASH, shared_value
 
@@ -6846,13 +6917,11 @@ def _dimm_field(field):
     Size and rank come from SMBIOS Type 17, which is firmware reporting what it
     read from the modules at boot.
 
-    The DRAM maker, the die and the build date come from the module's own SPD,
-    read over the PCH SMBus -- the same bytes CPU-Z shows on its SPD tab.
-    SMBIOS carries none of the three. See _spd_identity for which reader
-    answers on which generation, and DDR4_SPD_FIELDS for why DDR4 is asked a
-    narrower question. If the bus is unreachable -- no driver, no admin -- the
-    maker and die fall back to a lookup from the part number, and the date,
-    which no table carries, reports nothing.
+    The DRAM maker, build date and serial come from the module's own SPD, read
+    over the PCH SMBus. Die naming uses the exact part-number table on DDR4
+    because a stepping byte alone does not identify every die. If the bus is
+    unreachable, the maker and die fall back to that table and the remaining
+    values use SMBIOS where available.
 
     Reported for the set rather than one slot, since the controller settings
     above these rows are equally set-wide. A mixed kit prints each distinct
@@ -7032,15 +7101,20 @@ SYSTEM_INFO_REMOVED = (
 SYSTEM_INFO_SUMMARY_ONLY = ("Uncore",)
 
 
-# Keep identity on the left and hardware details on the right. At the compact
-# width those two logical columns stack, so Graphics follows Memory and remains
-# the final System Info section rather than landing halfway down the page.
+# Keep identity and graphics on the left, with the configured clock and memory
+# state on the right.  The order here is also the vertical order inside each
+# column, so Graphics follows Motherboard while Memory follows Clocks.
 SYSTEM_INFO_SECTIONS = (
     ("System", "Left", ("OS", "OS Version", "Platform")),
     ("Processor", "Left", ("CPU", "Code Name", "Technology",
                            "Cores / Threads", "Microcode")),
     ("Motherboard", "Left", ("Manufacturer", "Model", "Board Revision", "BIOS", "BIOS Date",
                              "Chipset", "Southbridge", "LPCIO")),
+    ("Graphics", "Left", ("GPU", "Board Manufacturer", "GPU Code Name",
+                           "GPU Revision", "Cores", "ROPs / TMUs",
+                           "GPU Technology", "Memory Size", "Memory Type",
+                           "Memory Vendor", "Bus Width", "Resizable BAR",
+                           "Driver Version", "Driver Date")),
     # Configured memory clocks and ratios only. Variable CPU core/ring clocks
     # are sensor readings and remain in Telemetry.
     ("Clocks", "Right", ("DRAM Frequency", "DRAM Ratio", "QCLK Ratio",
@@ -7050,11 +7124,6 @@ SYSTEM_INFO_SECTIONS = (
                          "Memory Capacity", "Slots Used", "DIMM Size", "Rank",
                          "DRAM Manufacturer", "DRAM Die", "Part Number",
                          "Serial Number", "Manufactured")),
-    ("Graphics", "Right", ("GPU", "Board Manufacturer", "GPU Code Name",
-                            "GPU Revision", "Cores", "ROPs / TMUs",
-                            "GPU Technology", "Memory Size", "Memory Type",
-                            "Memory Vendor", "Bus Width", "Resizable BAR",
-                            "Driver Version", "Driver Date")),
 )
 
 
@@ -7612,12 +7681,117 @@ DDR4_MISC_MODE_REGISTER_FIELDS = (
     ("DM Enable", 0x05, 10, 1, MR_ENABLED),
 )
 
+# Additional DDR4 MR0-MR6 state shown in Advanced. The ordinary Training and
+# Timings tabs already expose the useful duplicates: burst length, RON/RTT,
+# TDQS/Qoff, CWL, FGR, gear-down, data mask, VrefDQ, tCCD_L and WR/RTP. These
+# are the remaining fields that describe power management, training and DRAM
+# operating modes. Bit positions and encodings follow JESD79-4; the captured
+# Z790-A D4 values agree with the reference capture field for field.
+DDR4_MR_SWITCH = {0: "Disabled", 1: "Enabled"}
+DDR4_MR_READ_BURST = {0: "Sequential", 1: "Interleaved"}
+DDR4_MR_TEST_MODE = {0: "Normal", 1: "Test"}
+DDR4_MR_DLL_RESET = {0: "No", 1: "Yes"}
+DDR4_MR_ADDITIVE_LATENCY = {
+    0: "0 (AL disabled)", 1: "CL-1", 2: "CL-2", 3: "Reserved",
+}
+DDR4_MR_LP_ASR = {
+    0: "Manual (Normal)",
+    1: "Manual (Reduced)",
+    2: "Manual (Extended)",
+    3: "Auto Self Refresh",
+}
+DDR4_MR_MPR_PAGE = {code: f"Page {code}" for code in range(4)}
+DDR4_MR_MPR_OPERATION = {0: "Normal", 1: "Dataflow to/from MPR"}
+DDR4_MR_MPR_FORMAT = {
+    0: "Serial", 1: "Parallel", 2: "Staggered", 3: "Reserved",
+}
+DDR4_MR_WRITE_COMMAND_LATENCY = {
+    0: "4 nCK", 1: "5 nCK", 2: "6 nCK", 3: "Reserved",
+}
+DDR4_MR_TEMP_REFRESH_RANGE = {0: "Normal", 1: "Extended"}
+DDR4_MR_CS_COMMAND_LATENCY = {
+    0: "Disabled", 1: "3 nCK", 2: "4 nCK", 3: "5 nCK",
+    4: "6 nCK", 5: "8 nCK", 6: "Reserved", 7: "Reserved",
+}
+DDR4_MR_PREAMBLE = {0: "1 nCK", 1: "2 nCK"}
+DDR4_MR_CA_PARITY_LATENCY = {
+    0: "Disabled", 1: "4 nCK", 2: "5 nCK", 3: "6 nCK (RFU)",
+    4: "8 nCK (RFU)", 5: "Reserved", 6: "Reserved", 7: "Reserved",
+}
+DDR4_MR_CLEAR_ERROR = {0: "Clear", 1: "Error"}
+DDR4_MR_ODT_BUFFER_PD = {0: "Activated", 1: "Deactivated"}
+DDR4_MR_VREF_RANGE = {0: "Range 1", 1: "Range 2"}
+
+# (row, mode register, bit start, bit length, decode table or None). A None
+# table means a numeric field. CAS latency is the sole split-bit field and is
+# decoded separately below.
+DDR4_ADVANCED_MODE_REGISTER_FIELDS = (
+    ("Read Burst Type", 0x00, 3, 1, DDR4_MR_READ_BURST),
+    ("Test Mode", 0x00, 7, 1, DDR4_MR_TEST_MODE),
+    ("DLL Reset", 0x00, 8, 1, DDR4_MR_DLL_RESET),
+    ("DLL Enable", 0x01, 0, 1, DDR4_MR_SWITCH),
+    ("Additive Latency", 0x01, 3, 2, DDR4_MR_ADDITIVE_LATENCY),
+    ("Write Leveling", 0x01, 7, 1, DDR4_MR_SWITCH),
+    ("Low Power ASR", 0x02, 6, 2, DDR4_MR_LP_ASR),
+    ("Write CRC", 0x02, 12, 1, DDR4_MR_SWITCH),
+    ("MPR Page Select", 0x03, 0, 2, DDR4_MR_MPR_PAGE),
+    ("MPR Operation", 0x03, 2, 1, DDR4_MR_MPR_OPERATION),
+    ("Per DRAM Addr", 0x03, 4, 1, DDR4_MR_SWITCH),
+    ("Temp Sensor Readout", 0x03, 5, 1, DDR4_MR_SWITCH),
+    ("Write CMD Latency", 0x03, 9, 2, DDR4_MR_WRITE_COMMAND_LATENCY),
+    ("MPR Read Format", 0x03, 11, 2, DDR4_MR_MPR_FORMAT),
+    ("Max Power Down", 0x04, 1, 1, DDR4_MR_SWITCH),
+    ("Temp Refresh Range", 0x04, 2, 1, DDR4_MR_TEMP_REFRESH_RANGE),
+    ("Temp Ctrl Refresh", 0x04, 3, 1, DDR4_MR_SWITCH),
+    ("Internal Vref Mon", 0x04, 4, 1, DDR4_MR_SWITCH),
+    ("Soft PPR", 0x04, 5, 1, DDR4_MR_SWITCH),
+    ("CS to CMD Latency", 0x04, 6, 3, DDR4_MR_CS_COMMAND_LATENCY),
+    ("Self Refresh Abort", 0x04, 9, 1, DDR4_MR_SWITCH),
+    ("Read Preamble Train", 0x04, 10, 1, DDR4_MR_SWITCH),
+    ("Read Preamble", 0x04, 11, 1, DDR4_MR_PREAMBLE),
+    ("Write Preamble", 0x04, 12, 1, DDR4_MR_PREAMBLE),
+    ("Hard PPR", 0x04, 13, 1, DDR4_MR_SWITCH),
+    ("CA Parity Latency", 0x05, 0, 3, DDR4_MR_CA_PARITY_LATENCY),
+    ("CRC Error Clear", 0x05, 3, 1, DDR4_MR_CLEAR_ERROR),
+    ("CA Parity Err Status", 0x05, 4, 1, DDR4_MR_CLEAR_ERROR),
+    ("ODT Buffer (PD)", 0x05, 5, 1, DDR4_MR_ODT_BUFFER_PD),
+    ("CA Parity Persist Err", 0x05, 9, 1, DDR4_MR_SWITCH),
+    ("Write DBI", 0x05, 11, 1, DDR4_MR_SWITCH),
+    ("Read DBI", 0x05, 12, 1, DDR4_MR_SWITCH),
+    ("VrefDQ Train Value", 0x06, 0, 6, None),
+    ("VrefDQ Train Range", 0x06, 6, 1, DDR4_MR_VREF_RANGE),
+    ("VrefDQ Train Enable", 0x06, 7, 1, DDR4_MR_SWITCH),
+)
+
+DDR4_MR_CAS_LATENCY = {
+    0x00: "9", 0x01: "10", 0x02: "11", 0x03: "12",
+    0x04: "13", 0x05: "14", 0x06: "15", 0x07: "16",
+    0x08: "18", 0x09: "20", 0x0A: "22", 0x0B: "24",
+    0x0C: "23", 0x0D: "17", 0x0E: "19", 0x0F: "21",
+    0x10: "25", 0x11: "26", 0x12: "27", 0x13: "28",
+    0x14: "Reserved (29)", 0x15: "30", 0x16: "Reserved (31)",
+    0x17: "32",
+}
+
+
+def _ddr4_mr_cas_latency(base=None):
+    """CAS latency from MR0's split A12,A6:A4,A2 encoding."""
+    value = _ddr4_mode_register(0x00, base)
+    if value is None:
+        return "N/A"
+    code = (((value >> 12) & 1) << 4
+            | ((value >> 4) & 0x7) << 1
+            | ((value >> 2) & 1))
+    return DDR4_MR_CAS_LATENCY.get(code, "Reserved")
+
 
 def _ddr4_misc_value(number, bit_start, bit_length, decode, base=None):
     """One Misc row read out of the DDR4 shadow."""
     value = _ddr4_mode_register_field(number, bit_start, bit_length, base)
     if value is None:
         return "N/A"
+    if decode is None:
+        return str(value)
     return decode.get(value, str(value))
 
 
@@ -8029,6 +8203,23 @@ def _install_ddr5_timing_labels():
 _install_ddr5_timing_labels()
 
 
+def _remove_ddr4_per_bank_refresh():
+    """DDR4 has no per-bank refresh interval, so it has no tRFCpb row."""
+    global TIMINGS
+    if detect_ddr_generation() != "DDR4":
+        return
+    TIMINGS = [
+        timing for timing in TIMINGS
+        if not (
+            timing.get("Tab") == "Timings"
+            and timing.get("name") == "tRFCpb"
+        )
+    ]
+
+
+_remove_ddr4_per_bank_refresh()
+
+
 # --- Training drops the rows that read nothing.
 #
 # Training is a panel of measured levels, and a row of N/A among them is not
@@ -8299,15 +8490,25 @@ SKEW_MISC_COLUMNS = {
     "RTT": "Left",
     "ODT": "Left",
     "RON": "Left",
-    "ODT DELAY": "Left",
-    "DFE": "Left",
-    "VREF": "Right",
-    "ODTL": "Right",
+    "DLL / LATENCY": "Left",
+    "DATA CONTROL": "Left",
+    "MR0 / MR1": "Left",
+    "MR5 / MR6": "Left",
+    "ODT DELAY": "Middle",
+    "DFE": "Middle",
+    "VREF": "Middle",
+    "ODTL": "Middle",
+    "MPR / WRITE": "Middle",
+    "MR2 / MR3": "Middle",
     "Command": "Right",
+    "PARITY / CRC": "Right",
+    "REFRESH / POWER": "Right",
+    "PREAMBLE / PPR": "Right",
     "Mode Registers": "Right",
     "DQS": "Right",
     "Preamble": "Right",
     "ECS": "Right",
+    "MR4": "Right",
 }
 
 PHY_SETTINGS_COLUMNS = {
@@ -8315,14 +8516,20 @@ PHY_SETTINGS_COLUMNS = {
     "Command": "Left",
     "ODTL": "Left",
     "Refresh": "Left",
-    "DATA": "Middle",
-    "CMD": "Middle",
-    "CLK": "Middle",
-    "CTL": "Middle",
-    "SComp": "Middle",
+    # Keep the signal-drive groups in one readable sequence: DATA above CMD,
+    # then CLK, CTL, and finally SComp.
+    "DATA": "Right",
+    "SComp": "Right",
+    "CMD": "Right",
+    "CLK": "Right",
+    "CTL": "Right",
     "MISC Additional": "Right",
     "Features": "Right",
-    "Power Down": "Right",
+    "Power Down": "Left",
+    "MR0 / MR1": "Middle",
+    "MR2 / MR3": "Middle",
+    "MR4": "Right",
+    "MR5 / MR6": "Left",
 }
 
 
@@ -8414,6 +8621,7 @@ _move_module_refresh_mode_to_timings()
 # formula dictionaries also keeps Summary and Training on one decoder.
 _REFERENCE_SIGNAL_NAMES = {
     "RTT WR": "RTT Wr",
+    "RTT NOM": "RTT Nom",
     "RTT PARK": "RTT Park",
     "RTT NOM WR": "RTT Nom Wr",
     "RTT NOM RD": "RTT Nom Rd",
@@ -8522,17 +8730,141 @@ _install_reference_signal_presentation()
 _group_timings_sections()
 
 
-def _install_ddr4_ron_diagnostics():
+DDR4_TRAINING_MODE_REGISTER_ROWS = frozenset(
+    ["CAS Latency"]
+    + [field[0] for field in DDR4_ADVANCED_MODE_REGISTER_FIELDS]
+)
+
+DDR4_TRAINING_SECTION_ROWS = {
+    "DLL / LATENCY": (
+        "CAS Latency", "Read Burst Type", "Test Mode", "DLL Reset",
+        "DLL Enable", "Additive Latency", "Write Leveling",
+    ),
+    "DATA CONTROL": (
+        "Data Output Disable", "TDQS Enable", "DM Enable",
+        "ODT Buffer (PD)", "Write DBI", "Read DBI",
+    ),
+    "VREF": (
+        "VrefDQ Train Value", "VrefDQ Train Range",
+        "VrefDQ Train Enable",
+    ),
+    "MPR / WRITE": (
+        "Write CRC", "MPR Page Select", "MPR Operation", "Per DRAM Addr",
+        "Temp Sensor Readout", "Write CMD Latency", "MPR Read Format",
+    ),
+    "Command": (
+        "Burst Length", "CS Geardown", "CS to CMD Latency",
+    ),
+    "PARITY / CRC": (
+        "CA Parity Latency", "CRC Error Clear", "CA Parity Err Status",
+        "CA Parity Persist Err",
+    ),
+    "REFRESH / POWER": (
+        "Refresh tRFC Mode", "Low Power ASR", "Max Power Down",
+        "Temp Refresh Range", "Temp Ctrl Refresh", "Internal Vref Mon",
+        "Self Refresh Abort",
+    ),
+    "PREAMBLE / PPR": (
+        "Soft PPR", "Read Preamble Train", "Read Preamble",
+        "Write Preamble", "Hard PPR",
+    ),
+}
+
+DDR4_TRAINING_CATEGORY_BY_NAME = {
+    name: category
+    for category, names in DDR4_TRAINING_SECTION_ROWS.items()
+    for name in names
+}
+
+DDR4_TRAINING_SECTION_ORDER = (
+    "RTT", "ODT", "RON", "ODT DELAY", "VREF",
+    "DLL / LATENCY", "DATA CONTROL", "DFE", "ODTL", "MPR / WRITE",
+    "Command", "PARITY / CRC", "REFRESH / POWER", "PREAMBLE / PPR",
+)
+
+DDR4_TRAINING_TWO_COLUMN_COLUMNS = {
+    "RTT": "Left",
+    "ODT": "Left",
+    "RON": "Left",
+    "DLL / LATENCY": "Left",
+    "DATA CONTROL": "Left",
+    "ODT DELAY": "Left",
+    "DFE": "Left",
+    "VREF": "Left",
+    "ODTL": "Left",
+    "MPR / WRITE": "Right",
+    "Command": "Right",
+    "PARITY / CRC": "Right",
+    "REFRESH / POWER": "Right",
+    "PREAMBLE / PPR": "Right",
+}
+
+
+def _install_ddr4_mode_register_rows():
+    """Place every independently read A2/B2 mode-register field on Training."""
     if active_platform() != LGA1700_DDR4:
         return
-    for offset in DDR4_RON_SHADOW_OFFSETS:
-        for mr1_only, label in ((False, "MR0/MR1"), (True, "MR1 ODI")):
-            row = _make_dual_live_row(
-                f"DDR4 {label} @{offset:04X}", "RON shadow diagnostics",
-                partial(get_ddr4_ron_evidence, offset=offset, mr1_only=mr1_only),
-            )
-            row.update(diagnostic=True, advanced_only=True)
-            TIMINGS.append(row)
+
+    readers = [("CAS Latency", 0, _ddr4_mr_cas_latency)]
+    readers.extend(
+        (
+            name,
+            number,
+            partial(_ddr4_misc_value, number, start, length, decode),
+        )
+        for name, number, start, length, decode
+        in DDR4_ADVANCED_MODE_REGISTER_FIELDS
+    )
+    rows = []
+    for name, number, read in readers:
+        category = DDR4_TRAINING_CATEGORY_BY_NAME[name]
+        row = _make_dual_live_row(name, category, read)
+        row.update(
+            source_scope="module",
+            Column=SKEW_MISC_COLUMNS[category],
+        )
+        rows.append(row)
+    # One category must be contiguous: the renderer starts a new section when
+    # the category changes. VrefDQ is an MR6 field, so source order otherwise
+    # splits MR5/MR6 into two blocks around the VREF row.
+    category_rank = {
+        name: index for index, name in enumerate(DDR4_TRAINING_SECTION_ROWS)
+    }
+    rows.sort(key=lambda row: category_rank[row["Category"]])
+    TIMINGS.extend(rows)
 
 
-_install_ddr4_ron_diagnostics()
+_install_ddr4_mode_register_rows()
+
+
+def _organize_ddr4_training_sections():
+    """Group DDR4 Training rows by function instead of MR number."""
+    if active_platform() != LGA1700_DDR4:
+        return
+    for timing in TIMINGS:
+        if timing.get("Tab") != "Training":
+            continue
+        category = DDR4_TRAINING_CATEGORY_BY_NAME.get(timing.get("name"))
+        if category is not None:
+            timing["Category"] = category
+        timing["Column"] = DDR4_TRAINING_TWO_COLUMN_COLUMNS.get(
+            timing.get("Category"), timing.get("Column", "Left")
+        )
+
+    # Several original Misc rows occur earlier than the additional decoded
+    # fields. Once both sets share functional categories, gather each section
+    # into one contiguous block so the renderer does not repeat its heading.
+    positions = [
+        index for index, timing in enumerate(TIMINGS)
+        if timing.get("Tab") == "Training"
+    ]
+    rows = [TIMINGS[index] for index in positions]
+    rank = {
+        name: index for index, name in enumerate(DDR4_TRAINING_SECTION_ORDER)
+    }
+    rows.sort(key=lambda timing: rank.get(timing.get("Category"), len(rank)))
+    for index, timing in zip(positions, rows):
+        TIMINGS[index] = timing
+
+
+_organize_ddr4_training_sections()

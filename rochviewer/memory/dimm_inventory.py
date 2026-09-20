@@ -97,6 +97,50 @@ def channel_of(slot):
     return slot[0] if slot else None
 
 
+def _controller_slot(device_locator):
+    """Derive a slot from controller/DIMM indexes when firmware labels collide."""
+    match = _SLOT_CONTROLLER_INDEX.search(str(device_locator or ""))
+    if not match:
+        return None
+    controller = int(match.group(1))
+    if controller >= 26:
+        return None
+    return "%s%d" % (
+        chr(ord("A") + controller), int(match.group(2)) + 1,
+    )
+
+
+def _resolve_duplicate_slots(modules):
+    """Use controller indexes to disambiguate impossible duplicate slots.
+
+    Some ASUS four-DIMM firmware restarts the channel letter inside each
+    controller. Its populated sockets therefore arrive as
+    ``Controller0-ChannelA-DIMM1`` and ``Controller1-ChannelA-DIMM1``. Parsed
+    literally both are A2, even though the controller numbers identify the
+    physical channels as A and B. Keep normal board labels authoritative and
+    apply the controller fallback only when the parsed names collide and the
+    fallback produces a complete, unique set.
+    """
+    by_slot = {}
+    for module in modules:
+        slot = module.get("slot")
+        if slot:
+            by_slot.setdefault(slot, []).append(module)
+
+    for duplicates in by_slot.values():
+        if len(duplicates) < 2:
+            continue
+        resolved = [
+            _controller_slot(module.get("device_locator"))
+            for module in duplicates
+        ]
+        if None in resolved or len(set(resolved)) != len(resolved):
+            continue
+        for module, slot in zip(duplicates, resolved):
+            module["slot"] = slot
+            module["channel"] = channel_of(slot)
+
+
 def slots_by_channel(modules):
     """Return ``{channel letter: [slot names]}`` for the installed modules."""
     channels = {}
@@ -264,6 +308,7 @@ def _decode(connection):
             "module_manufacturer": module_manufacturer,
             "ic": ic_label,
         })
+    _resolve_duplicate_slots(modules)
     return modules
 
 

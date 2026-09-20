@@ -56,6 +56,12 @@ class SensorGroupTest(unittest.TestCase):
             with self.subTest(category=category):
                 self.assertIn(category, SENSOR_GROUP_ORDER)
 
+    def test_controller_voltage_text_has_a_space_before_the_unit(self):
+        with mock.patch.object(intel_timings, "read_timing", return_value=272):
+            self.assertEqual(intel_timings.get_tx(), "1.360 V")
+        with mock.patch.object(intel_timings, "read_timing", return_value=11010):
+            self.assertTrue(intel_timings.get_sa().endswith(" V"))
+
     def test_the_card_is_read_once_a_tick_rather_than_once_a_row(self):
         # Eight rows each opening their own NVML session would pay the init
         # cost eight times a second. The first row refreshes the set and the
@@ -129,12 +135,25 @@ class RowLabelTest(unittest.TestCase):
                     "Vcore",
                 )
 
-    def test_the_whole_lga1700_socket_calls_the_agent_rail_sa(self):
+    def test_the_whole_lga1700_socket_uses_the_hwinfo_agent_rail_name(self):
         for platform in (LGA1700_DDR5, LGA1700_DDR4):
             with self.subTest(platform=platform):
                 self.assertEqual(
                     intel_timings.sensor_row_label(platform, "CPU SA (VRM)"),
-                    "SA",
+                    "CPU VCCSA",
+                )
+
+    def test_lga1700_uses_the_hwinfo_nct_temperature_names(self):
+        expected = {
+            "CPU Temp": "CPU",
+            "PCH Temp": "PCH",
+            "System Temp": "Motherboard",
+        }
+        for declared, label in expected.items():
+            with self.subTest(name=declared):
+                self.assertEqual(
+                    intel_timings.sensor_row_label(LGA1700_DDR4, declared),
+                    label,
                 )
 
     def test_lga1851_keeps_the_declared_name(self):
@@ -146,7 +165,7 @@ class RowLabelTest(unittest.TestCase):
         )
 
     def test_an_unlisted_row_is_never_renamed(self):
-        for name in ("VCCSA", "VDD2", "CPU Temp"):
+        for name in ("VCCSA", "VDD2", "Core Max"):
             with self.subTest(name=name):
                 self.assertEqual(
                     intel_timings.sensor_row_label(LGA1700_DDR5, name), name
@@ -211,7 +230,7 @@ class AbsentRowSelectionTest(unittest.TestCase):
     def test_ddr4_drops_the_rows_that_generation_does_not_have(self):
         absent = intel_timings.absent_sensor_rows(LGA1700_DDR4, False)
         self.assertEqual(set(absent), {
-            # not a rail on a DDR4 board, or on this socket
+            # VDD2 is a DDR5/IMC rail; the shared input is DRAM on this board
             "VDD2", "VTT", "VCCIO", "CPU VNNAON",
             # read from the module's PMIC, and a DDR4 module has none
             "DRAM VDD", "DRAM VDDQ", "DRAM VPP",
@@ -286,8 +305,49 @@ class AbsentRowSelectionTest(unittest.TestCase):
         self.assertIn("VCCSA", absent)
         self.assertNotIn("CPU SA (VRM)", absent)
         self.assertEqual(
-            intel_timings.sensor_row_label(LGA1700_DDR5, "CPU SA (VRM)"), "SA"
+            intel_timings.sensor_row_label(
+                LGA1700_DDR5, "CPU SA (VRM)"
+            ), "CPU VCCSA"
         )
+
+
+class Nct6798dTelemetryRowTest(unittest.TestCase):
+    def test_the_hwinfo_voltage_block_is_complete(self):
+        rows = intel_timings.sensor_rows_for_chip("NCT6798D")
+        names = [name for name, category, _getter, _column in rows
+                 if category == "Voltages"]
+        expected = (
+            "DLVR Vcore", "+5V", "AVSB", "3VCC", "+12V", "VIN8",
+            "VIN4", "3VSB_ATX", "BAT_3V", "VTT", "DRAM", "CPU L2",
+            "VIN2", "CPU SA (VRM)", "CPU AUX", "VIN9", "VHIF",
+        )
+        self.assertEqual(tuple(names[:len(expected)]), expected)
+        for name in expected:
+            with self.subTest(name=name):
+                self.assertIn(name, names)
+
+    def test_the_extra_rows_are_nct6798d_only(self):
+        base = intel_timings.sensor_rows_for_chip(None)
+        nct = intel_timings.sensor_rows_for_chip("NCT6798D")
+        self.assertEqual(base, intel_timings.SENSOR_ROWS)
+        self.assertGreater(len(nct), len(base))
+
+    def test_the_two_additional_nct_temperatures_are_present(self):
+        rows = intel_timings.sensor_rows_for_chip("NCT6798D")
+        thermal = {name for name, category, _getter, _column in rows
+                   if category == "Thermal & Power"}
+        self.assertIn("CPU (Weighted Value)", thermal)
+        self.assertIn("CPU Package", thermal)
+
+    def test_nct_temperatures_follow_the_hwinfo_order(self):
+        rows = intel_timings.sensor_rows_for_chip("NCT6798D")
+        names = [name for name, category, _getter, _column in rows
+                 if category == "Thermal & Power"]
+        positions = [names.index(name) for name in (
+            "System Temp", "CPU (Weighted Value)", "CPU Package",
+            "CPU Temp", "PCH Temp",
+        )]
+        self.assertEqual(positions, sorted(positions))
 
 
 class BoardAbsentRowTest(unittest.TestCase):

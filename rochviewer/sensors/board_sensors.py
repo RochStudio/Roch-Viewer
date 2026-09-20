@@ -71,6 +71,20 @@ INTEL_RAILS = {
     # LGA 1851 and read straight off the Super I/O.
     "vnnaon": ("CPU VNNAON", 0.40, 1.40),
     "vccio": ("VCCIO", 0.80, 1.80),
+    # NCT6798D inputs exposed by HWiNFO on the ASUS Z790-A D4. VIN labels
+    # intentionally stay generic: they are the board's own unrenamed inputs.
+    "plus5v": ("+5V", 4.50, 5.50),
+    "avsb": ("AVSB", 3.00, 3.60),
+    "v3cc": ("3VCC", 3.00, 3.60),
+    "plus12v": ("+12V", 10.80, 13.20),
+    "vin8": ("VIN8", 0.00, 2.50),
+    "vin4": ("VIN4", 0.00, 2.50),
+    "v3sb_atx": ("3VSB_ATX", 3.00, 3.60),
+    "bat_3v": ("BAT_3V", 2.00, 3.60),
+    "cpu_l2": ("CPU L2", 0.40, 1.60),
+    "vin2": ("VIN2", 0.00, 2.50),
+    "vin9": ("VIN9", 0.00, 2.50),
+    "vhif": ("VHIF", 1.00, 2.20),
 }
 
 # rail key -> (sensor address, volts per count).
@@ -238,6 +252,9 @@ INTEL_TEMPERATURES = {
     "socket": ("CPU Socket Temp", -20.0, 120.0),
     "pch": ("PCH Temp", -20.0, 120.0),
     "system": ("System Temp", -20.0, 100.0),
+    "motherboard": ("Motherboard", -20.0, 100.0),
+    "cpu_weighted": ("CPU (Weighted Value)", -20.0, 120.0),
+    "cpu_package": ("CPU Package", -20.0, 120.0),
 }
 
 CONFIRMED_TEMPERATURES = {
@@ -248,8 +265,9 @@ CONFIRMED_TEMPERATURES = {
     "socket": 0x108,
 }
 
-# --- ASUS ROG MAXIMUS Z790 APEX, Nuvoton NCT6798D (chip 0xD42B, config port
-# 0x2E, monitor base 0x290).
+# --- ASUS Z790 boards, Nuvoton NCT6798D (chip 0xD42B, config port 0x2E,
+# monitor base 0x290). The complete voltage labels and scaling below were
+# checked on the ROG STRIX Z790-A GAMING WIFI D4 against HWiNFO 8.52.
 #
 # A different chip family and a different transport; see nct679x. Sensors are
 # single bytes addressed as (bank << 8) | register.
@@ -276,6 +294,12 @@ CONFIRMED_TEMPERATURES = {
 # "VR VCC Temperature" comes from SVID telemetry, a different transport
 # entirely. Two blank rows are the honest report.
 NCT6798D_TEMPERATURES = {
+    # HWiNFO shows the weighted value equal to Motherboard on this ASUS
+    # profile; both are the chip's AUXTIN4/SYSTIN input at 0x027.
+    "motherboard": 0x027,
+    "cpu_weighted": 0x027,
+    # PECI_0 is the package source; CPUTIN is the board CPU source.
+    "cpu_package": 0x073,
     "cpu": 0x491,
     "pch": 0x401,
     "system": 0x027,
@@ -300,37 +324,56 @@ NCT6798D_TEMPERATURES = {
 #                     whose 18 mV is 2 x 9 and was pinned independently by a
 #                     two-count HWiNFO range. This block is not uniformly
 #                     8 mV, which is the trap.
-#   VDD2       0x48A  0.018  0x4C -> 1.368 V, exactly HWiNFO's IMC VDD, the
-#                     memory-controller supply ASUS calls VDD2 in BIOS.
-#                     HWiNFO's own 1.332-1.368 V range over the same window is
-#                     raw 74-76, two counts, which fixes the step at 18 mV
-#                     independently of the single-point match.
+#   VDD2/DRAM  0x48A  0.018  the input is wired according to the board:
+#                     HWiNFO identifies it as IMC VDD on the DDR5 Z790 APEX,
+#                     while ASUS' NCT6798D DDR4 layout uses input 10 for DIMM
+#                     voltage.  The UI selects VDD2 on DDR5 and DRAM on DDR4.
+#                     On the Z790-A D4, raw 0x53 -> 1.494 V, matching the
+#                     expected DIMM rail for the active DDR4-4200 profile.
+#                     On the APEX, 0x4C -> 1.368 V; HWiNFO's own
+#                     1.332-1.368 V range is raw 74-76, which fixes the 18 mV
+#                     step independently of the single-point match.
 #   CPU SA     0x48D  0.016  0x4A -> 1.184 V, exactly HWiNFO's IVR VCCSA.
 #                     Distinct from the VCCSA this project reads from MCHBAR
 #                     (1.204 V here): VRM-side against on-die, the same rail
 #                     measured in two places.
 #   CPU AUX    0x48E  0.016  0x73 -> 1.840 V, exactly HWiNFO's VCCIN_AUX.
 #
-# The block is positional, which is what makes the odd 18 mV step credible
-# rather than a fitted number. Reading 0x480-0x48F straight through against
-# HWiNFO's list in order gives Vcore, +5V, AVSB, 3VCC, +12V, IVR Atom L2, VIN4,
-# 3VSB_ATX, BAT_3V, VTT, IMC VDD, CPU L2, PCH 1.05V, IVR VCCSA, VCCIN_AUX,
-# VIN9 -- and six of those land exactly without being claimed as rails here:
-# 0x482/0x487 -> 3.376 V, 0x483 -> 3.360 V, 0x488 -> 3.136 V, 0x489 -> 1.040 V,
-# 0x48B -> 0.000 V, 0x48C -> 1.056 V.
+# The block is positional. Reading 0x480-0x48F straight through on the Z790-A
+# D4 gives Vcore, +5V, AVSB, 3VCC, +12V, VIN8, VIN4, 3VSB_ATX, BAT_3V, VTT,
+# DRAM, CPU L2, VIN2, CPU VCCSA, VCCIN_AUX and VIN9. A same-moment raw dump
+# decoded to 1.323, 5.040, 3.440, 3.328, 12.000, 1.112, 1.184, 3.440,
+# 3.216, 1.040, 1.494, 1.104, 1.056, 1.344, 1.840 and 0.968 V -- the HWiNFO
+# values in the supplied capture. VHIF is the separate 0x470 input at 1.808 V.
 #
-# DRAM has no entry. Nothing in this block carries it: on this board the DIMM
-# rails are reported by the DDR5 PMIC, which this project reaches through
-# ddr5_pmic instead.
+# ``vdimm`` deliberately aliases input 10.  It is hidden on DDR5, where that
+# pin is VDD2 and DIMM rails come from each module's PMIC; ``vdd2`` is hidden
+# on DDR4, where the same board-family input is the DIMM supply.  Keeping the
+# electrical source in one map prevents the two labels from drifting apart.
 NCT6798D_RAILS = {
     "vcore": (0x480, 0.009),
+    "plus5v": (0x481, 0.040),
+    "avsb": (0x482, 0.016),
+    "v3cc": (0x483, 0.016),
+    "plus12v": (0x484, 0.096),
+    "vin8": (0x485, 0.008),
+    "vin4": (0x486, 0.008),
+    "v3sb_atx": (0x487, 0.016),
+    "bat_3v": (0x488, 0.016),
     # VTT 0x489 0.016 -> raw 0x41 gives 1.040 V and 0x42 gives 1.056 V, both
     # of which HWiNFO reported for this channel across one capture window as
     # its minimum and maximum. Two matched endpoints fix the step.
     "vtt": (0x489, 0.016),
     "vdd2": (0x48A, 0.018),
+    "vdimm": (0x48A, 0.018),
+    "cpu_l2": (0x48B, 0.016),
+    "vin2": (0x48C, 0.008),
     "cpu_sa": (0x48D, 0.016),
     "cpu_aux": (0x48E, 0.016),
+    "vin9": (0x48F, 0.008),
+    # HWiNFO exposes VHIF after the sixteen contiguous ADC inputs. On this
+    # chip it is the separate bank-4 input at 0x470.
+    "vhif": (0x470, 0.016),
 }
 
 _DETECTED = {}
@@ -659,4 +702,4 @@ def _read_rails(reader, sensors, read_one):
 def rail_text(key, reader_factory=None):
     """Format one rail for a table row, or None when it is unavailable."""
     volts = read_board_rails(reader_factory=reader_factory).get(key)
-    return None if volts is None else f"{volts:.3f}V"
+    return None if volts is None else f"{volts:.3f} V"

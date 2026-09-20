@@ -185,17 +185,19 @@ class FollowsTheHardwareTest(unittest.TestCase):
             self.assertEqual(_require(self, "Manufactured"), "31 / 2023")
             self.assertEqual(_require(self, "Serial Number"), "0000ABCD")
 
-    def test_ddr4_takes_the_serial_and_date_from_its_own_reader(self):
-        # The two fields nothing else on the machine carries, and the two the
-        # DDR4 block is asked for. The DDR5 reader must not be consulted: its
-        # page-select is a write, and on DDR4 that lands on the SPD array.
-        module = {"serial_number": "0000ABCD", "manufacture_date": "31 / 2023"}
+    def test_ddr4_takes_identity_from_its_own_reader(self):
+        module = {
+            "serial_number": "0000ABCD",
+            "manufacture_date": "31 / 2023",
+            "dram_manufacturer": "Samsung",
+        }
         with self._generation("DDR4"), \
                 mock.patch("rochviewer.memory.ddr4_spd.read_identity", return_value=[module]), \
                 mock.patch("rochviewer.memory.ddr5_spd.read_identity",
                            side_effect=AssertionError) as ddr5:
             self.assertEqual(_require(self, "Serial Number"), "0000ABCD")
             self.assertEqual(_require(self, "Manufactured"), "31 / 2023")
+            self.assertEqual(_require(self, "DRAM Manufacturer"), "Samsung")
             ddr5.assert_not_called()
 
     def test_ddr4_does_not_take_the_die_from_a_blank_stepping(self):

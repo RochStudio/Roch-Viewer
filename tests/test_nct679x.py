@@ -220,29 +220,40 @@ class DecodeTest(unittest.TestCase):
 
 
 class ConfirmedCaptureTest(unittest.TestCase):
-    """The map must keep decoding to what HWiNFO read on the same boot.
-
-    Every value below came off the ASUS ROG MAXIMUS Z790 APEX bench with
-    HWiNFO reading the same NCT6798D, and each was then put through an
-    idle -> all-core load -> idle cycle before being claimed.
-    """
+    """The map must keep decoding to the captured HWiNFO values."""
 
     CAPTURE = {
         0x491: 0x21,   # CPU        33 C, rises to 41-42 C loaded
+        0x073: 0x1E,   # CPU Package 30 C
         0x401: 0x31,   # PCH        49 C, flat under load
         0x027: 0x1F,   # System     31 C, flat under load
         0x480: 0x92,   # Vcore      1.314 V at 9 mV, droops under load
+        0x481: 0x7E,   # +5V        5.040 V
+        0x482: 0xD7,   # AVSB        3.440 V
+        0x483: 0xD0,   # 3VCC        3.328 V
+        0x484: 0x7D,   # +12V       12.000 V
+        0x485: 0x8B,   # VIN8        1.112 V
+        0x486: 0x93,   # VIN4        1.176 V
+        0x487: 0xD7,   # 3VSB_ATX    3.440 V
+        0x488: 0xCA,   # BAT_3V      3.232 V
         0x489: 0x41,   # VTT        1.040 V (HWiNFO's minimum for the channel)
-        0x48A: 0x4C,   # VDD2       1.368 V (HWiNFO "IMC VDD")
-        0x48D: 0x4A,   # CPU SA     1.184 V
+        0x48A: 0x53,   # DRAM       1.494 V on the Z790-A D4
+        0x48B: 0x46,   # CPU L2      1.120 V
+        0x48C: 0x84,   # VIN2        1.056 V
+        0x48D: 0x54,   # CPU VCCSA   1.344 V
         0x48E: 0x73,   # CPU AUX    1.840 V
+        0x48F: 0x79,   # VIN9        0.968 V
+        0x470: 0x71,   # VHIF        1.808 V
         0x0FB: 0x24,   # not mapped: reads 36 but never moves. See below.
     }
 
     def test_temperatures_decode_to_the_hwinfo_readings(self):
         from rochviewer.sensors.board_sensors import NCT6798D_TEMPERATURES
 
-        expected = {"cpu": 33, "pch": 49, "system": 31}
+        expected = {
+            "motherboard": 31, "cpu_weighted": 31, "cpu_package": 30,
+            "cpu": 33, "pch": 49, "system": 31,
+        }
         for key, address in NCT6798D_TEMPERATURES.items():
             with self.subTest(key=key):
                 self.assertEqual(
@@ -253,8 +264,12 @@ class ConfirmedCaptureTest(unittest.TestCase):
         from rochviewer.sensors.board_sensors import NCT6798D_RAILS
 
         expected = {
-            "vcore": 1.314, "vtt": 1.040, "vdd2": 1.368,
-            "cpu_sa": 1.184, "cpu_aux": 1.840,
+            "vcore": 1.314, "plus5v": 5.040, "avsb": 3.440,
+            "v3cc": 3.328, "plus12v": 12.000, "vin8": 1.112,
+            "vin4": 1.176, "v3sb_atx": 3.440, "bat_3v": 3.232,
+            "vtt": 1.040, "vdd2": 1.494, "vdimm": 1.494,
+            "cpu_l2": 1.120, "vin2": 1.056, "cpu_sa": 1.344,
+            "cpu_aux": 1.840, "vin9": 0.968, "vhif": 1.808,
         }
         for key, (address, step) in NCT6798D_RAILS.items():
             with self.subTest(key=key):
@@ -295,8 +310,10 @@ class ConfirmedCaptureTest(unittest.TestCase):
 
         self.assertNotIn("vrm", NCT6798D_TEMPERATURES)
         self.assertNotIn("socket", NCT6798D_TEMPERATURES)
-        # DRAM comes from the DDR5 PMIC on this board, not the Super I/O.
-        self.assertNotIn("vdimm", NCT6798D_RAILS)
+        # Input 10 changes meaning with the ASUS board layout.  DDR5 exposes
+        # it as VDD2 and reads DRAM from the module PMIC; DDR4 exposes the
+        # same electrical channel as DRAM.  Platform filtering chooses one.
+        self.assertEqual(NCT6798D_RAILS["vdimm"], NCT6798D_RAILS["vdd2"])
 
 
 class SafetyTest(unittest.TestCase):

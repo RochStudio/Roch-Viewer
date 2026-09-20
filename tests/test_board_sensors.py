@@ -17,6 +17,7 @@
 """Cover the Intel board-sensor rails and the evidence gate in front of them."""
 
 import unittest
+from unittest import mock
 
 from rochviewer.sensors import board_sensors
 from rochviewer.sensors.board_sensors import (
@@ -132,6 +133,12 @@ class DetectionRefusalTest(unittest.TestCase):
 
 
 class RailValidationTest(unittest.TestCase):
+    def test_voltage_text_has_a_space_before_the_unit(self):
+        with mock.patch.object(
+            board_sensors, "read_board_rails", return_value={"vdimm": 1.494}
+        ):
+            self.assertEqual(rail_text("vdimm"), "1.494 V")
+
     def test_reading_inside_the_band_is_kept(self):
         self.assertEqual(validate_rail("vdimm", 1.568), 1.568)
 

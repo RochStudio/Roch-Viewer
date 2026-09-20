@@ -1,10 +1,20 @@
-# Roch Viewer 1.0.4
+# Roch Viewer 1.0.5
 
-Version 1.0.4 is the current development version. The published 1.0.3 release remains available from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/tag/v1.0.3).
+Version 1.0.5 is the current development version. The published 1.0.3 release remains available from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/tag/v1.0.3).
 
-1.0.4 removes duplicate DDR4 DQ/DQS ODT rows, shows one DRAM RON row, and adds raw MR1 evidence to Advanced/Dump. On the tested ASUS Z790-A D4 BIOS 3202 / 0x11F system, the user confirmed matching 34/48-ohm readouts with **DIMM RON Training** and **MRC Fast Boot** disabled. See [DDR4 RON validation](docs/ddr4-ron-validation.md) for the evidence and scope.
+Roch Viewer is a read-only Windows memory-timing and hardware-monitoring tool for supported Intel and AMD systems. It displays clocks, timings, per-channel settings, RAM identity, motherboard sensors and native CPU/memory telemetry in a compact light/dark interface. It does not require HWiNFO.
 
-A read-only Windows memory-timing and hardware-monitoring tool for supported Intel and AMD systems. View clocks, timings, per-channel settings, RAM details and native CPU/memory telemetry in a compact light/dark interface. No HWiNFO dependency.
+Version 1.0.5 expands DDR4 support and reorganizes the interface:
+
+- Removes the DDR5-only `tRFCpb` and `VDD2` fields from DDR4 views.
+- Shows DDR4 RTT and RON in resistance-first RZQ notation, such as `80 RZQ/3`.
+- Reads separate A2/B2 module identity on supported four-DIMM ASUS boards and reports module vendor, DRAM manufacturer/die, part number, serial number and manufacture date.
+- Decodes supported DDR4 MR0-MR6 training, power and operating fields without exposing raw RON shadow diagnostics in Advanced.
+- Reports the ASUS Z790-A D4 DRAM rail and the complete supported Nuvoton NCT6798D voltage and temperature set in Telemetry.
+- Uses fixed-width, unscrolled main tabs with per-tab heights and keeps the window's top edge fixed while switching tabs.
+- Opens Advanced beside the right edge of the viewer and Telemetry beside the left edge when screen space permits.
+
+DDR4 RON is decoded from controller MR1 shadows. On the tested ASUS Z790-A D4 BIOS 3202 / microcode 0x11F system, 34/48-ohm BIOS selections produced matching displayed values with **DIMM RON Training** and **MRC Fast Boot** disabled. See [DDR4 RON validation](docs/ddr4-ron-validation.md) for the evidence and scope.
 
 ## Install
 
@@ -20,18 +30,33 @@ The InpOut DLL contains a kernel driver and can install a persistent Windows ser
 
 ## Features
 
-- **Summary:** CPU/board identity, memory speed, DRAM Ratio below BCLK, supported MCLK/UCLK/FCLK readings, key timings and voltage snapshots. Select one module or all modules; matching channel values display once and differences display side by side.
-- **System Info:** system, processor, motherboard, clocks and RAM details, followed by graphics-card identity at the bottom.
-- **Timings:** primary, secondary and tertiary timings, including per-channel values where exposed, with aligned alternating row shading and scrolling at the compact window size.
+- **Summary:** CPU name, cores/threads, microcode, motherboard model/BIOS, memory speed, supported clock ratios, key timings, RTT/RON/VREF and voltage snapshots. Select one module or all modules; matching channel values display once and differences display side by side.
+- **System Info:** two columns for system, processor, motherboard and graphics identity on the left, with configured clocks and memory/module details on the right.
+- **Timings:** primary, secondary and tertiary timings, including per-channel values where exposed, balanced across three columns without scrolling.
 - **Voltages:** startup snapshots of supported CPU, motherboard and memory rails. Use Telemetry for live readings.
-- **Training and IMC:** supported RTT/ODT, drive strengths, VREF, training and integrated-memory-controller configuration fields. AMD IMC includes native preamble/postamble and ECC status (memory-controller ECC, not DDR5 on-die ECC). Granite Ridge also exposes eight raw training codes with compatibility labels; those labels are not verified physical VREF/DFE readings. Unavailable reads stay blank.
-- **Native telemetry:** CPU/effective clocks, temperatures, power and supported board voltages, plus each DIMM's temperature and PMIC rails. Current/minimum/maximum/average statistics and reset controls are included.
+- **Training and IMC:** supported RTT/ODT, RON, ODT delay, VREF, drive strength, power-down, refresh, mode-register and integrated-memory-controller configuration fields. Independent module/channel values remain visible where the hardware exposes them. AMD IMC includes native preamble/postamble and ECC status (memory-controller ECC, not DDR5 on-die ECC). Granite Ridge also exposes eight raw training codes with compatibility labels; those labels are not verified physical VREF/DFE readings. Unavailable reads stay blank.
+- **RTL:** compact per-memory-controller/channel round-trip-latency values.
+- **Native telemetry:** CPU/effective clocks, temperatures, power and supported motherboard voltages, plus each DIMM's temperature and PMIC rails. On the ASUS Z790-A D4, supported NCT6798D readings include Vcore, +5V, AVSB, 3VCC, +12V, VIN inputs, standby/battery rails, VTT, DRAM, CPU L2, CPU VCCSA, CPU AUX and motherboard/CPU/PCH temperatures. Current/minimum/maximum/average statistics and reset controls are included.
 - **Per-stick RAM details:** part number, capacity, rank and available IC information in the footer and telemetry.
-- **Shared Roch interface:** light/dark themes, consistent toolbar buttons, and YouTube | X | Discord links at the bottom-left.
-- **Advanced view:** searchable fields and a text dump for comparing configurations or reporting issues.
+- **Shared Roch interface:** light/dark themes, a sun/moon title-bar control, consistent toolbar buttons and YouTube | X | Discord links at the bottom-left.
+- **Advanced view:** searchable decoded fields and a text dump for comparing configurations or reporting issues.
 - **Read-only:** no overclocking controls or voltage writes. Low-level selectors and query transactions retrieve readings only.
 
-Version 1.0.3 adds reorganized timing and training layouts, independent A1/B1 module readings, IMC and RTL views, expanded System Info, snapshot voltage reporting, and a compact 750 × 775 interface with scrolling for longer pages.
+## Window layout
+
+Every main tab is 750 pixels wide. Heights are sized to the content and grow from the bottom, so switching tabs does not move the title bar:
+
+| Tab | Size |
+| --- | ---: |
+| Summary | 750 × 750 |
+| System Info | 750 × 800 |
+| Timings | 750 × 775 |
+| Training | 750 × 800 |
+| IMC | 750 × 1100 |
+| RTL | 750 × 654 |
+| Voltages | 750 × 654 |
+
+On shorter displays, the app caps the requested height to the available desktop area.
 
 ## Screenshots
 
@@ -45,20 +70,20 @@ Actual updated local-build screenshots, not UI concepts. Values shown are exampl
 
 ## Hardware support
 
-Intel LGA1700/LGA1851 and supported AMD AM5/Granite Ridge systems. Readings depend on CPU, memory type, motherboard, BIOS and driver access. Unsupported values stay unavailable; board sensor mappings are not assumed to transfer between models. See [validation history and limitations](docs/reference.md).
+Intel LGA1700/LGA1851 and supported AMD AM5/Granite Ridge systems. Readings depend on CPU, memory type, motherboard, BIOS and driver access. DDR4 and DDR5 expose different fields; unsupported values stay unavailable, and motherboard sensor mappings are not assumed to transfer between models. See [validation history and limitations](docs/reference.md).
 
 ## Build from source
 
-Install **Python 3.13 x64** with Tkinter, then run:
+Install **Python 3.12 or 3.13 (x64)** with Tkinter, then run:
 
 ```powershell
-py -3.13 -m pip install -r requirements.txt
-py -3.13 -m PyInstaller -y RochViewer.spec
+py -3.12 -m pip install -r requirements.txt
+py -3.12 -m PyInstaller -y RochViewer.spec
 ```
 
-Output: `dist\RochViewer.exe`. Put the separately obtained `inpoutx64.dll` beside it. To run from source, put the DLL beside `run_viewer.py` and use `pyw -3.13 run_viewer.py`.
+Output: `dist\RochViewer.exe`. Put the separately obtained `inpoutx64.dll` beside it. To run from source, put the DLL beside `run_viewer.py` and use `pyw -3.12 run_viewer.py`.
 
-Tests: `py -3.13 -m unittest discover -s tests -t .`
+Tests: `py -3.12 -m unittest discover -s tests -t .`
 
 ## Credits
 

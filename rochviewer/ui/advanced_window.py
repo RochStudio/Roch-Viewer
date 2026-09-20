@@ -69,7 +69,9 @@ CHANNEL_WIDTH = 130
 # on Misc against Enabled/Disabled, and the longest values are on System Info
 # against names like OS and CPU. Every row still fits at 490, so this keeps
 # a little slack for a board whose strings run longer than this one's.
-WINDOW_SIZE = "520x800"
+WINDOW_WIDTH = 520
+WINDOW_HEIGHT = 800
+WINDOW_SIZE = f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}"
 
 # The width is fixed, so the space a value gets is known and a long one can be
 # wrapped instead of left to crowd its name. A single-channel row spans both
@@ -142,7 +144,8 @@ class AdvancedWindow(ctk.CTkToplevel):
     """Every row from the requested tabs, searchable and refreshing live."""
 
     def __init__(self, master, theme, entries, on_close=None, icon_path=None,
-                 refresh_ms=REFRESH_MS, channel_labels=("A1", "B1")):
+                 refresh_ms=REFRESH_MS, channel_labels=("A1", "B1"),
+                 position=None):
         super().__init__(master)
         # entries: [(tab, category, name, read())], where read returns either
         # one displayed value or an (A, B) pair for a row that reads both
@@ -173,7 +176,10 @@ class AdvancedWindow(ctk.CTkToplevel):
         # setting ours has to happen after that, or the default one wins.
         if icon_path:
             self.after(300, lambda: self._set_icon(icon_path))
-        self.geometry(WINDOW_SIZE)
+        geometry = WINDOW_SIZE
+        if position is not None:
+            geometry += f"{int(position[0]):+d}{int(position[1]):+d}"
+        self.geometry(geometry)
         # Width fixed, height not: the list is long and worth resizing
         # vertically, while the columns are laid out against a known width.
         self.resizable(False, True)

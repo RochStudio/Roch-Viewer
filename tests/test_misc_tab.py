@@ -50,12 +50,22 @@ class MiscRowTest(unittest.TestCase):
         """Former Misc rows now combined into per-module Training."""
         return [t for t in intel_timings.TIMINGS
                 if t.get("Tab") == "Training"
-                and t.get("source_scope") == "module"]
+                and t.get("source_scope") == "module"
+                and not t.get("diagnostic")]
 
     def _rows(self):
-        """The per-module mode-register sections."""
-        return [t for t in self._tab_rows()
-                if t.get("Category") in MISC_CATEGORIES]
+        """The original per-module Misc descriptor rows."""
+        names = (
+            {"Burst Length", "DQS Interval Timer RT"}
+            | {name for name, *_ in intel_timings.MISC_MODE_REGISTER_COMMAND}
+            | {name for name, *_ in intel_timings.MISC_MODE_REGISTER_ECS}
+            | {name for name, *_ in intel_timings.MISC_MODE_REGISTER_FIELDS}
+            | {name for name, *_ in intel_timings.MISC_MODE_REGISTER_STATE}
+        )
+        return [
+            t for t in self._tab_rows()
+            if t.get("name") in names and "value" in t
+        ]
 
     def _settings_rows(self):
         """The fixed controller-register rows now combined into PHY."""
@@ -114,11 +124,16 @@ class MiscRowTest(unittest.TestCase):
         # Each section appears once and only once: a category showing up in
         # two places means rows of one kind were split across the tab.
         self.assertEqual(len(seen), len(set(seen)), seen)
-        declared = [name for name in intel_timings.MISC_SECTION_ORDER
+        seen = [
+            name for name, _rows in main.ordered_sections(
+                [(name, []) for name in seen], main.SKEW_SECTION_ORDER
+            )
+        ]
+        declared = [name for name in main.SKEW_SECTION_ORDER
                     if name in set(seen)]
         self.assertEqual(seen, declared)
 
-    def test_sections_use_the_requested_two_columns(self):
+    def test_sections_use_the_requested_columns(self):
         rows = self._rows()
         if not rows:
             self.skipTest("Misc tab is not installed on this platform")
@@ -126,14 +141,21 @@ class MiscRowTest(unittest.TestCase):
             with self.subTest(name=row.get("name")):
                 self.assertEqual(
                     row.get("Column"),
-                    intel_timings.SKEW_MISC_COLUMNS[row.get("Category")],
+                    intel_timings.DDR4_TRAINING_TWO_COLUMN_COLUMNS[
+                        row.get("Category")
+                    ],
                 )
 
     def test_each_misc_column_reads_in_the_requested_order(self):
         requested = {
-            # Source-table order remains stable; the Training renderer applies
-            # SKEW_SECTION_ORDER to draw Command before Mode Registers.
-            "Right": ["Mode Registers", "Command", "Preamble", "ECS"],
+            "Left": [
+                "RTT", "ODT", "RON", "ODT DELAY", "VREF",
+                "DLL / LATENCY", "DATA CONTROL", "DFE", "ODTL",
+            ],
+            "Right": [
+                "MPR / WRITE", "Command", "PARITY / CRC",
+                "REFRESH / POWER", "PREAMBLE / PPR",
+            ],
         }
         for column, expected in requested.items():
             seen = []
@@ -278,6 +300,24 @@ class SettingsSourceSplitTest(unittest.TestCase):
                 self.assertIn(row.get("Category"), expected)
                 self.assertEqual(row.get("Column"),
                                  expected[row.get("Category")])
+
+    def test_imc_signal_groups_share_one_ordered_column(self):
+        expected = ("DATA", "CMD", "CLK", "CTL", "SComp")
+        self.assertEqual(
+            tuple(name for name in main.IMC_SECTION_ORDER if name in expected),
+            expected,
+        )
+        self.assertTrue(all(
+            intel_timings.PHY_SETTINGS_COLUMNS[name] == "Right"
+            for name in expected
+        ))
+
+    def test_imc_power_down_follows_refresh_in_the_left_column(self):
+        order = main.IMC_SECTION_ORDER
+        self.assertEqual(order[order.index("Refresh") + 1], "Power Down")
+        self.assertEqual(
+            intel_timings.PHY_SETTINGS_COLUMNS["Power Down"], "Left"
+        )
 
     def test_every_former_misc_row_has_an_independent_module_source(self):
         rows = [row for row in intel_timings.TIMINGS
@@ -581,6 +621,112 @@ class Ddr4MiscRowTest(unittest.TestCase):
                in intel_timings.MISC_MODE_REGISTER_ECS}
         self.assertTrue(ecs)
         self.assertLessEqual(ecs, set(intel_timings.DDR5_ONLY_MISC_ROWS))
+
+
+class Ddr4ModeRegisterPlacementTest(unittest.TestCase):
+    """The captured Z790-A shadows decode and split by A2/B2 uniqueness."""
+
+    CAPTURED_A = {
+        0: 0x0D70, 1: 0x0003, 2: 0x08F0, 3: 0x0400,
+        4: 0x0008, 5: 0x00C0, 6: 0x1021,
+    }
+    CAPTURED_B = {**CAPTURED_A, 6: 0x1020}
+
+    EXPECTED_A = {
+        "CAS Latency": "19",
+        "Read Burst Type": "Sequential",
+        "Test Mode": "Normal",
+        "DLL Reset": "Yes",
+        "DLL Enable": "Enabled",
+        "Additive Latency": "0 (AL disabled)",
+        "Write Leveling": "Disabled",
+        "Low Power ASR": "Auto Self Refresh",
+        "Write CRC": "Disabled",
+        "MPR Page Select": "Page 0",
+        "MPR Operation": "Normal",
+        "Per DRAM Addr": "Disabled",
+        "Temp Sensor Readout": "Disabled",
+        "Write CMD Latency": "6 nCK",
+        "MPR Read Format": "Serial",
+        "Max Power Down": "Disabled",
+        "Temp Refresh Range": "Normal",
+        "Temp Ctrl Refresh": "Enabled",
+        "Internal Vref Mon": "Disabled",
+        "Soft PPR": "Disabled",
+        "CS to CMD Latency": "Disabled",
+        "Self Refresh Abort": "Disabled",
+        "Read Preamble Train": "Disabled",
+        "Read Preamble": "1 nCK",
+        "Write Preamble": "1 nCK",
+        "Hard PPR": "Disabled",
+        "CA Parity Latency": "Disabled",
+        "CRC Error Clear": "Clear",
+        "CA Parity Err Status": "Clear",
+        "ODT Buffer (PD)": "Activated",
+        "CA Parity Persist Err": "Disabled",
+        "Write DBI": "Disabled",
+        "Read DBI": "Disabled",
+        "VrefDQ Train Value": "33",
+        "VrefDQ Train Range": "Range 1",
+        "VrefDQ Train Enable": "Disabled",
+    }
+
+    def setUp(self):
+        module = intel_timings
+        saved = module._ddr4_mode_register
+        self.addCleanup(setattr, module, "_ddr4_mode_register", saved)
+        module._ddr4_mode_register = lambda number, base=None: (
+            self.CAPTURED_B if base == module.CHANNEL_B else self.CAPTURED_A
+        ).get(number)
+
+    def _rows(self):
+        return {
+            row["name"]: row for row in intel_timings.TIMINGS
+            if row.get("name") in
+                intel_timings.DDR4_TRAINING_MODE_REGISTER_ROWS
+        }
+
+    def test_training_uses_function_names_instead_of_mr_numbers(self):
+        rows = [row for row in intel_timings.TIMINGS
+                if row.get("Tab") == "Training"]
+        self.assertFalse(
+            {"MR0 / MR1", "MR2 / MR3", "MR4", "MR5 / MR6"}
+            & {row.get("Category") for row in rows}
+        )
+
+    def test_every_new_reference_field_is_visible_on_training(self):
+        rows = self._rows()
+        self.assertEqual(set(rows), set(self.EXPECTED_A))
+        self.assertEqual(
+            {name: row["value_a"]() for name, row in rows.items()},
+            self.EXPECTED_A,
+        )
+
+    def test_every_per_dimm_mode_register_field_uses_the_module_selector(self):
+        rows = self._rows()
+        training = {name for name, row in rows.items()
+                    if row.get("Tab") == "Training"}
+        self.assertEqual(
+            training, set(intel_timings.DDR4_TRAINING_MODE_REGISTER_ROWS)
+        )
+        row = self._rows()["VrefDQ Train Value"]
+        self.assertEqual((row["value_a"](), row["value_b"]()), ("33", "32"))
+
+    def test_every_mode_register_field_keeps_independent_a2_b2_sources(self):
+        rows = self._rows()
+        for name, row in rows.items():
+            with self.subTest(name=name):
+                self.assertEqual(row.get("Tab"), "Training")
+                self.assertEqual(row.get("source_scope"), "module")
+                self.assertTrue(intel_timings.is_dual_timing(row))
+                self.assertTrue(callable(row.get("value_a")))
+                self.assertTrue(callable(row.get("value_b")))
+
+    def test_a_later_difference_remains_separate_on_training(self):
+        self.CAPTURED_B[0] = 0x0D40
+        self.addCleanup(self.CAPTURED_B.__setitem__, 0, 0x0D70)
+        row = self._rows()["CAS Latency"]
+        self.assertEqual((row["value_a"](), row["value_b"]()), ("19", "18"))
 
 
 class ModeRegisterTimingRowTest(unittest.TestCase):

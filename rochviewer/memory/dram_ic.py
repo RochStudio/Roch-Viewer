@@ -42,6 +42,10 @@ _EXACT_PART_NUMBERS = {
     # G.Skill Ripjaws V DDR4-3600 CL14 16 GB module (2x16 GB GVKA kit).
     "F4-3600C14-16GVKA": "Samsung B-die",
 
+    # Acer Predator 16 GB DDR4 module confirmed by its SPD in a reference viewer on
+    # the ASUS Z790-A D4 reference system.
+    "BL.9BWWR.298": "Samsung B-die",
+
     # SK hynix 16 GB DDR5 OEM module used by the Z890 test system.
     # The user verified the installed HMCG78AGBUA081N modules are A-die.
     "HMCG78AGBUA081N": "SK hynix A-die",

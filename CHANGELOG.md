@@ -1,6 +1,40 @@
 # Changelog
 
-## 1.0.4 (unreleased)
+## 1.0.5 (unreleased)
+
+- Removed tRFCpb from DDR4 timing views; per-bank refresh is a DDR5 timing.
+- Renamed the DDR4 DRAM RON row to RON and formatted DDR4 RTT/RON values as resistance-first RZQ ratios, matching the reference viewer.
+- Disambiguated A2/B2 modules on four-DIMM ASUS boards whose SMBIOS repeats `ChannelA` inside two different memory controllers.
+- Read the DDR4 EE1004 manufacturing page so System Info reports the DRAM manufacturer, manufacture date and serial; identify Acer `BL.9BWWR.298` modules as Samsung B-die.
+- Added 36 decoded DDR4 MR0-MR6 fields, including DLL/training state, low-power self refresh, MPR controls, maximum power down, temperature refresh, preambles, PPR, parity/DBI and per-DIMM VrefDQ training. The A2/B2-specific VrefDQ value is on Training; the 35 equal fields are grouped on IMC.
+- Corrected the ASUS Z790-A D4 voltage mapping: NCT6798D input 10 is shown as the live DRAM rail on DDR4, while VDD2 remains a DDR5-only label.
+- Widened the fixed window to 1000 px and kept IMC vertically scrollable so all three mode-register columns and their values fit without clipping.
+- Added per-tab window dimensions: compact pages shrink, dense Training and IMC pages widen, and the window stays centred when switching tabs.
+- Set Summary to 750×775, placed the useful IMC VREF levels below RON, and moved the compact RTL pairs directly below tWRPRE.
+- Reduced Summary to 700×700 and made its data area scroll so the added VREF and RTL rows remain reachable at the smaller size.
+- Adjusted the Summary preset to 725×750 while retaining its scrollable data area and fixed module selector.
+- Removed Summary scrolling at 725×750, matched the title bar to the app background, and replaced the minimize/close glyphs with cleaner Windows-style symbols.
+- Restored Summary to 725×750 and enlarged System Info to 800×800 with two columns: System, Processor, Motherboard, and Graphics on the left; Clocks and Memory on the right. Moved the 8px separation inside the right-column labels so zebra shading remains continuous across both columns.
+- Removed System Info scrolling at 800×800 and removed the duplicated parenthesized revision from Model; Board Revision remains the single revision display.
+- Moved the Light/Dark toggle to the title bar left of minimize using sun/moon icons, and fixed System Info shading by grouping hidden columns by widget instead of their unavailable screen coordinates.
+- Removed Timings scrolling by sizing the tab to 800×775 and balancing every timing section across three full-height columns on Intel and AM5.
+- Set Training to 950×750 with the standard 12 pt table font, removed its scrolling, aligned values within each column, and moved all independently read DDR4 A2/B2 mode-register fields from IMC into a balanced three-column Training view.
+- Divided IMC into three equal-width columns so the gaps between VREF, DATA, and MISC remain consistent across the full window.
+- Smoothed tab switching by resizing before the selected page is laid out, cancelling stale idle callbacks, and reusing completed viewport shading when a tab returns at the same size.
+- Standardized every tab on a 25px name-to-value gap and a 25px gutter between top-level data columns.
+- Widened Training to 1000×750 so its three columns retain the new spacing without clipping.
+- Kept the 25px column spacing inside the painted table columns so zebra row shading remains continuous, and added the missing space before the voltage unit.
+- Reorganized DDR4 Training by function—DLL/latency, data control, MPR/write, parity/CRC, refresh/power, and preamble/PPR—while keeping RTT, RON, and ODT Delay in place and removing MR-number section headings.
+- Set Training to 750×800 and IMC to 750×1100, reflowing both tall layouts into two readable 12pt columns.
+- Standardized every main tab to a 750px width while preserving its tab-specific height.
+- Reordered Training so ODT Delay follows RON and VREF follows ODT Delay; grouped IMC DATA, CMD, CLK, CTL, and SComp in that order; anchored tab height changes to the window's top edge.
+- Moved IMC Power Down directly below Refresh and removed IMC scrolling at its 750×1100 layout.
+- Added the complete ASUS NCT6798D HWiNFO voltage block and its Motherboard, CPU Weighted, CPU Package, CPU, and PCH temperature sources to Telemetry, each with current/minimum/maximum/average statistics.
+- Removed the raw DDR4 RON shadow diagnostics from Advanced, and open Advanced to the right of the viewer and Telemetry to its left when screen space permits.
+- Kept the NCT6798D CPU temperature label separate from the processor identity key so Summary shows the CPU model again while Telemetry retains HWiNFO's `CPU` label.
+- Removed motherboard Manufacturer from Summary while retaining it in System Info, and removed external viewer names from source comments and test names.
+
+## 1.0.4 (2026-09-18)
 
 - LGA1700 DDR4: removed DQ/DQS ODT NOM/WR/PARK aliases; retained RTT values and IMC VREF controls.
 - Replaced duplicate pull-up/down RON rows with one DRAM RON reading from MR1 controller shadows. DDR5 still has separate driver rows.

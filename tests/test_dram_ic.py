@@ -22,6 +22,11 @@ class DramIcTest(unittest.TestCase):
         self.assertEqual(identify_dram_ic("F5-6000J2636G16G"), "SK hynix A-die")
         self.assertEqual(identify_dram_ic("F5-6000J2636G16G", "G.Skill"), "SK hynix A-die")
 
+    def test_acer_predator_reference_kit_is_samsung_b_die(self):
+        self.assertEqual(
+            identify_dram_ic("BL.9BWWR.298", "Acer"), "Samsung B-die"
+        )
+
     def test_unknown_stays_unknown(self):
         self.assertEqual(identify_dram_ic("COMPLETELY-FAKE-PART"), "Unknown IC")
 

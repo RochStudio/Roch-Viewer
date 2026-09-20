@@ -81,10 +81,8 @@ class PartNumberTest(unittest.TestCase):
 
 
 class SerialNumberTest(unittest.TestCase):
-    def test_an_unprogrammed_serial_is_not_a_serial_of_zero(self):
-        # Both bench sticks read this way. Printing 00000000 would put a
-        # serial on a module that never gave one.
-        self.assertEqual(decode_serial_number(bench_values()), EM_DASH)
+    def test_an_all_zero_serial_matches_firmware_and_reference(self):
+        self.assertEqual(decode_serial_number(bench_values()), "0")
 
     def test_an_all_f_block_is_unprogrammed_too(self):
         values = bench_values({
@@ -110,8 +108,8 @@ class DecodeIdentityTest(unittest.TestCase):
         self.assertEqual(found["part_number"], "F4-3600C14-16GVKA")
         self.assertEqual(found["module_manufacturer"], "G.Skill")
         self.assertEqual(found["dram_manufacturer"], "Samsung")
-        # Unprogrammed on this kit, and reported as such.
-        self.assertEqual(found["serial_number"], EM_DASH)
+        # Firmware and the reference expose this all-zero block as serial 0.
+        self.assertEqual(found["serial_number"], "0")
         self.assertEqual(found["manufacture_date"], EM_DASH)
 
     def test_a_programmed_date_decodes(self):
@@ -148,6 +146,7 @@ class FakeReader:
         self._driver_open = driver_open
         self.reads = []
         self.writes = []
+        self.page_reads = []
 
     def is_driver_open(self):
         return self._driver_open
@@ -158,6 +157,15 @@ class FakeReader:
     def read_byte(self, address, register, controller_offset=0x00):
         self.reads.append((address, register))
         return self.values.get(register)
+
+    def read_ddr4_spd(self, address, offset, length, controller_offset=0x00):
+        self.page_reads.append((address, offset, length, controller_offset))
+        values = {}
+        for position in range(offset, offset + length):
+            register = position - 0x100
+            self.reads.append((address, register))
+            values[position] = self.values.get(register)
+        return values
 
     def write_byte(self, *args, **kwargs):
         self.writes.append((args, kwargs))
@@ -183,6 +191,11 @@ class ReadIdentityTest(unittest.TestCase):
         reader = FakeReader()
         read_identity(reader_factory=lambda: reader)
         self.assertEqual(reader.writes, [])
+
+    def test_the_upper_ddr4_page_is_read(self):
+        reader = FakeReader()
+        read_identity(reader_factory=lambda: reader)
+        self.assertEqual(reader.page_reads, [(0x51, 0x140, 0x21, 0x00)])
 
     def test_no_driver_means_no_identity_rather_than_an_error(self):
         reader = FakeReader(driver_open=False)
