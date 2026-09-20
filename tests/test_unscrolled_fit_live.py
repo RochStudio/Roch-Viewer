@@ -172,8 +172,11 @@ class UnscrolledTabFitTest(unittest.TestCase):
         self.root.update()
 
         self.assertEqual((self.root.winfo_x(), self.root.winfo_y()), (x, y))
-        self.assertEqual(self.root.winfo_width(), 750)
-        self.assertEqual(self.root.winfo_height(), 775)
+        expected_width, expected_height = self.app.window_size_for_tab(
+            "Timings", self.root.winfo_screenheight()
+        )
+        self.assertEqual(self.root.winfo_width(), expected_width)
+        self.assertEqual(self.root.winfo_height(), expected_height)
 
     def test_imc_has_no_scrollbar(self):
         if "IMC" not in self.app.tabview._name_list:
