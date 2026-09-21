@@ -308,6 +308,26 @@ def get_cpu_technology():
     return (_intel_silicon() or (None, None))[1]
 
 
+def get_cpu_package():
+    """The processor socket/package name reported by SMBIOS through WMI."""
+    for cpu in _wmi_static("Win32_Processor"):
+        value = str(getattr(cpu, "SocketDesignation", "") or "").strip()
+        return value or None
+    return None
+
+
+def get_cpu_signature():
+    """Display CPUID family, model and stepping without a SKU lookup table."""
+    from rochviewer.system_identity import decode_wmi_processor_signature
+
+    for cpu in _wmi_static("Win32_Processor"):
+        family, model, stepping = decode_wmi_processor_signature(
+            getattr(cpu, "ProcessorId", None)
+        )
+        return "%d / 0x%02X / %d" % (family, model, stepping)
+    return None
+
+
 def _pci_device_and_revision(device, function):
     """Return ``(device id, revision)`` for a PCI function, or ``(None, None)``."""
     identity = _pci_config_dword(device, function, 0x00)
@@ -7021,6 +7041,10 @@ def _install_system_info_identity_rows():
     )
     # What the silicon is, beside the name it is sold under.
     _place_system_info_rows("CPU", [
+        _system_info_row("CPU Package", get_cpu_package,
+                         display_name="Package"),
+        _system_info_row("CPU Signature", get_cpu_signature,
+                         display_name="Family / Model / Step"),
         _system_info_row("Code Name", get_cpu_codename),
         _system_info_row("Technology", get_cpu_technology),
     ])
@@ -7106,7 +7130,8 @@ SYSTEM_INFO_SUMMARY_ONLY = ("Uncore",)
 # column, so Graphics follows Motherboard while Memory follows Clocks.
 SYSTEM_INFO_SECTIONS = (
     ("System", "Left", ("OS", "OS Version", "Platform")),
-    ("Processor", "Left", ("CPU", "Code Name", "Technology",
+    ("Processor", "Left", ("CPU", "CPU Package", "CPU Signature",
+                           "Code Name", "Technology",
                            "Cores / Threads", "Microcode")),
     ("Motherboard", "Left", ("Manufacturer", "Model", "Board Revision", "BIOS", "BIOS Date",
                              "Chipset", "Southbridge", "LPCIO")),

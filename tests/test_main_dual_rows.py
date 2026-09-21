@@ -55,15 +55,15 @@ def every_platform_row_name():
     """
     from rochviewer.ui import main as main_module
     from rochviewer.intel import intel_timings
-    from rochviewer.platform_profiles import LGA1700_DDR4
+    from rochviewer.platform_profiles import LGA1700_DDR5
     from tests import intel_stub
 
     names = {row.get("name") for row in main_module.TIMINGS}
     names |= {row.get("name") for row in intel_timings.TIMINGS}
     # The other Intel generation, built on purpose rather than waited for.
-    ddr4 = intel_stub.install(LGA1700_DDR4)
+    ddr5 = intel_stub.install(LGA1700_DDR5)
     try:
-        names |= {row.get("name") for row in ddr4.TIMINGS}
+        names |= {row.get("name") for row in ddr5.TIMINGS}
     finally:
         intel_stub.restore()
     return names

@@ -1,6 +1,6 @@
 # Roch Viewer 1.0.5
 
-Version 1.0.5 is the current development version. The published 1.0.3 release remains available from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/tag/v1.0.3).
+Version 1.0.5 is the current published release and is available from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/tag/v1.0.5).
 
 Roch Viewer is a read-only Windows memory-timing and hardware-monitoring tool for supported Intel and AMD systems. It displays clocks, timings, per-channel settings, RAM identity, motherboard sensors and native CPU/memory telemetry in a compact light/dark interface. It does not require HWiNFO.
 
@@ -32,6 +32,7 @@ The InpOut DLL contains a kernel driver and can install a persistent Windows ser
 
 - **Summary:** CPU name, cores/threads, microcode, motherboard model/BIOS, memory speed, supported clock ratios, key timings, RTT/RON/VREF and voltage snapshots. Select one module or all modules; matching channel values display once and differences display side by side.
 - **System Info:** two columns for system, processor, motherboard and graphics identity on the left, with configured clocks and memory/module details on the right.
+- **SPD:** select a physical DIMM slot to see module identity, geometry, maximum JEDEC bandwidth, DDR4 JEDEC timing choices, and Intel XMP 2.0 profiles read directly from the module.
 - **Timings:** primary, secondary and tertiary timings, including per-channel values where exposed, balanced across three columns without scrolling.
 - **Voltages:** startup snapshots of supported CPU, motherboard and memory rails. Use Telemetry for live readings.
 - **Training and IMC:** supported RTT/ODT, RON, ODT delay, VREF, drive strength, power-down, refresh, mode-register and integrated-memory-controller configuration fields. Independent module/channel values remain visible where the hardware exposes them. AMD IMC includes native preamble/postamble and ECC status (memory-controller ECC, not DDR5 on-die ECC). Granite Ridge also exposes eight raw training codes with compatibility labels; those labels are not verified physical VREF/DFE readings. Unavailable reads stay blank.
@@ -49,7 +50,8 @@ Every main tab is 750 pixels wide. Heights are sized to the content and grow fro
 | Tab | Size |
 | --- | ---: |
 | Summary | 750 × 750 |
-| System Info | 750 × 800 |
+| System Info | 750 × 840 |
+| SPD | 750 × 750 |
 | Timings | 750 × 775 |
 | Training | 750 × 800 |
 | IMC | 750 × 1100 |

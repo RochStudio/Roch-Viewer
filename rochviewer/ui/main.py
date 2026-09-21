@@ -1578,6 +1578,10 @@ class TimingGUI:
         self.tabview.pack(fill="both", expand=True, padx=2, pady=(2, 2))
         self.build_tab_strip_tools()
         self.tab_names = select_tab_names(TIMINGS)
+        # SPD is a hardware-inventory page rather than a timing-profile row,
+        # so it has no synthetic entry in TIMINGS.  Keep it beside System
+        # Info, where the physical module selector and profile table belong.
+        self.tab_names.insert(self.tab_names.index("System Info") + 1, "SPD")
         for name in self.tab_names:
             self.tabview.add(name)
         self.tab_frames = {}
@@ -1602,6 +1606,11 @@ class TimingGUI:
 
             frame = ctk.CTkFrame(holder, corner_radius=0, fg_color=self.BG_COLOR)
             frame.pack(fill="both", expand=True, padx=2, pady=1)
+
+            if name == "SPD":
+                self.grid_frames[name] = {"FullWidth": frame}
+                self._build_spd_tab(frame)
+                continue
 
             if name == "Summary":
                 # Full-width system strip + top-aligned columns (no empty stretch band).
@@ -1696,6 +1705,8 @@ class TimingGUI:
         """Apply the active page's size and finish any empty table bands."""
         tab_name = self.tabview.get()
         self._resize_for_tab(tab_name)
+        if tab_name == "SPD":
+            self._load_spd_tab_async()
         if self._tab_shading_job is not None:
             try:
                 self.root.after_cancel(self._tab_shading_job)
@@ -1721,6 +1732,225 @@ class TimingGUI:
         return self._build_module_selector(
             parent, "Summary", row=1
         )
+
+    def _build_spd_tab(self, parent):
+        """Draw per-slot module identity and SPD timing profiles."""
+        self._spd_modules = []
+        self._spd_choices = {}
+        self._spd_value_labels = {}
+        self._spd_profile_headers = []
+        self._spd_profile_values = []
+        self._spd_loading = False
+        self._spd_loaded = False
+
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(0, weight=0)
+        parent.grid_rowconfigure(1, weight=0)
+        parent.grid_rowconfigure(2, weight=1)
+
+        info = ctk.CTkFrame(parent, corner_radius=0, fg_color=self.BG_COLOR)
+        info.grid(row=0, column=0, sticky="ew")
+        info.grid_columnconfigure(0, weight=1, uniform="spd_info")
+        info.grid_columnconfigure(1, weight=1, uniform="spd_info")
+
+        fields = (
+            ("Memory Type", "memory_type"),
+            ("Module Size", "capacity"),
+            ("Max Bandwidth", "max_bandwidth"),
+            ("Module Manuf.", "module_manufacturer"),
+            ("DRAM Manuf.", "dram_manufacturer"),
+            ("DRAM Die", "dram_die"),
+            ("SPD Extension", "extension"),
+            ("Ranks", "rank"),
+            ("Part Number", "part_number"),
+            ("Serial Number", "serial_number"),
+            ("Manufactured", "manufacture_date"),
+            ("SPD Address", "address"),
+        )
+        for column in range(2):
+            column_frame = ctk.CTkFrame(
+                info, corner_radius=0, fg_color=self.BG_COLOR
+            )
+            column_frame.grid(row=0, column=column, sticky="nsew")
+            column_frame.grid_columnconfigure(0, weight=0)
+            column_frame.grid_columnconfigure(1, weight=1)
+            heading = ctk.CTkLabel(
+                column_frame,
+                text="MODULE" if column == 0 else "IDENTITY",
+                font=self.HEADER_FONT,
+                height=self.ROW_HEIGHT,
+                anchor="w",
+                padx=self.ROW_PADX,
+                pady=self.ROW_PADY,
+                text_color=self.VALUE_COLOR,
+                fg_color="transparent",
+            )
+            heading.grid(row=0, column=0, columnspan=2, sticky="ew")
+            for local_row, (label, key) in enumerate(
+                fields[column * 6:(column + 1) * 6], start=1
+            ):
+                background = (
+                    self.HIGHLIGHT_COLOR if local_row % 2 else "transparent"
+                )
+                name = ctk.CTkLabel(
+                    column_frame, text=label, font=self.COMPACT_FONT,
+                    height=self.ROW_HEIGHT, anchor="w", padx=self.ROW_PADX,
+                    pady=self.ROW_PADY, text_color=self.TEXT_COLOR,
+                    fg_color=background, corner_radius=0,
+                )
+                value = ctk.CTkLabel(
+                    column_frame, text="—", font=self.COMPACT_FONT,
+                    height=self.ROW_HEIGHT, anchor="w", padx=25,
+                    pady=self.ROW_PADY, text_color=self.VALUE_COLOR,
+                    fg_color=background, corner_radius=0,
+                )
+                name.grid(row=local_row, column=0, sticky="nsew")
+                value.grid(row=local_row, column=1, sticky="nsew")
+                self._spd_value_labels[key] = value
+
+        table = ctk.CTkFrame(parent, corner_radius=0, fg_color=self.BG_COLOR)
+        table.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        table.grid_columnconfigure(0, minsize=118, weight=0)
+        for column in range(1, 6):
+            table.grid_columnconfigure(column, weight=1, uniform="spd_profile")
+        title = ctk.CTkLabel(
+            table, text="TIMINGS TABLE", font=self.HEADER_FONT,
+            height=self.ROW_HEIGHT, anchor="w", padx=self.ROW_PADX,
+            pady=self.ROW_PADY, text_color=self.VALUE_COLOR,
+            fg_color="transparent",
+        )
+        title.grid(row=0, column=0, sticky="ew")
+        for column in range(5):
+            header = ctk.CTkLabel(
+                table, text="", font=self.COMPACT_BOLD,
+                height=self.ROW_HEIGHT, anchor="center", padx=2,
+                pady=self.ROW_PADY, text_color=self.TEXT_COLOR,
+                fg_color="transparent",
+            )
+            header.grid(row=0, column=column + 1, sticky="nsew")
+            self._spd_profile_headers.append(header)
+
+        profile_fields = (
+            ("Frequency", "frequency"),
+            ("CAS Latency", "cl"),
+            ("tRCD", "trcd"),
+            ("tRP", "trp"),
+            ("tRAS", "tras"),
+            ("tRC", "trc"),
+            ("Voltage", "voltage"),
+        )
+        for row, (label, key) in enumerate(profile_fields, start=1):
+            background = self.HIGHLIGHT_COLOR if row % 2 else "transparent"
+            ctk.CTkLabel(
+                table, text=label, font=self.COMPACT_FONT,
+                height=self.ROW_HEIGHT, anchor="w", padx=self.ROW_PADX,
+                pady=self.ROW_PADY, text_color=self.TEXT_COLOR,
+                fg_color=background, corner_radius=0,
+            ).grid(row=row, column=0, sticky="nsew")
+            labels = []
+            for column in range(5):
+                value = ctk.CTkLabel(
+                    table, text="", font=self.COMPACT_FONT,
+                    height=self.ROW_HEIGHT, anchor="center", padx=2,
+                    pady=self.ROW_PADY, text_color=self.VALUE_COLOR,
+                    fg_color=background, corner_radius=0,
+                )
+                value.grid(row=row, column=column + 1, sticky="nsew")
+                labels.append(value)
+            self._spd_profile_values.append((key, labels))
+
+        selector_border = ctk.CTkFrame(
+            parent, corner_radius=0, fg_color=self.BRAND_COLOR
+        )
+        selector_border.grid(row=3, column=0, sticky="ew", pady=(3, 1))
+        choices = ["Open SPD tab to read modules"]
+        self.spd_selector = ctk.CTkOptionMenu(
+            selector_border, values=choices, command=self._select_spd_module,
+            height=28, corner_radius=0, fg_color=self.BG_COLOR,
+            button_color=self.BG_COLOR,
+            button_hover_color=self.TAB_UNSELECTED_HOVER_COLOR,
+            dropdown_fg_color=self.BG_COLOR2,
+            dropdown_hover_color=self.TAB_UNSELECTED_HOVER_COLOR,
+            text_color=self.TEXT_COLOR,
+            dropdown_text_color=self.TEXT_COLOR,
+            font=self.COMPACT_FONT, dropdown_font=self.COMPACT_FONT,
+            anchor="w",
+        )
+        self.spd_selector.pack(fill="x", padx=1, pady=1)
+        self.spd_selector.set(choices[0])
+
+    def _load_spd_tab_async(self):
+        """Read SPD once off the UI thread when the page is first opened."""
+        if getattr(self, "_spd_loaded", False) or getattr(
+            self, "_spd_loading", False
+        ):
+            return
+        self._spd_loading = True
+        self.spd_selector.configure(values=["Reading SPD…"])
+        self.spd_selector.set("Reading SPD…")
+
+        def worker():
+            pythoncom = None
+            try:
+                import pythoncom
+                pythoncom.CoInitialize()
+            except Exception:
+                pythoncom = None
+            try:
+                from rochviewer.memory.spd_profiles import read_spd_modules
+
+                modules = read_spd_modules()
+            except Exception as exc:
+                print(f"SPD tab unavailable: {exc}")
+                modules = []
+            finally:
+                if pythoncom is not None:
+                    try:
+                        pythoncom.CoUninitialize()
+                    except Exception:
+                        pass
+            try:
+                self.root.after(0, lambda: self._apply_spd_modules(modules))
+            except Exception:
+                pass
+
+        threading.Thread(target=worker, name="SPD reader", daemon=True).start()
+
+    def _apply_spd_modules(self, modules):
+        """Install a completed SPD scan into the already-drawn page."""
+        self._spd_loading = False
+        self._spd_loaded = True
+        self._spd_modules = list(modules or [])
+        self._spd_choices = {}
+        for index, module in enumerate(self._spd_modules):
+            slot = module.get("slot") or "DIMM %d" % (index + 1)
+            part = module.get("part_number") or "Unknown module"
+            choice = "%s: %s" % (slot, part)
+            self._spd_choices[choice] = module
+        choices = list(self._spd_choices) or ["No readable SPD modules"]
+        self.spd_selector.configure(values=choices)
+        self.spd_selector.set(choices[0])
+        if self._spd_choices:
+            self._select_spd_module(choices[0])
+
+    def _select_spd_module(self, choice):
+        """Refresh the SPD page from its cached per-slot record."""
+        module = getattr(self, "_spd_choices", {}).get(choice)
+        if module is None:
+            return
+        for key, label in self._spd_value_labels.items():
+            value = module.get(key)
+            if key == "address" and isinstance(value, int):
+                value = "0x%02X" % value
+            label.configure(text="—" if value in (None, "") else str(value))
+        profiles = list(module.get("profiles") or [])[:5]
+        for index, header in enumerate(self._spd_profile_headers):
+            header.configure(text=(profiles[index].get("name", "")
+                                   if index < len(profiles) else ""))
+        for key, labels in self._spd_profile_values:
+            for index, label in enumerate(labels):
+                value = profiles[index].get(key) if index < len(profiles) else ""
+                label.configure(text="" if value is None else str(value))
 
     def _prepare_module_choices(self, channel_a, channel_b):
         """Build physical-DIMM choices once, using the board slot labels."""
@@ -2171,7 +2401,7 @@ class TimingGUI:
     # Every main tab fits at its requested height, including the tall IMC
     # table, so none gives up width to a scrollbar gutter.
     UNSCROLLED_TABS = (
-        "Summary", "System Info", "Timings", "Training", "IMC", "RTL",
+        "Summary", "System Info", "SPD", "Timings", "Training", "IMC", "RTL",
         "Voltages",
     )
 
@@ -2180,7 +2410,8 @@ class TimingGUI:
     # controller-data columns.
     TAB_WINDOW_SIZES = {
         "Summary": (750, 750),
-        "System Info": (750, 800),
+        "System Info": (750, 840),
+        "SPD": (750, 750),
         "Timings": (750, 775),
         "Training": (750, 800),
         "IMC": (750, 1100),
@@ -3579,7 +3810,7 @@ class TimingGUI:
         """Load content for all tabs dynamically based on TIMINGS."""
         self.build_summary_tab()
         for tab_name in self.tab_names:
-            if tab_name == "Summary":
+            if tab_name in ("Summary", "SPD"):
                 continue
             # Diagnostic rows are summarised into one line on the tab, and
             # kept in full in TIMINGS, which is where anyone chasing a blank

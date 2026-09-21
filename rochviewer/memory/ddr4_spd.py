@@ -75,6 +75,7 @@ MINIMUM_PART_NUMBER = 4
 
 # Which hubs answered last, so repeat reads skip the bus scan.
 _CACHE = []
+_MODULE_CACHE = []
 
 
 def decode_part_number(values):
@@ -227,3 +228,77 @@ def _read_one(reader, address, controller):
         return None
     identity.update(address=address, controller=controller)
     return identity
+
+
+def read_modules(reader_factory=None, refresh=False):
+    """Return complete, decoded DDR4 SPD records for the SPD tab.
+
+    The base timing section and XMP user area are read through the existing
+    EE1004 page-aware transport.  No EEPROM data is written; only the volatile
+    page selector used by every DDR4 SPD reader changes while a page is read.
+    """
+    use_cache = reader_factory is None
+    if use_cache and _MODULE_CACHE and not refresh:
+        return _MODULE_CACHE[0]
+
+    modules = []
+    try:
+        from rochviewer.memory.ddr5_telemetry import default_smbus_backend
+        from rochviewer.memory.spd_profiles import decode_ddr4_spd
+
+        backend = default_smbus_backend()
+        if backend is None and reader_factory is None:
+            return []
+        if backend is None:
+            from rochviewer.intel.intel_pch_smbus import (
+                CONTROLLER_OFFSETS as controllers,
+                SPD_HUB_ADDRESSES as hub_addresses,
+            )
+            default_factory = None
+        else:
+            default_factory, controllers, hub_addresses, _pmics = backend
+        reader = (reader_factory or default_factory)()
+        if reader.is_driver_open():
+            identities = {
+                (item.get("controller"), item.get("address")): item
+                for item in read_identity(reader_factory=reader_factory,
+                                          refresh=refresh)
+            }
+            for controller in controllers:
+                for address in hub_addresses:
+                    identity = identities.get((controller, address))
+                    if identity is None:
+                        continue
+                    values = {}
+                    # Read only bytes the display decodes. A Byte Data SMBus
+                    # transaction is issued for every position, so skipping
+                    # the reserved areas cuts the first-open wait sharply.
+                    for start, length in ((2, 28), (120, 6), (384, 6)):
+                        values.update(reader.read_ddr4_spd(
+                            address, start, length, controller
+                        ))
+                    enabled = int(values.get(386, 0) or 0)
+                    profile_ranges = (
+                        ((393, 14), (427, 5)),
+                        ((440, 14), (474, 5)),
+                    )
+                    for index, ranges in enumerate(profile_ranges):
+                        if not (enabled & (1 << index)):
+                            continue
+                        for start, length in ranges:
+                            values.update(reader.read_ddr4_spd(
+                                address, start, length, controller
+                            ))
+                    decoded = decode_ddr4_spd(values, identity)
+                    if decoded is not None:
+                        decoded.update(address=address, controller=controller)
+                        modules.append(decoded)
+                if modules:
+                    break
+    except Exception as exc:
+        print(f"Error reading DDR4 SPD profiles: {exc}")
+        modules = []
+
+    if use_cache:
+        _MODULE_CACHE[:] = [modules]
+    return modules

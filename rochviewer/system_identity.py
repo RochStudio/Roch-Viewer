@@ -292,8 +292,8 @@ def pci_device_and_revision(device, function):
     return (identity >> 16) & 0xFFFF, revision
 
 
-def decode_wmi_processor_id(processor_id):
-    """Decode displayed CPUID family/model from WMI ProcessorId leaf-1 EAX.
+def decode_wmi_processor_signature(processor_id):
+    """Decode CPUID family, model and stepping from WMI leaf-1 EAX.
 
     Here rather than beside the probe that first needed it. It is pure
     arithmetic on a string, but it lived in amd_smu_version_probe -- a
@@ -318,6 +318,13 @@ def decode_wmi_processor_id(processor_id):
         if base_family in (0x6, 0xF)
         else base_model
     )
+    stepping = eax & 0x0F
+    return family, model, stepping
+
+
+def decode_wmi_processor_id(processor_id):
+    """Decode displayed CPUID family/model from WMI ProcessorId leaf-1 EAX."""
+    family, model, _stepping = decode_wmi_processor_signature(processor_id)
     return family, model
 
 

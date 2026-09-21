@@ -1,6 +1,10 @@
 # Changelog
 
-## 1.0.5 (unreleased)
+## 1.0.5 (2026-09-20)
+
+- Added a physical-slot SPD tab with DDR4 module identity, geometry, maximum JEDEC bandwidth, three useful JEDEC timing choices and both supported Intel XMP 2.0 profiles.
+- Added processor package/socket and CPUID family/model/stepping to System Info on Intel and AMD systems.
+- Increased System Info to 750×840 so the new processor rows remain visible without scrolling.
 
 - Removed tRFCpb from DDR4 timing views; per-bank refresh is a DDR5 timing.
 - Renamed the DDR4 DRAM RON row to RON and formatted DDR4 RTT/RON values as resistance-first RZQ ratios, matching the reference viewer.

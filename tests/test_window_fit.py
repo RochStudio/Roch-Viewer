@@ -56,7 +56,8 @@ class ChromeTest(unittest.TestCase):
     def test_each_main_tab_has_its_own_size(self):
         self.assertEqual(TimingGUI.TAB_WINDOW_SIZES, {
             "Summary": (750, 750),
-            "System Info": (750, 800),
+            "System Info": (750, 840),
+            "SPD": (750, 750),
             "Timings": (750, 775),
             "Training": (750, 800),
             "IMC": (750, 1100),
@@ -243,7 +244,7 @@ class ChromeTest(unittest.TestCase):
         # without a scrollbar, content past the bottom is not reachable.
         self.assertEqual(
             TimingGUI.UNSCROLLED_TABS,
-            ("Summary", "System Info", "Timings", "Training", "IMC", "RTL",
+            ("Summary", "System Info", "SPD", "Timings", "Training", "IMC", "RTL",
              "Voltages"),
         )
 

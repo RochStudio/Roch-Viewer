@@ -1025,6 +1025,7 @@ def _processor_facts():
             "manufacturer": getattr(first, "Manufacturer", None),
             "cores": getattr(first, "NumberOfCores", None),
             "threads": getattr(first, "NumberOfLogicalProcessors", None),
+            "socket": getattr(first, "SocketDesignation", None),
         }
     except Exception:
         return {}
@@ -1051,6 +1052,23 @@ def _silicon_value(index):
         return _cpu_silicon()[index] or EM_DASH
 
     return getter
+
+
+def _cpu_package():
+    value = str(_processor_facts().get("socket") or "").strip()
+    return value or EM_DASH
+
+
+def _cpu_signature():
+    try:
+        from rochviewer.system_identity import decode_wmi_processor_signature
+
+        family, model, stepping = decode_wmi_processor_signature(
+            _processor_facts().get("processor_id")
+        )
+        return "%d / 0x%02X / %d" % (family, model, stepping)
+    except Exception:
+        return EM_DASH
 
 
 def _chipset():
@@ -1782,7 +1800,8 @@ def _power_rows(runtime):
 # a row quietly filed under a leftover heading is one nobody notices.
 SYSTEM_INFO_SECTIONS = (
     ("System", ("OS", "Platform")),
-    ("Processor", ("CPU", "Code Name", "Vendor", "Technology",
+    ("Processor", ("CPU", "CPU Package", "CPU Signature", "Code Name",
+                   "Vendor", "Technology",
                    "Cores / Threads", "Microcode")),
     ("Motherboard", ("Manufacturer", "Model", "BIOS", "BIOS Date",
                      "Chipset", "Southbridge", "LPCIO", "AGESA")),
@@ -1825,6 +1844,9 @@ def build_timings(runtime):
         info("Platform", "AM5"),
         # Processor
         info("CPU", _system_info_value("cpu")),
+        info("CPU Package", _cpu_package, display_name="Package"),
+        info("CPU Signature", _cpu_signature,
+             display_name="Family / Model / Step"),
         info("Code Name", _silicon_value(0)),
         # "Vendor", not "Manufacturer": the board takes that name below, the
         # way CPU-Z uses it, and two rows cannot share one.

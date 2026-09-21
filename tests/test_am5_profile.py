@@ -160,7 +160,8 @@ class Am5RuntimeTest(unittest.TestCase):
         # then what could and could not be read.
         self.assertEqual(names, [
             "OS", "Platform",
-            "CPU", "Code Name", "Vendor", "Technology",
+            "CPU", "CPU Package", "CPU Signature", "Code Name",
+            "Vendor", "Technology",
             "Cores / Threads", "Microcode",
             # CPU-Z's names for the board, which is why the processor's own
             # vendor row is "Vendor" -- two rows cannot share one name.
