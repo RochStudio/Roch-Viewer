@@ -128,6 +128,7 @@ class Ddr5LabelTest(unittest.TestCase):
         self.assertNotIn("tDLLK", names)
         self.assertNotIn("tCCD_L_WR", names)
         self.assertNotIn("tCCD_L_WR2", names)
+        self.assertNotIn("Allow 2cyc B2B LPDDR", names)
 
     def test_ddr4_trfcpb_exposes_the_reference_register_field(self):
         with table_for(LGA1700_DDR4) as built:

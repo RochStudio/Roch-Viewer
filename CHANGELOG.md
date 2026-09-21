@@ -15,10 +15,12 @@
 - Completed Vain's DDR4 Power Down Settings block with Add 1 QCLK Delay and
   moved Add/Dec tCWL to Training after a live controller audit found Dec tCWL
   differs between A2 and B2.
+- Audited every DDR4 Training and IMC row for a live hardware source and
+  removed the LPDDR-only Allow 2Cyc B2B control from the DDR4 profile.
 
 - Restored the raw DDR4 controller tRFCpb field on Timings to match the
-  reference viewer; moved Allow 2Cyc B2B LPDDR to IMC Command and removed the
-  DDR5 MR13-only tDLLK, tCCD_L_WR and tCCD_L_WR2 rows from DDR4.
+  reference viewer and removed the DDR5 MR13-only tDLLK, tCCD_L_WR and
+  tCCD_L_WR2 rows from DDR4.
 - Renamed the DDR4 DRAM RON row to RON and formatted DDR4 RTT/RON values as resistance-first RZQ ratios, matching the reference viewer.
 - Disambiguated A2/B2 modules on four-DIMM ASUS boards whose SMBIOS repeats `ChannelA` inside two different memory controllers.
 - Read the DDR4 EE1004 manufacturing page so System Info reports the DRAM manufacturer, manufacture date and serial; identify Acer `BL.9BWWR.298` modules as Samsung B-die.

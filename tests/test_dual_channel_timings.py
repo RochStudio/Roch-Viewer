@@ -286,14 +286,10 @@ class SectionLayoutTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(name, sections.get(category, []))
 
-    def test_lpddr_back_to_back_policy_is_on_imc_not_training(self):
+    def test_lpddr_back_to_back_policy_is_absent_from_ddr4(self):
         rows = [row for row in intel_timings.TIMINGS
                 if row.get("name") == "Allow 2cyc B2B LPDDR"]
-        self.assertEqual(len(rows), 1)
-        row = rows[0]
-        self.assertEqual(row.get("Tab"), intel_timings.IMC_TAB)
-        self.assertEqual(row.get("Category"), "Command")
-        self.assertEqual(row.get("source_scope"), "controller")
+        self.assertEqual(rows, [])
 
     def test_no_section_is_ordered_twice(self):
         # A category listed twice sorts by its first appearance and reads as

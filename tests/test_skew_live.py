@@ -91,6 +91,13 @@ def has_live_source(row):
 
 
 class ReferenceSignalLabelTest(unittest.TestCase):
+    def test_ddr4_training_and_imc_have_no_other_memory_generation_rows(self):
+        names = {row.get("name") for row in skew_rows()}
+        self.assertTrue(names.isdisjoint({
+            "tDLLK", "tCCD_L_WR", "tCCD_L_WR2",
+            "Allow 2cyc B2B LPDDR",
+        }))
+
     def test_rtt_ron_and_vref_labels_match_reference(self):
         by_category = {}
         for row in skew_rows():

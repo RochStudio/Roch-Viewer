@@ -8220,12 +8220,12 @@ _install_ddr5_timing_labels()
 
 
 DDR4_INAPPLICABLE_TIMING_ROWS = frozenset({
-    "tDLLK", "tCCD_L_WR", "tCCD_L_WR2",
+    "tDLLK", "tCCD_L_WR", "tCCD_L_WR2", "Allow 2cyc B2B LPDDR",
 })
 
 
 def _remove_inapplicable_ddr4_timings():
-    """Drop timings encoded only by DDR5 MR13 from the DDR4 table."""
+    """Drop DDR5 MR13 and LPDDR-only controls from the DDR4 table."""
     global TIMINGS
     if detect_ddr_generation() != "DDR4":
         return
