@@ -61,7 +61,7 @@ class ChromeTest(unittest.TestCase):
             "Summary": (750, 750),
             "System Info": (750, 750),
             "SPD": (750, 750),
-            "Timings": (750, 775),
+            "Timings": (750, 750),
             "Training": (750, 800),
             "IMC": (750, 1100),
             "RTL": (750, 654),
