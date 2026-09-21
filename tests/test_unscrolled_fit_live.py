@@ -115,6 +115,33 @@ class UnscrolledTabFitTest(unittest.TestCase):
             "utility buttons overlap the main tabs",
         )
 
+    def test_system_info_row_shading_matches_across_columns(self):
+        self.show_tab_at_its_requested_size("System Info")
+        self.app._normalize_continuous_tab_shading("System Info")
+        rows = {}
+        for section in self.app._section_bodies.get("System Info", []):
+            body = section["body"]
+            if not body.winfo_ismapped():
+                continue
+            for grid_row in range(section["first_row"], body.grid_size()[1]):
+                bbox = body.grid_bbox(0, grid_row)
+                if not bbox or not bbox[3]:
+                    continue
+                colours = {
+                    str(child.cget("fg_color"))
+                    for child in body.grid_slaves(row=grid_row)
+                    if hasattr(child, "cget")
+                }
+                rows.setdefault(body.winfo_rooty() + bbox[1], set()).update(
+                    colours
+                )
+        for y, colours in rows.items():
+            self.assertEqual(
+                len(colours), 1,
+                "System Info row at y=%d has mismatched shading: %r"
+                % (y, colours),
+            )
+
     def test_training_values_align_within_each_detail_column(self):
         if "Training" not in self.app.tabview._name_list:
             self.skipTest("Training is not available for this profile")

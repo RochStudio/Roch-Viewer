@@ -50,7 +50,7 @@ Every main tab is 750 pixels wide. Heights are sized to the content and grow fro
 | Tab | Size |
 | --- | ---: |
 | Summary | 750 × 750 |
-| System Info | 750 × 840 |
+| System Info | 750 × 750 |
 | SPD | 750 × 750 |
 | Timings | 750 × 775 |
 | Training | 750 × 800 |

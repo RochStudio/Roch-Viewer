@@ -1726,6 +1726,7 @@ class TimingGUI:
     def _finish_tab_shading(self, tab_name):
         """Run only the newest tab's post-resize shading pass."""
         self._tab_shading_job = None
+        self._normalize_continuous_tab_shading(tab_name)
         self._extend_tab_shading_to_viewport(tab_name)
 
     def _build_summary_module_selector(
@@ -1760,6 +1761,7 @@ class TimingGUI:
 
         fields = (
             ("Memory Type", "memory_type"),
+            ("Module Type", "module_type"),
             ("Channels", "system_channels"),
             ("Capacity", "system_capacity"),
             ("Module Size", "capacity"),
@@ -2444,7 +2446,7 @@ class TimingGUI:
     # controller-data columns.
     TAB_WINDOW_SIZES = {
         "Summary": (750, 750),
-        "System Info": (750, 840),
+        "System Info": (750, 750),
         "SPD": (750, 750),
         "Timings": (750, 775),
         "Training": (750, 800),
@@ -4301,6 +4303,82 @@ class TimingGUI:
                 next_band += 1
                 remaining -= height
         self._shading_viewports[tab_name] = viewport_size
+
+    def _normalize_continuous_tab_shading(self, tab_name):
+        """Shade continuous tables from their actual shared screen rows.
+
+        System Info stacks sections of different lengths in its two columns.
+        Counting rows independently gives two widgets at the same height
+        opposite colours whenever a section heading appears in only one
+        column. Once the selected page is laid out, its y positions are
+        authoritative: every widget on the same horizontal band receives the
+        same colour, including section headings and blank tail rows.
+        """
+        if (tab_name not in CONTINUOUS_SECTION_TABS
+                or self.tabview.get() != tab_name):
+            return
+        sections = self._section_bodies.get(tab_name) or []
+        headers = self._section_headers.get(tab_name) or []
+        mapped_headers = [
+            header for header in headers if header.winfo_ismapped()
+        ]
+        if not sections or not mapped_headers:
+            return
+        self.root.update_idletasks()
+
+        pitch = 0
+        for section in sections:
+            body = section["body"]
+            if not body.winfo_ismapped():
+                continue
+            for data_row in range(section["drawn"]):
+                bbox = body.grid_bbox(
+                    0, section["first_row"] + data_row
+                )
+                if bbox and bbox[3]:
+                    pitch = max(pitch, bbox[3])
+        if not pitch:
+            return
+
+        table_top = min(
+            header.master.winfo_rooty() for header in mapped_headers
+        )
+
+        def apply_background(widget, background):
+            try:
+                widget.configure(fg_color=background)
+            except Exception:
+                return
+            try:
+                widget.configure(bg_color=background)
+            except Exception:
+                pass
+
+        for header in mapped_headers:
+            frame = header.master
+            band = int(round(
+                (frame.winfo_rooty() - table_top) / float(pitch)
+            ))
+            background = self._shade_row(tab_name, band)
+            apply_background(frame, background)
+            for child in frame.winfo_children():
+                apply_background(child, background)
+
+        for section in sections:
+            body = section["body"]
+            if not body.winfo_ismapped():
+                continue
+            first_row = section["first_row"]
+            row_count = body.grid_size()[1]
+            for grid_row in range(first_row, row_count):
+                bbox = body.grid_bbox(0, grid_row)
+                if not bbox or not bbox[3]:
+                    continue
+                row_y = body.winfo_rooty() + bbox[1]
+                band = int(round((row_y - table_top) / float(pitch)))
+                background = self._shade_row(tab_name, band)
+                for child in body.grid_slaves(row=grid_row):
+                    apply_background(child, background)
 
     def _align_summary_value_columns(self):
         """Give every section in a Summary column one name-column width.

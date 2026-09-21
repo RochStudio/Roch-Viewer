@@ -59,7 +59,7 @@ class ChromeTest(unittest.TestCase):
     def test_each_main_tab_has_its_own_size(self):
         self.assertEqual(TimingGUI.TAB_WINDOW_SIZES, {
             "Summary": (750, 750),
-            "System Info": (750, 840),
+            "System Info": (750, 750),
             "SPD": (750, 750),
             "Timings": (750, 775),
             "Training": (750, 800),
@@ -82,6 +82,10 @@ class ChromeTest(unittest.TestCase):
                 "system_channels": "Dual Channel",
                 "system_capacity": "32GB",
             })
+
+    def test_spd_shows_the_source_backed_module_type(self):
+        source = inspect.getsource(TimingGUI._build_spd_tab)
+        self.assertIn('(\"Module Type\", \"module_type\")', source)
 
     def test_a_short_screen_caps_each_tab_height(self):
         self.assertEqual(

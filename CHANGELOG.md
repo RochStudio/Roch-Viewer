@@ -7,7 +7,8 @@
 - Moved Channels and Capacity into SPD, removed the remaining Memory section from System Info, and placed Graphics below Clocks in the right column.
 - Removed the SPD tab's part-number-based DRAM maker/die fallback so unreadable component identity remains unavailable instead of being inferred from a known kit.
 - Added processor package/socket and CPUID family/model/stepping to System Info on Intel and AMD systems.
-- Increased System Info to 750×840 so the new processor rows remain visible without scrolling.
+- Set System Info to 750×750 and aligned zebra shading by physical row across both columns.
+- Added the SPD-decoded module type (for example, UDIMM) to the SPD identity table.
 
 - Removed tRFCpb from DDR4 timing views; per-bank refresh is a DDR5 timing.
 - Renamed the DDR4 DRAM RON row to RON and formatted DDR4 RTT/RON values as resistance-first RZQ ratios, matching the reference viewer.
