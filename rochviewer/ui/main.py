@@ -1581,7 +1581,8 @@ class TimingGUI:
         # SPD is a hardware-inventory page rather than a timing-profile row,
         # so it has no synthetic entry in TIMINGS.  Keep it beside System
         # Info, where the physical module selector and profile table belong.
-        self.tab_names.insert(self.tab_names.index("System Info") + 1, "SPD")
+        if "SPD" not in self.tab_names:
+            self.tab_names.insert(self.tab_names.index("System Info") + 1, "SPD")
         for name in self.tab_names:
             self.tabview.add(name)
         self.tab_frames = {}
@@ -1605,7 +1606,11 @@ class TimingGUI:
             self.tab_frames[name] = holder
 
             frame = ctk.CTkFrame(holder, corner_radius=0, fg_color=self.BG_COLOR)
-            frame.pack(fill="both", expand=True, padx=2, pady=1)
+            frame.pack(
+                fill="both", expand=True,
+                padx=0 if name == "System Info" else 2,
+                pady=1,
+            )
 
             if name == "SPD":
                 self.grid_frames[name] = {"FullWidth": frame}
@@ -1755,6 +1760,8 @@ class TimingGUI:
 
         fields = (
             ("Memory Type", "memory_type"),
+            ("Channels", "system_channels"),
+            ("Capacity", "system_capacity"),
             ("Module Size", "capacity"),
             ("Max Bandwidth", "max_bandwidth"),
             ("Module Manuf.", "module_manufacturer"),
@@ -1767,6 +1774,7 @@ class TimingGUI:
             ("Manufactured", "manufacture_date"),
             ("SPD Address", "address"),
         )
+        fields_per_column = (len(fields) + 1) // 2
         for column in range(2):
             column_frame = ctk.CTkFrame(
                 info, corner_radius=0, fg_color=self.BG_COLOR
@@ -1787,7 +1795,10 @@ class TimingGUI:
             )
             heading.grid(row=0, column=0, columnspan=2, sticky="ew")
             for local_row, (label, key) in enumerate(
-                fields[column * 6:(column + 1) * 6], start=1
+                fields[
+                    column * fields_per_column:
+                    (column + 1) * fields_per_column
+                ], start=1
             ):
                 background = (
                     self.HIGHLIGHT_COLOR if local_row % 2 else "transparent"
@@ -1900,9 +1911,11 @@ class TimingGUI:
                 from rochviewer.memory.spd_profiles import read_spd_modules
 
                 modules = read_spd_modules()
+                system_values = self._read_spd_system_values()
             except Exception as exc:
                 print(f"SPD tab unavailable: {exc}")
                 modules = []
+                system_values = {}
             finally:
                 if pythoncom is not None:
                     try:
@@ -1910,17 +1923,38 @@ class TimingGUI:
                     except Exception:
                         pass
             try:
-                self.root.after(0, lambda: self._apply_spd_modules(modules))
+                self.root.after(
+                    0,
+                    lambda: self._apply_spd_modules(modules, system_values),
+                )
             except Exception:
                 pass
 
         threading.Thread(target=worker, name="SPD reader", daemon=True).start()
 
-    def _apply_spd_modules(self, modules):
+    def _read_spd_system_values(self):
+        """Resolve the system-wide values moved from System Info to SPD."""
+        keys = {
+            "Channels": "system_channels",
+            "Memory Capacity": "system_capacity",
+        }
+        values = {}
+        for timing in TIMINGS:
+            key = keys.get(timing.get("name"))
+            if key and timing.get("Tab") == "SPD":
+                values[key] = resolve_display_value(timing.get("value"))
+        return values
+
+    def _apply_spd_modules(self, modules, system_values=None):
         """Install a completed SPD scan into the already-drawn page."""
         self._spd_loading = False
         self._spd_loaded = True
         self._spd_modules = list(modules or [])
+        self._spd_system_values = dict(system_values or {})
+        for key, value in self._spd_system_values.items():
+            label = self._spd_value_labels.get(key)
+            if label is not None:
+                label.configure(text="—" if value in (None, "") else str(value))
         self._spd_choices = {}
         for index, module in enumerate(self._spd_modules):
             slot = module.get("slot") or "DIMM %d" % (index + 1)
@@ -1939,7 +1973,7 @@ class TimingGUI:
         if module is None:
             return
         for key, label in self._spd_value_labels.items():
-            value = module.get(key)
+            value = self._spd_system_values.get(key, module.get(key))
             if key == "address" and isinstance(value, int):
                 value = "0x%02X" % value
             label.configure(text="—" if value in (None, "") else str(value))
@@ -2538,10 +2572,15 @@ class TimingGUI:
                                     target_width - allocated,
                                 )
                             else:
-                                width = summary_column_width(
-                                    column_frame.winfo_reqwidth()
-                                    + column_gap,
-                                    is_last=False,
+                                natural_with_gap = (
+                                    column_frame.winfo_reqwidth() + column_gap
+                                )
+                                width = (
+                                    natural_with_gap
+                                    if name == "System Info"
+                                    else summary_column_width(
+                                        natural_with_gap, is_last=False
+                                    )
                                 )
                             parent.grid_columnconfigure(
                                 grid_column, minsize=width,
@@ -4459,21 +4498,34 @@ class TimingGUI:
         """
         self.root.update_idletasks()
         for (tab_name, _parent_id), frames in self._dual_content_frames.items():
-            widths = [0, 0, 0]
-            for frame in frames:
-                for child in frame.grid_slaves():
-                    column = int(child.grid_info().get("column", 0))
-                    try:
-                        text = child.cget("text")
-                    except Exception:
-                        text = None
-                    # Timings and Training intentionally collapse A1/B1 into
-                    # the first value column. Their second value widgets stay
-                    # blank for every module choice and must not reserve width.
-                    if text == "":
-                        continue
-                    if column < len(widths):
-                        widths[column] = max(widths[column], child.winfo_reqwidth())
+            # System Info now pairs a long OS name and motherboard model on
+            # the left with Graphics on the right. Sharing one name/value
+            # width across every section made both halves request the sum of
+            # their unrelated longest strings and overflow the fixed 750px
+            # window. Keep alignment within each section there; dense timing
+            # tabs still align every section in a detail column together.
+            frame_groups = (
+                [[frame] for frame in frames]
+                if tab_name == "System Info" else [frames]
+            )
+            for aligned_frames in frame_groups:
+                widths = [0, 0, 0]
+                for frame in aligned_frames:
+                    for child in frame.grid_slaves():
+                        column = int(child.grid_info().get("column", 0))
+                        try:
+                            text = child.cget("text")
+                        except Exception:
+                            text = None
+                        # Timings and Training intentionally collapse A1/B1
+                        # into the first value column. Their second value
+                        # widgets stay blank and must not reserve width.
+                        if text == "":
+                            continue
+                        if column < len(widths):
+                            widths[column] = max(
+                                widths[column], child.winfo_reqwidth()
+                            )
             # Each column is sized to its own longest entry, which left
             # that one row hard against the column beside it with
             # nothing between them. The gap goes on the column rather
@@ -4485,27 +4537,26 @@ class TimingGUI:
             # empty, and padding the column before it bought a gap from
             # nothing to nothing, which then stacked with the gap
             # between the halves and made Misc's 50px instead of 25.
-            last_used = max(
-                (index for index, width in enumerate(widths) if width),
-                default=0,
-            )
-            gap = (
-                self.TRAINING_COLUMN_GAP
-                if tab_name == "Training" else self.COLUMN_GAP
-            )
-            for column in range(last_used):
-                widths[column] += gap
-            for frame in frames:
-                for column, width in enumerate(widths):
-                    # No weight, so the measured width is the width. With the
-                    # 4:1:1 the sections are built with, every pixel the
-                    # window has over the content went to the name column and
-                    # the value drifted away from the name it belongs to --
-                    # the wider the window, the further.
-                    frame.grid_columnconfigure(column, weight=0, minsize=width)
-                # The slack goes here instead, past the last channel, so the
-                # three columns stay packed together at the left.
-                frame.grid_columnconfigure(len(widths), weight=1)
+                last_used = max(
+                    (index for index, width in enumerate(widths) if width),
+                    default=0,
+                )
+                gap = (
+                    self.TRAINING_COLUMN_GAP
+                    if tab_name == "Training" else self.COLUMN_GAP
+                )
+                for column in range(last_used):
+                    widths[column] += gap
+                for frame in aligned_frames:
+                    for column, width in enumerate(widths):
+                        # No weight, so the measured width is the width. With
+                        # the 4:1:1 sections use, spare pixels otherwise move
+                        # values away from the names they belong to.
+                        frame.grid_columnconfigure(
+                            column, weight=0, minsize=width
+                        )
+                    # Slack belongs past the last value column.
+                    frame.grid_columnconfigure(len(widths), weight=1)
 
     @staticmethod
     def row_band(band_offset, uniform_header, data_row):

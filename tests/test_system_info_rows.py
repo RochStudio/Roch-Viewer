@@ -32,7 +32,6 @@ intel_timings = None
 
 NEW_ROWS = (
     "Platform", "OS", "OS Version", "GPU",
-    "DRAM Technology", "DIMM Size", "Rank",
 )
 
 
@@ -108,8 +107,13 @@ class PresenceTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(names.count(name), 1)
 
-    def test_the_capacity_row_was_already_there_and_was_not_duplicated(self):
-        self.assertEqual(row_names().count("Memory Capacity"), 1)
+    def test_channels_and_capacity_moved_to_spd(self):
+        for name in intel_timings.SPD_SYSTEM_ROWS:
+            rows = [row for row in intel_timings.TIMINGS
+                    if row.get("name") == name]
+            with self.subTest(name=name):
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0].get("Tab"), "SPD")
 
     def test_the_platform_row_reuses_the_resolved_classification(self):
         # detect_current_platform opens a WMI connection and runs three
@@ -231,8 +235,7 @@ class PresenceTest(unittest.TestCase):
                               ("Technology", "Processor"),
                               ("Chipset", "Motherboard"),
                               ("Southbridge", "Motherboard"),
-                              ("LPCIO", "Motherboard"),
-                              ("DRAM Technology", "Memory")):
+                              ("LPCIO", "Motherboard")):
             with self.subTest(name=name):
                 self.assertEqual(placement.get(name), section)
 
@@ -295,7 +298,7 @@ class PresenceTest(unittest.TestCase):
                 seen.append(category)
                 previous = category
 
-    def test_sections_are_split_between_identity_and_memory_state(self):
+    def test_graphics_sits_below_clocks_in_the_right_column(self):
         placement = {title: column for title, column, _names
                      in intel_timings.SYSTEM_INFO_SECTIONS}
         self.assertEqual(
@@ -304,9 +307,8 @@ class PresenceTest(unittest.TestCase):
                 "System": "Left",
                 "Processor": "Left",
                 "Motherboard": "Left",
-                "Graphics": "Left",
                 "Clocks": "Right",
-                "Memory": "Right",
+                "Graphics": "Right",
             },
         )
 
@@ -314,8 +316,7 @@ class PresenceTest(unittest.TestCase):
         self.assertEqual(
             [title for title, _column, _names
              in intel_timings.SYSTEM_INFO_SECTIONS],
-            ["System", "Processor", "Motherboard", "Graphics",
-             "Clocks", "Memory"],
+            ["System", "Processor", "Motherboard", "Clocks", "Graphics"],
         )
 
     def test_no_new_row_leaked_onto_another_tab(self):
@@ -361,12 +362,11 @@ class OrderTest(unittest.TestCase):
         ]
         self.assertEqual(unlisted, [])
 
-    def test_the_module_rows_follow_the_total_capacity(self):
-        names = row_names()
-        start = names.index("Memory Capacity")
-        self.assertEqual(
-            names[start + 1:start + 4],
-            ["Slots Used", "DIMM Size", "Rank"],
+    def test_system_info_has_no_memory_section(self):
+        self.assertNotIn(
+            "Memory",
+            [title for title, _column, _names
+             in intel_timings.SYSTEM_INFO_SECTIONS],
         )
 
     def test_the_removed_rows_are_gone(self):
@@ -443,14 +443,11 @@ class ValueTest(unittest.TestCase):
         self.assertEqual(gpu, "NVIDIA GeForce RTX 4070 Ti")
         self.assertNotIn("Basic Display", gpu)
 
-    def test_module_size_and_rank_come_from_smbios(self):
-        self.assertEqual(value_of("DIMM Size"), "16 GB")
-        self.assertEqual(value_of("Rank"), "2R")
-
-    def test_capacity_and_bus_clock_labels_match_the_requested_names(self):
+    def test_capacity_moves_to_spd_and_bus_clock_keeps_its_label(self):
         by_name = {row.get("name"): row for row in system_info_rows()}
-        self.assertEqual(by_name["Memory Capacity"].get("display_name"),
-                         "Capacity")
+        spd = {row.get("name"): row for row in intel_timings.TIMINGS
+               if row.get("Tab") == "SPD"}
+        self.assertEqual(spd["Memory Capacity"].get("display_name"), "Capacity")
         self.assertEqual(by_name["BCLK"].get("display_name"), "Bus Clock")
 
     def test_core_and_uncore_ratios_follow_the_read_clocks(self):

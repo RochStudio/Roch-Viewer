@@ -169,11 +169,6 @@ class Am5RuntimeTest(unittest.TestCase):
             "Chipset", "Southbridge", "LPCIO", "AGESA",
             "BCLK", "MCLK", "FCLK", "UCLK", "DRAM Frequency", "UCLK:MCLK",
             "DRAM Ratio",
-            # The sockets and how they are wired sit above the capacity they
-            # add up to, and the part number leads the maker rows because it
-            # is what a kit is looked up by.
-            "Type", "Slots Used", "Channels", "Memory Capacity",
-            "DIMM Size", "Rank",
             "Status", "Read Status", "Training Status",
             "Voltage Status", "Power Status",
             "GPU", "Board Manufacturer", "GPU Code Name", "GPU Revision",
@@ -181,6 +176,14 @@ class Am5RuntimeTest(unittest.TestCase):
             "Memory Size", "Memory Type", "Memory Vendor",
             "Bus Width", "Resizable BAR", "Driver Version", "Driver Date",
         ])
+
+    def test_channels_and_capacity_live_on_spd(self):
+        rows = {
+            row["name"]: row for row in build_timings(
+                Am5Runtime(reader_factory=lambda: FakeReader(_oracle_regs()))
+            ) if row["Tab"] == "SPD"
+        }
+        self.assertEqual(set(rows), {"Channels", "Memory Capacity"})
 
     def test_graphics_is_the_final_system_info_section(self):
         self.assertEqual(am5_profile.SYSTEM_INFO_SECTIONS[-1][0], "Graphics")

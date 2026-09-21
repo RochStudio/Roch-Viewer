@@ -20,6 +20,9 @@ import os
 import struct
 import inspect
 import unittest
+from unittest import mock
+
+import rochviewer.ui.main as main_ui
 
 from rochviewer.ui.main import (
     PAIRED_SECTION_TABS, TimingGUI, VIEWPORT_SHADED_TABS,
@@ -67,6 +70,18 @@ class ChromeTest(unittest.TestCase):
         self.assertEqual(
             TimingGUI.window_size_for_tab("unknown"), (750, 750)
         )
+
+    def test_spd_resolves_the_moved_system_memory_values(self):
+        gui = TimingGUI.__new__(TimingGUI)
+        rows = [
+            {"name": "Channels", "Tab": "SPD", "value": "Dual Channel"},
+            {"name": "Memory Capacity", "Tab": "SPD", "value": "32GB"},
+        ]
+        with mock.patch.object(main_ui, "TIMINGS", rows):
+            self.assertEqual(gui._read_spd_system_values(), {
+                "system_channels": "Dual Channel",
+                "system_capacity": "32GB",
+            })
 
     def test_a_short_screen_caps_each_tab_height(self):
         self.assertEqual(

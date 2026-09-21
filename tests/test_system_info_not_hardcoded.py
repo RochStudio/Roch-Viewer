@@ -152,22 +152,6 @@ class FollowsTheHardwareTest(unittest.TestCase):
                 seen.append(_require(self, "Code Name"))
         self.assertEqual(seen, ["Raptor Lake", "Alder Lake"])
 
-    def test_the_memory_type_row_follows_smbios(self):
-        import types
-
-        seen = []
-        for code in (34, 26):
-            intel_timings._clear_identity_caches()
-            with mock.patch.object(
-                intel_timings, "_wmi_static",
-                side_effect=lambda name, code=code: (
-                    [types.SimpleNamespace(SMBIOSMemoryType=code)]
-                    if name == "Win32_PhysicalMemory" else []
-                ),
-            ):
-                seen.append(_require(self, "DRAM Technology"))
-        self.assertEqual(seen, ["DDR5", "DDR4"])
-
     def _generation(self, generation):
         return mock.patch.object(
             intel_timings, "detect_ddr_generation", return_value=generation)

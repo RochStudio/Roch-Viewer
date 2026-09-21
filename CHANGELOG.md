@@ -4,6 +4,7 @@
 
 - Added a physical-slot SPD tab with DDR4 module identity, geometry, maximum JEDEC bandwidth, three useful JEDEC timing choices and both supported Intel XMP 2.0 profiles.
 - Removed repeated module manufacturer, DRAM manufacturer/die, part number, serial number and manufacturing date rows from System Info; those per-DIMM details now live only in SPD.
+- Moved Channels and Capacity into SPD, removed the remaining Memory section from System Info, and placed Graphics below Clocks in the right column.
 - Added processor package/socket and CPUID family/model/stepping to System Info on Intel and AMD systems.
 - Increased System Info to 750×840 so the new processor rows remain visible without scrolling.
 

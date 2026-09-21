@@ -1807,10 +1807,6 @@ SYSTEM_INFO_SECTIONS = (
                      "Chipset", "Southbridge", "LPCIO", "AGESA")),
     ("Clocks", ("BCLK", "MCLK", "FCLK", "UCLK", "DRAM Frequency",
                 "UCLK:MCLK", "DRAM Ratio")),
-    # System Info keeps the machine-wide memory configuration. Per-module
-    # identity and profile details are shown once in the SPD tab.
-    ("Memory", ("Type", "Slots Used", "Channels", "Memory Capacity",
-                "DIMM Size", "Rank")),
     ("Status", ("Status", "Read Status", "Training Status", "Voltage Status",
                 "Power Status")),
     ("Graphics", ("GPU", "Board Manufacturer", "GPU Code Name",
@@ -1868,15 +1864,13 @@ def build_timings(runtime):
         info("DRAM Frequency", lambda: _dram_frequency(runtime)),
         info("UCLK:MCLK", lambda: _uclk_ratio(runtime)),
         info("DRAM Ratio", lambda: _dram_ratio(runtime)),
-        # Memory
-        info("Type", lambda: _identity("memory_type")),
-        # The sockets, then how they are wired, then the total they come to.
-        info("Slots Used", _dimm_value("slots")),
-        info("Channels", _dimm_value("channels")),
-        info("Memory Capacity", _system_info_value("memory")),
-        # What is installed, next to the total it adds up to.
-        info("DIMM Size", _dimm_value("size")),
-        info("Rank", _dimm_value("rank")),
+        # System-wide values consumed by the custom SPD page. They remain
+        # lazy rows so the UI can share the same hardware readers without
+        # repeating a Memory section in System Info.
+        _row("Channels", _dimm_value("channels"), "System", "SPD",
+             "FullWidth"),
+        _row("Memory Capacity", _system_info_value("memory"), "System",
+             "SPD", "FullWidth"),
         # Status. One line covering every transport. The four it replaces are
         # kept below, marked diagnostic: the tab shows the summary, the dump
         # keeps the full text including the APOB record addresses.

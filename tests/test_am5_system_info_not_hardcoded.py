@@ -154,22 +154,6 @@ class FollowsTheHardwareTest(unittest.TestCase):
         return mock.patch("rochviewer.memory.ddr5_spd.read_identity",
                           return_value=entries)
 
-    def test_memory_summary_rows_follow_the_inventory(self):
-        other = [{
-            "serial_number": "0000ABCD", "device_locator": "DIMMA1",
-            "slot": "A1", "channel": "A", "part_number": "F5-6000J3038F16G",
-            "capacity_gb": 32, "capacity": "32GB", "rank_count": 2,
-            "rank": "DR", "module_manufacturer": "Corsair",
-            "ic": "Samsung B-die",
-        }]
-        with self._with_spd([]), self._with_modules(other):
-            # From rank_count, not from the inventory's own "DR" string --
-            # two ranks reads as 2R, the way one reads as 1R on this bench.
-            self.assertEqual(_require(self, "Rank"), "2R")
-            # From capacity_gb, formatted here -- not the inventory's own
-            # "32GB" string passed through.
-            self.assertEqual(_require(self, "DIMM Size"), "32 GB")
-
     def test_spd_identity_is_not_repeated_in_system_info(self):
         names = {
             row.get("name") for row in build_timings(Am5Runtime())

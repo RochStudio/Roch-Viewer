@@ -7106,6 +7106,10 @@ SYSTEM_INFO_REMOVED = (
     "Part Number",
     "Serial Number",
     "Manufactured",
+    "DRAM Technology",
+    "Slots Used",
+    "DIMM Size",
+    "Rank",
     # Variable CPU clocks belong in Telemetry. System Info keeps the bus and
     # memory/controller ratios, which describe the configured platform.
     "Core Clock",
@@ -7117,9 +7121,9 @@ SYSTEM_INFO_REMOVED = (
 SYSTEM_INFO_SUMMARY_ONLY = ("Uncore",)
 
 
-# Keep identity and graphics on the left, with the configured clock and memory
-# state on the right.  The order here is also the vertical order inside each
-# column, so Graphics follows Motherboard while Memory follows Clocks.
+# Keep machine identity on the left. Configured clocks and graphics share the
+# right column, with Graphics directly below Clocks. Memory identity and the
+# two system-wide memory totals now live in the SPD page.
 SYSTEM_INFO_SECTIONS = (
     ("System", "Left", ("OS", "OS Version", "Platform")),
     ("Processor", "Left", ("CPU", "CPU Package", "CPU Signature",
@@ -7127,19 +7131,19 @@ SYSTEM_INFO_SECTIONS = (
                            "Cores / Threads", "Microcode")),
     ("Motherboard", "Left", ("Manufacturer", "Model", "Board Revision", "BIOS", "BIOS Date",
                              "Chipset", "Southbridge", "LPCIO")),
-    ("Graphics", "Left", ("GPU", "Board Manufacturer", "GPU Code Name",
-                           "GPU Revision", "Cores", "ROPs / TMUs",
-                           "GPU Technology", "Memory Size", "Memory Type",
-                           "Memory Vendor", "Bus Width", "Resizable BAR",
-                           "Driver Version", "Driver Date")),
     # Configured memory clocks and ratios only. Variable CPU core/ring clocks
     # are sensor readings and remain in Telemetry.
     ("Clocks", "Right", ("DRAM Frequency", "DRAM Ratio", "QCLK Ratio",
                          "BCLK", "Core Ratio", "Uncore Ratio", "MCLK",
                          "UCLK", "PSF0 PLL", "Gear Mode")),
-    ("Memory", "Right", ("DRAM Technology", "Channels", "Memory Capacity",
-                         "Slots Used", "DIMM Size", "Rank")),
+    ("Graphics", "Right", ("GPU", "Board Manufacturer", "GPU Code Name",
+                            "GPU Revision", "Cores", "ROPs / TMUs",
+                            "GPU Technology", "Memory Size", "Memory Type",
+                            "Memory Vendor", "Bus Width", "Resizable BAR",
+                            "Driver Version", "Driver Date")),
 )
+
+SPD_SYSTEM_ROWS = ("Channels", "Memory Capacity")
 
 
 # --- System Info reading order.
@@ -7173,6 +7177,11 @@ def _install_system_info_sections():
     }
     for timing in TIMINGS:
         if timing.get("Tab") != SYSTEM_INFO_TAB:
+            continue
+        if timing.get("name") in SPD_SYSTEM_ROWS:
+            timing["Tab"] = "SPD"
+            timing["Category"] = "System"
+            timing["Column"] = "FullWidth"
             continue
         section = placement.get(timing.get("name"))
         if section is None:
