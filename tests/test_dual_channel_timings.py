@@ -235,7 +235,8 @@ class SectionLayoutTest(unittest.TestCase):
         sections = self._sections()
         present = {name for names in sections.values() for name in names}
         for name, category in intel_timings.TIMINGS_SECTION_MOVES.items():
-            if name == "tDLLK" and name not in present:
+            if (name in intel_timings.DDR4_INAPPLICABLE_TIMING_ROWS
+                    and name not in present):
                 continue
             with self.subTest(name=name):
                 self.assertIn(name, sections.get(category, []))
@@ -280,8 +281,6 @@ class SectionLayoutTest(unittest.TestCase):
             "tREFSBRD": "Refresh timings",
             "tCCD": "CAS to CAS",
             "tCCD_L": "CAS to CAS",
-            "tCCD_L_WR": "CAS to CAS",
-            "tCCD_L_WR2": "CAS to CAS",
         }
         for name, category in expected.items():
             with self.subTest(name=name):
@@ -334,7 +333,7 @@ class SectionLayoutTest(unittest.TestCase):
     def test_every_moved_row_names_a_row_that_exists(self):
         names = {row.get("name") for row in timings_rows()}
         for name in intel_timings.TIMINGS_SECTION_MOVES:
-            if name == "tDLLK":
+            if name in intel_timings.DDR4_INAPPLICABLE_TIMING_ROWS:
                 continue
             with self.subTest(name=name):
                 self.assertIn(name, names)

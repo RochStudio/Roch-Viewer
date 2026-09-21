@@ -8219,14 +8219,19 @@ def _install_ddr5_timing_labels():
 _install_ddr5_timing_labels()
 
 
+DDR4_INAPPLICABLE_TIMING_ROWS = frozenset({
+    "tDLLK", "tCCD_L_WR", "tCCD_L_WR2",
+})
+
+
 def _remove_inapplicable_ddr4_timings():
-    """Drop the DDR5 MR13 DLL-lock timing from a DDR4 timing table."""
+    """Drop timings encoded only by DDR5 MR13 from the DDR4 table."""
     global TIMINGS
     if detect_ddr_generation() != "DDR4":
         return
     TIMINGS = [
         timing for timing in TIMINGS
-        if timing.get("name") != "tDLLK"
+        if timing.get("name") not in DDR4_INAPPLICABLE_TIMING_ROWS
     ]
 
 

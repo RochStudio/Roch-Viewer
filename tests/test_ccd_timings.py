@@ -25,6 +25,7 @@ from tests.intel_stub import FIELD_READS, MCHBAR, MCHBAR2, install, restore
 intel_timings = None
 
 CCD_NAMES = ("tCCD", "tCCD_L", "tCCD_L_WR", "tCCD_L_WR2")
+DDR4_INSTALLED_CCD_NAMES = ("tCCD", "tCCD_L")
 
 MR13_NAMES = ("tCCD_L", "tCCD_L_WR", "tCCD_L_WR2")
 
@@ -360,9 +361,15 @@ class ConfirmedReadTest(unittest.TestCase):
 
 class InstalledRowTest(unittest.TestCase):
     def test_every_row_is_on_the_timings_tab(self):
-        for name in CCD_NAMES:
+        for name in DDR4_INSTALLED_CCD_NAMES:
             with self.subTest(name=name):
                 self.assertEqual(row(name).get("Tab"), "Timings")
+
+    def test_ddr5_write_variants_are_absent_from_ddr4(self):
+        names = {r.get("name") for r in intel_timings.TIMINGS}
+        for name in ("tCCD_L_WR", "tCCD_L_WR2"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, names)
 
     def test_the_mode_register_rows_are_gone(self):
         names = [r.get("name") for r in intel_timings.TIMINGS]
@@ -371,13 +378,13 @@ class InstalledRowTest(unittest.TestCase):
                 self.assertNotIn(stale, names)
 
     def test_no_row_still_decodes_through_a_mode_register_table(self):
-        for name in CCD_NAMES:
+        for name in DDR4_INSTALLED_CCD_NAMES:
             with self.subTest(name=name):
                 self.assertNotIn("Formula", row(name))
                 self.assertNotIn("dynamic_params", row(name))
 
     def test_every_row_reads_both_channels(self):
-        for name in CCD_NAMES:
+        for name in DDR4_INSTALLED_CCD_NAMES:
             with self.subTest(name=name):
                 self.assertTrue(is_dual_timing(row(name)))
 
@@ -391,11 +398,11 @@ class InstalledRowTest(unittest.TestCase):
     def test_the_rows_form_one_cas_to_cas_section(self):
         # Mode-register copies are taken out first. tCCD_L_MR sits directly
         # under tCCD_L by the rule every _MR row follows, which puts it inside
-        # this group without belonging to it -- the four CCD rows are still
+        # this group without belonging to it -- the applicable CCD rows are
         # consecutive, and that is what this is checking.
         names = [n for n in self._ccd_section()
                  if not n.endswith(intel_timings.MODE_REGISTER_TIMING_SUFFIX)]
-        self.assertEqual(names, list(CCD_NAMES))
+        self.assertEqual(names, list(DDR4_INSTALLED_CCD_NAMES))
 
     def test_the_mode_register_copy_sits_directly_under_tccd_l(self):
         # DDR4 only: DDR5 keeps tCCD_L in a register this project has no
