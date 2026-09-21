@@ -9,6 +9,9 @@
 - Added processor package/socket and CPUID family/model/stepping to System Info on Intel and AMD systems.
 - Set System Info to 750×750 and aligned zebra shading by physical row across both columns.
 - Added the SPD-decoded module type (for example, UDIMM) to the SPD identity table.
+- Completed the Raptor Lake DDR4 timing set with the verified Add/Dec tCWL,
+  refresh-stagger, scheduler, weak-lock and scramble-timer fields; removed the
+  overlapping controller row that had been mislabeled as tWPRE.
 
 - Removed tRFCpb from DDR4 timing views; per-bank refresh is a DDR5 timing.
 - Renamed the DDR4 DRAM RON row to RON and formatted DDR4 RTT/RON values as resistance-first RZQ ratios, matching the reference viewer.

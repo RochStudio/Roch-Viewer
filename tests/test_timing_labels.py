@@ -126,6 +126,24 @@ class Ddr5LabelTest(unittest.TestCase):
         self.assertNotIn("tRFC2", names)
         self.assertNotIn("tRFCpb", names)
 
+    def test_controller_cwl_adjustments_replace_the_false_twpre_row(self):
+        with table_for(LGA1700_DDR4) as built:
+            timings = {t.get("name"): t for t in built.TIMINGS
+                       if t.get("Tab") == "Timings"}
+            imc = {t.get("name"): t for t in built.TIMINGS
+                   if t.get("Tab") == built.IMC_TAB}
+        self.assertNotIn("tWPRE", timings)
+        self.assertEqual(
+            imc["Add tCWL"]["parameters"],
+            {"bit_start": 6, "bit_length": 6},
+        )
+        self.assertEqual(
+            imc["Dec tCWL"]["parameters"],
+            {"bit_start": 0, "bit_length": 6},
+        )
+        self.assertFalse(built.is_dual_timing(imc["Add tCWL"]))
+        self.assertFalse(built.is_dual_timing(imc["Dec tCWL"]))
+
     def test_a_ddr5_table_keeps_per_bank_refresh(self):
         with table_for(LGA1700_DDR5) as built:
             names = {t.get("name") for t in built.TIMINGS}

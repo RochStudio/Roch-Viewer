@@ -2326,18 +2326,9 @@ TIMINGS = [
     {"name": "tCKE", "address": MCHBAR + 0xE050, "Category": "Power down", "Tab": "Timings", "parameters": {"bit_start": 0, "bit_length": 7}, "Column": "Left", "read_type": "standard"},
     {"name": "tXP", "address": MCHBAR + 0xE050, "Category": "Power down", "Tab": "Timings", "parameters": {"bit_start": 7, "bit_length": 7}, "Column": "Left", "read_type": "standard"},
     {"name": "tWRPRE", "address": MCHBAR + 0xE004, "Category": "Power down", "Tab": "Timings", "parameters": {"bit_start": 0, "bit_length": 10}, "Column": "Left", "read_type": "standard"},
-    # tWPRE is the write preamble, one bit: clear is 1 tCK and set is 2 tCK.
-    #
-    # 0xE478 tracked it across three BIOS settings, 1 -> 2 -> 1, identically in
-    # all four sub-channel copies. That alone did not settle it, because this
-    # file used to label bits 0-5 of the same register "DEC tCWL", and a 2 tCK
-    # write preamble forces exactly a one-clock write-latency shift - so a
-    # consequence fitted the evidence as well as the cause did.
-    #
-    # Changing tCWL 17 -> 15 and nothing else separated them: 0xE070 moved and
-    # 0xE478 did not, on either controller. The register does not follow tCWL,
-    # so it is not a write-latency field, and the old label was wrong.
-    {"name": "tWPRE", "address": MCHBAR + 0xE478, "Category": "Power down", "Tab": "Timings", "parameters": {"bit_start": 0, "bit_length": 1}, "Column": "Left", "read_type": "standard", "Formula": {0: "1", 1: "2"}},
+    # The DRAM write-preamble state is decoded from its mode register on
+    # Training. The controller register that used to occupy this row instead
+    # contains Add/Dec tCWL; those fixed PHY controls are installed on IMC.
     {"name": "tXPDLL", "address": MCHBAR + 0xE050, "Category": "Power down", "Tab": "Timings", "parameters": {"bit_start": 14, "bit_length": 7}, "Column": "Left", "read_type": "standard"},
     {"name": "tXSDLL", "address": MCHBAR + 0xE440, "Category": "Power down", "Tab": "Timings", "parameters": {"bit_start": 0, "bit_length": 13}, "Column": "Left", "read_type": "standard"},
     # tXSR: located by setting it to 447 in BIOS and diffing full snapshots of
@@ -6484,7 +6475,6 @@ TIMINGS_SECTION_MOVES = {
     # Precharge, preamble and the DLL lock are ordinary bus timings.
     "tRDPRE": "Other Timings",
     "tWRPRE": "Other Timings",
-    "tWPRE": "Other Timings",
     "tDLLK": "Other Timings",
     # Chip select spacing and the mode-register command timings.
     "tCSH": "Command",
@@ -6538,7 +6528,7 @@ TIMINGS_SECTION_ROW_ORDER = {
     ),
     "Other Timings": (
         "tZQCAL", "tZQCS", "ZQCS period", "tZQoper", "tCAL",
-        "TRPab_EXT", "tRDPRE", "tWRPRE", "tWPRE", "tDLLK",
+        "TRPab_EXT", "tRDPRE", "tWRPRE", "tDLLK",
     ),
 }
 
@@ -8092,6 +8082,9 @@ _move_mode_register_timings()
 # PBR Exit on idle stays on Timings: it was not among those asked for, and
 # moving it because its neighbours moved would be inventing the request.
 REFRESH_POLICY_ROWS = (
+    "Refresh Interval", "Refresh Stagger En", "Refresh Stagger Mode",
+    "Disable Stolen Refresh", "Enable Refresh Type Display",
+    "tREFI Pulse Stagger Dis", "Wake Up On HPM",
     "PBR Disable", "PBR OOO Disable", "PBR Disable on hot",
     "PBR Exit on idle", "Refresh ABR release", "Refresh HP WM",
     "Refresh panic WM", "CounttREFIWhileRefEnOff", "HPRefOnMRS",
@@ -8538,7 +8531,9 @@ SKEW_MISC_COLUMNS = {
 PHY_SETTINGS_COLUMNS = {
     "VREF": "Left",
     "Command": "Left",
-    "ODTL": "Left",
+    # The added refresh controls make the left half taller; ODTL balances the
+    # fixed-height two-column page without splitting any section.
+    "ODTL": "Right",
     "Refresh": "Left",
     # Keep the signal-drive groups in one readable sequence: DATA above CMD,
     # then CLK, CTL, and finally SComp.
@@ -8609,6 +8604,95 @@ def _combine_intel_detail_tabs():
 
 
 _combine_intel_detail_tabs()
+
+
+# --- Additional Raptor Lake DDR4 controller fields.
+#
+# These descriptors were recovered from the supplied reference executable
+# and checked against the matching live dump on the ASUS Z790-A D4. A direct
+# read on the same boot reproduced every value, including the 64-bit fields
+# above bit 31. They stay DDR4-specific because the reference's DDR5 table
+# changes several bit positions in DDR_REFRESH_CTL2.
+DDR4_REFRESH_STAGGER_MODE = {0: "Per DIMM", 1: "Per Channel"}
+DDR4_ENABLED = {0: "Disabled", 1: "Enabled"}
+DDR4_INVERTED_DISABLE = {0: "Enabled", 1: "Disabled"}
+
+DDR4_ADDITIONAL_REFRESH_FIELDS = (
+    ("Refresh Interval", 0xE444, 0, 13, None),
+    ("Refresh Stagger En", 0xE444, 15, 1, DDR4_ENABLED),
+    ("Refresh Stagger Mode", 0xE444, 16, 1,
+     DDR4_REFRESH_STAGGER_MODE),
+    ("Disable Stolen Refresh", 0xE444, 13, 1,
+     DDR4_INVERTED_DISABLE),
+    ("Enable Refresh Type Display", 0xE444, 14, 1, DDR4_ENABLED),
+    ("tREFI Pulse Stagger Dis", 0xE444, 17, 1,
+     DDR4_INVERTED_DISABLE),
+    ("Wake Up On HPM", 0xE444, 19, 13, None),
+)
+
+DDR4_ADDITIONAL_COMMAND_FIELDS = (
+    # SC_GS_CFG is 64 bits; both fields are in its upper dword.
+    ("Write 0", 0xE088, 49, 1, "wide"),
+    ("MultiCycCmd", 0xE088, 51, 1, "wide"),
+)
+
+DDR4_ADDITIONAL_PHY_FIELDS = (
+    ("Add tCWL", 0xE478, 6, 6),
+    ("Dec tCWL", 0xE478, 0, 6),
+    ("WEAKLOCKENDLY", 0x01AC, 8, 5),
+    ("SCR DLL En Timer Value", 0x2D1C, 13, 10),
+    ("SCR PIEN Timer Value", 0x2D20, 0, 11),
+)
+
+
+def _install_additional_ddr4_controller_fields():
+    """Expose the remaining verified fixed-register fields on IMC."""
+    if active_platform() != LGA1700_DDR4:
+        return
+
+    for name, offset, start, length, formula in (
+            DDR4_ADDITIONAL_REFRESH_FIELDS):
+        row = {
+            "name": name,
+            "address": MCHBAR + offset,
+            "parameters": {"bit_start": start, "bit_length": length},
+            "Category": "Refresh",
+            "Tab": IMC_TAB,
+            "Column": "Left",
+            "read_type": "standard",
+            "source_scope": "controller",
+        }
+        if formula is not None:
+            row["Formula"] = formula
+        TIMINGS.append(row)
+
+    for name, offset, start, length, read_type in (
+            DDR4_ADDITIONAL_COMMAND_FIELDS):
+        TIMINGS.append({
+            "name": name,
+            "address": MCHBAR + offset,
+            "parameters": {"bit_start": start, "bit_length": length},
+            "Category": "Command",
+            "Tab": IMC_TAB,
+            "Column": "Left",
+            "read_type": read_type,
+            "source_scope": "controller",
+        })
+
+    for name, offset, start, length in DDR4_ADDITIONAL_PHY_FIELDS:
+        TIMINGS.append({
+            "name": name,
+            "address": MCHBAR + offset,
+            "parameters": {"bit_start": start, "bit_length": length},
+            "Category": "MISC Additional",
+            "Tab": IMC_TAB,
+            "Column": "Right",
+            "read_type": "standard",
+            "source_scope": "controller",
+        })
+
+
+_install_additional_ddr4_controller_fields()
 
 
 def _move_module_refresh_mode_to_timings():

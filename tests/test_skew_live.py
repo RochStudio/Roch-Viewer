@@ -441,13 +441,13 @@ class ReferenceNameTest(unittest.TestCase):
                     if row.get("Category") == category
                 ))
 
-        # The final two-column Training/IMC layout keeps VREF and ODTL in the
-        # left column on DDR4.
+        # The additional refresh rows balance the final two-column IMC layout
+        # by placing ODTL on the right while VREF stays on the left.
         for row in skew_rows():
             category = row.get("Category")
             if category not in {"VREF", "ODTL"}:
                 continue
-            expected_column = "Left"
+            expected_column = "Left" if category == "VREF" else "Right"
             with self.subTest(name=row.get("name")):
                 self.assertEqual(row.get("Column"), expected_column)
 

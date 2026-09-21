@@ -279,6 +279,10 @@ class SettingsSourceSplitTest(unittest.TestCase):
             *[name for name, _, _, _, _
               in intel_timings.MISC_FEATURE_FIELDS],
             *intel_timings.REFRESH_POLICY_ROWS,
+            *[name for name, *_
+              in intel_timings.DDR4_ADDITIONAL_COMMAND_FIELDS],
+            *[name for name, *_
+              in intel_timings.DDR4_ADDITIONAL_PHY_FIELDS],
         }
         rows = {row.get("name"): row for row in self._settings()}
         self.assertLessEqual(expected, set(rows))
@@ -935,6 +939,54 @@ class RefreshPolicyMoveTest(unittest.TestCase):
                      "PBR Exit on idle"):
             with self.subTest(name=name):
                 self.assertIn(name, intel_timings.REFRESH_POLICY_ROWS)
+
+    def test_the_additional_refresh_fields_match_the_reference_map(self):
+        expected = {
+            "Refresh Interval": (0xE444, 0, 13),
+            "Refresh Stagger En": (0xE444, 15, 1),
+            "Refresh Stagger Mode": (0xE444, 16, 1),
+            "Disable Stolen Refresh": (0xE444, 13, 1),
+            "Enable Refresh Type Display": (0xE444, 14, 1),
+            "tREFI Pulse Stagger Dis": (0xE444, 17, 1),
+            "Wake Up On HPM": (0xE444, 19, 13),
+        }
+        for name, (offset, start, length) in expected.items():
+            with self.subTest(name=name):
+                row = self._row(name)
+                self.assertIsNotNone(row)
+                self.assertEqual(row["address"], intel_timings.MCHBAR + offset)
+                self.assertEqual(
+                    row["parameters"],
+                    {"bit_start": start, "bit_length": length},
+                )
+
+    def test_the_upper_scheduler_fields_request_a_wide_read(self):
+        expected = {"Write 0": 49, "MultiCycCmd": 51}
+        for name, start in expected.items():
+            with self.subTest(name=name):
+                row = self._row(name)
+                self.assertIsNotNone(row)
+                self.assertEqual(row["address"],
+                                 intel_timings.MCHBAR + 0xE088)
+                self.assertEqual(row["parameters"],
+                                 {"bit_start": start, "bit_length": 1})
+                self.assertEqual(row["read_type"], "wide")
+
+    def test_the_additional_phy_fields_match_live_verified_offsets(self):
+        expected = {
+            "WEAKLOCKENDLY": (0x01AC, 8, 5),
+            "SCR DLL En Timer Value": (0x2D1C, 13, 10),
+            "SCR PIEN Timer Value": (0x2D20, 0, 11),
+        }
+        for name, (offset, start, length) in expected.items():
+            with self.subTest(name=name):
+                row = self._row(name)
+                self.assertIsNotNone(row)
+                self.assertEqual(row.get("Tab"), intel_timings.IMC_TAB)
+                self.assertEqual(row.get("Category"), "MISC Additional")
+                self.assertEqual(row["address"], intel_timings.MCHBAR + offset)
+                self.assertEqual(row["parameters"],
+                                 {"bit_start": start, "bit_length": length})
 
 
 if __name__ == "__main__":

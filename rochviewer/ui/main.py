@@ -1105,6 +1105,10 @@ class TimingGUI:
         self.ROW_PADY = 0
         self.SECTION_GAP = 3
         self.ROW_HEIGHT = 20
+        # IMC carries the complete DDR4 controller register set.  A slightly
+        # tighter row keeps every field visible in the fixed 750 px-wide
+        # window without reintroducing a scrollbar.
+        self.IMC_ROW_HEIGHT = 17
         # Content-width timing rows: short name gutter, values pack after labels.
         self.NAME_MINSIZE = 50
         self.VALUE_MINSIZE = 20
@@ -2860,7 +2864,13 @@ class TimingGUI:
     # Name, the two channels, and the spacer _align_dual_columns adds.
     ROW_FILL_SPAN = 4
 
-    def _row_fill(self, body, row, bg, columns):
+    def _row_height_for_tab(self, tab_name):
+        """Return the compact table-row height used by a detail tab."""
+        if tab_name == "IMC":
+            return self.IMC_ROW_HEIGHT
+        return self.ROW_HEIGHT
+
+    def _row_fill(self, body, row, bg, columns, height=None):
         """Carry a row's tint past the last value, to the end of the column.
 
         The labels only cover the first two columns, so a tint on them alone
@@ -2872,7 +2882,7 @@ class TimingGUI:
         if bg == "transparent":
             return None
         filler = ctk.CTkLabel(
-            body, text="", height=self.ROW_HEIGHT, fg_color=bg,
+            body, text="", height=height or self.ROW_HEIGHT, fg_color=bg,
             corner_radius=0,
         )
         # Spans the row rather than just the trailing column: the label and
@@ -4154,6 +4164,7 @@ class TimingGUI:
                 for column, group in halves.items()
             }
             target_depth = max(depths.values())
+            row_height = self._row_height_for_tab(tab_name)
             for column, group in halves.items():
                 depth = depths[column]
                 missing = target_depth - depth
@@ -4168,10 +4179,10 @@ class TimingGUI:
                         if (depth + step) % 2 else "transparent"
                     )
                     body.grid_rowconfigure(
-                        next_row + step, weight=0, minsize=self.ROW_HEIGHT
+                        next_row + step, weight=0, minsize=row_height
                     )
                     spacer = ctk.CTkLabel(
-                        body, text="", height=self.ROW_HEIGHT,
+                        body, text="", height=row_height,
                         fg_color=bg, corner_radius=0,
                     )
                     spacer.grid(
@@ -4283,7 +4294,7 @@ class TimingGUI:
                     if bbox and bbox[3]:
                         pitch = max(pitch, bbox[3])
             if not pitch:
-                pitch = self.ROW_HEIGHT
+                pitch = self._row_height_for_tab(tab_name)
 
             next_row = body.grid_size()[1]
             next_band = int(round((bottom - table_top) / float(pitch)))
@@ -4733,8 +4744,11 @@ class TimingGUI:
         # viewport. Training can now stack the mode-register and preamble
         # blocks below Command, so it uses Timings' compact row pitch rather
         # than adding eight vertical pixels to every value label.
+        row_height = self._row_height_for_tab(tab_name)
         value_pady = (
-            self.ROW_PADY if tab_name in ("Timings", "Training") else 4
+            self.ROW_PADY
+            if tab_name in ("Timings", "Training", "IMC")
+            else 4
         )
         content_font = (
             self.TRAINING_FONT if tab_name == "Training" else self.COMPACT_FONT
@@ -4793,7 +4807,7 @@ class TimingGUI:
             # as well as the frame, or the text sits in a hole in the band.
             header_kwargs = {
                 "pady": self.ROW_PADY,
-                "height": self.ROW_HEIGHT,
+                "height": row_height,
                 "fg_color": heading_background,
                 "bg_color": heading_background,
             }
@@ -4901,7 +4915,7 @@ class TimingGUI:
                 content_frame,
                 text=parameter_header_text,
                 font=content_bold,
-                height=self.ROW_HEIGHT,
+                height=row_height,
                 anchor="w",
                 padx=name_padx,
                 pady=self.ROW_PADY,
@@ -4914,7 +4928,7 @@ class TimingGUI:
                     a_header_text, b_header_text, "a", tab_name
                 ),
                 font=content_bold,
-                height=self.ROW_HEIGHT,
+                height=row_height,
                 anchor="w",
                 padx=4,
                 pady=self.ROW_PADY,
@@ -4927,7 +4941,7 @@ class TimingGUI:
                     a_header_text, b_header_text, "b", tab_name
                 ),
                 font=content_bold,
-                height=self.ROW_HEIGHT,
+                height=row_height,
                 anchor="w",
                 padx=4,
                 pady=self.ROW_PADY,
@@ -4958,12 +4972,15 @@ class TimingGUI:
                     self.row_band(band_offset, uniform_header, data_row),
                 )
                 data_row += 1
-                self._row_fill(content_frame, idx, bg_color, columns=3)
+                self._row_fill(
+                    content_frame, idx, bg_color, columns=3,
+                    height=row_height,
+                )
                 name_label = ctk.CTkLabel(
                     content_frame,
                     text=timing.get("display_name", timing["name"]),
                     font=content_font,
-                    height=self.ROW_HEIGHT,
+                    height=row_height,
                     anchor="w",
                     padx=name_padx,
                     pady=self.ROW_PADY,
@@ -4978,7 +4995,7 @@ class TimingGUI:
                         content_frame,
                         text=value_a,
                         font=content_font,
-                        height=self.ROW_HEIGHT,
+                        height=row_height,
                         anchor="w",
                         padx=5,
                         pady=value_pady,
@@ -4991,7 +5008,7 @@ class TimingGUI:
                         content_frame,
                         text=value_b,
                         font=content_font,
-                        height=self.ROW_HEIGHT,
+                        height=row_height,
                         anchor="w",
                         padx=5,
                         pady=value_pady,
@@ -5015,7 +5032,7 @@ class TimingGUI:
                         content_frame,
                         text=value,
                         font=content_font,
-                        height=self.ROW_HEIGHT,
+                        height=row_height,
                         anchor="w",
                         padx=5,
                         pady=value_pady,
@@ -5028,7 +5045,7 @@ class TimingGUI:
                         content_frame,
                         text="",
                         font=content_font,
-                        height=self.ROW_HEIGHT,
+                        height=row_height,
                         anchor="w",
                         padx=5,
                         pady=value_pady,
@@ -5091,7 +5108,8 @@ class TimingGUI:
                 )
                 data_row += 1
                 row_fill = self._row_fill(
-                    content_frame, idx, bg_color, columns=3
+                    content_frame, idx, bg_color, columns=3,
+                    height=row_height,
                 )
                 is_misc_latency = (
                     tab_name == "Misc"
@@ -5105,7 +5123,7 @@ class TimingGUI:
                         else timing.get("display_name", timing["name"])
                     ),
                     font=content_font,
-                    height=self.ROW_HEIGHT,
+                    height=row_height,
                     anchor="w",
                     padx=name_padx,
                     pady=self.ROW_PADY,
@@ -5122,7 +5140,7 @@ class TimingGUI:
                     content_frame,
                     text=value,
                     font=content_font,
-                    height=self.ROW_HEIGHT,
+                    height=row_height,
                     anchor="w",
                     justify="left",
                     padx=self.VALUE_PADX,
