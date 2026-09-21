@@ -11,7 +11,8 @@ Version 1.0.5 expands DDR4 support and reorganizes the interface:
   hidden on DDR4.
 - Shows DDR4 RTT and RON in resistance-first RZQ notation, such as `80 RZQ/3`.
 - Reads separate A2/B2 module identity on supported four-DIMM ASUS boards and reports module vendor, DRAM manufacturer/die, part number, serial number and manufacture date.
-- Decodes supported DDR4 MR0-MR6 training, power and operating fields without exposing raw RON shadow diagnostics in Advanced.
+- Covers all 48 DDR4 mode-register rows and all 18 power-down settings in the
+  supplied Vain reference dump, with independent A2/B2 sources for Training.
 - Reports the ASUS Z790-A D4 DRAM rail and the complete supported Nuvoton NCT6798D voltage and temperature set in Telemetry.
 - Uses fixed-width, unscrolled main tabs with per-tab heights and keeps the window's top edge fixed while switching tabs.
 - Opens Advanced beside the right edge of the viewer and Telemetry beside the left edge when screen space permits.

@@ -2328,7 +2328,7 @@ TIMINGS = [
     {"name": "tWRPRE", "address": MCHBAR + 0xE004, "Category": "Power down", "Tab": "Timings", "parameters": {"bit_start": 0, "bit_length": 10}, "Column": "Left", "read_type": "standard"},
     # The DRAM write-preamble state is decoded from its mode register on
     # Training. The controller register that used to occupy this row instead
-    # contains Add/Dec tCWL; those fixed PHY controls are installed on IMC.
+    # contains per-channel Add/Dec tCWL training adjustments.
     {"name": "tXPDLL", "address": MCHBAR + 0xE050, "Category": "Power down", "Tab": "Timings", "parameters": {"bit_start": 14, "bit_length": 7}, "Column": "Left", "read_type": "standard"},
     {"name": "tXSDLL", "address": MCHBAR + 0xE440, "Category": "Power down", "Tab": "Timings", "parameters": {"bit_start": 0, "bit_length": 13}, "Column": "Left", "read_type": "standard"},
     # tXSR: located by setting it to 447 in BIOS and diffing full snapshots of
@@ -8656,9 +8656,19 @@ DDR4_ADDITIONAL_COMMAND_FIELDS = (
     ("MultiCycCmd", 0xE088, 51, 1, "wide"),
 )
 
-DDR4_ADDITIONAL_PHY_FIELDS = (
+DDR4_ADDITIONAL_POWER_DOWN_FIELDS = (
+    # MC_INIT_STATE_G: the reference executable descriptor is 0x4278[12].
+    # On Raptor Lake DDR4 that maps to MCHBAR 0xE278 bit 12 and reads 0 on
+    # both live controllers, matching the supplied Vain dump.
+    ("Add 1 QCLK Delay", 0xE278, 12, 1),
+)
+
+DDR4_ADDITIONAL_CWL_FIELDS = (
     ("Add tCWL", 0xE478, 6, 6),
     ("Dec tCWL", 0xE478, 0, 6),
+)
+
+DDR4_ADDITIONAL_PHY_FIELDS = (
     ("WEAKLOCKENDLY", 0x01AC, 8, 5),
     ("SCR DLL En Timer Value", 0x2D1C, 13, 10),
     ("SCR PIEN Timer Value", 0x2D20, 0, 11),
@@ -8698,6 +8708,32 @@ def _install_additional_ddr4_controller_fields():
             "read_type": read_type,
             "source_scope": "controller",
         })
+
+    for name, offset, start, length in DDR4_ADDITIONAL_POWER_DOWN_FIELDS:
+        TIMINGS.append({
+            "name": name,
+            "address": MCHBAR + offset,
+            "parameters": {"bit_start": start, "bit_length": length},
+            "Category": "Power Down",
+            "Tab": IMC_TAB,
+            "Column": "Left",
+            "read_type": "standard",
+            "source_scope": "controller",
+        })
+
+    for name, offset, start, length in DDR4_ADDITIONAL_CWL_FIELDS:
+        row = {
+            "name": name,
+            "address": MCHBAR + offset,
+            "parameters": {"bit_start": start, "bit_length": length},
+            "Category": "DLL / LATENCY",
+            "Tab": "Training",
+            "Column": "Left",
+            "read_type": "standard",
+            "source_scope": "module",
+        }
+        _promote_standard_row(row)
+        TIMINGS.append(row)
 
     for name, offset, start, length in DDR4_ADDITIONAL_PHY_FIELDS:
         TIMINGS.append({

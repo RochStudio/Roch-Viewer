@@ -1109,6 +1109,7 @@ class TimingGUI:
         self.ROW_PADY = 0
         self.SECTION_GAP = 3
         self.ROW_HEIGHT = 20
+        self.TRAINING_ROW_HEIGHT = 19
         # IMC carries the complete DDR4 controller register set.  A slightly
         # tighter row keeps every field visible in the fixed 750 px-wide
         # window without reintroducing a scrollbar.
@@ -2870,6 +2871,8 @@ class TimingGUI:
 
     def _row_height_for_tab(self, tab_name):
         """Return the compact table-row height used by a detail tab."""
+        if tab_name == "Training":
+            return self.TRAINING_ROW_HEIGHT
         if tab_name == "IMC":
             return self.IMC_ROW_HEIGHT
         return self.ROW_HEIGHT

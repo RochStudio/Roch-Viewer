@@ -216,6 +216,35 @@ class TrainingLivenessTest(unittest.TestCase):
             with self.subTest(name=row.get("name")):
                 self.assertTrue(intel_timings.is_dual_timing(row))
 
+    def test_every_training_pair_uses_distinct_hardware_sources(self):
+        for row in per_module_skew_rows():
+            name = row.get("name") or "(blank)"
+            if not str(name).strip():
+                continue
+            with self.subTest(name=name):
+                if "address_a" in row:
+                    self.assertNotEqual(row["address_a"], row["address_b"])
+                    self.assertEqual(
+                        row["address_b"] - row["address_a"],
+                        intel_timings.CHANNEL_B_OFFSET,
+                    )
+                elif "dynamic_params_a" in row:
+                    self.assertNotEqual(
+                        row["dynamic_params_a"].get("mchbar"),
+                        row["dynamic_params_b"].get("mchbar"),
+                    )
+                else:
+                    self.assertTrue(callable(row.get("value_a")))
+                    self.assertTrue(callable(row.get("value_b")))
+                    self.assertIsNot(row["value_a"], row["value_b"])
+
+    def test_cwl_adjustments_are_no_longer_shared_imc_rows(self):
+        rows = {row.get("name"): row for row in skew_rows()}
+        for name in ("Add tCWL", "Dec tCWL"):
+            with self.subTest(name=name):
+                self.assertEqual(rows[name].get("Tab"), SKEW_TAB)
+                self.assertTrue(intel_timings.is_dual_timing(rows[name]))
+
     def test_single_source_rows_moved_to_phy(self):
         rows = [r for r in skew_rows() if r.get("Tab") == IMC_TAB]
         self.assertTrue(rows)

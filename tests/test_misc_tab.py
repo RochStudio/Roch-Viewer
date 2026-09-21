@@ -282,6 +282,8 @@ class SettingsSourceSplitTest(unittest.TestCase):
             *[name for name, *_
               in intel_timings.DDR4_ADDITIONAL_COMMAND_FIELDS],
             *[name for name, *_
+              in intel_timings.DDR4_ADDITIONAL_POWER_DOWN_FIELDS],
+            *[name for name, *_
               in intel_timings.DDR4_ADDITIONAL_PHY_FIELDS],
         }
         rows = {row.get("name"): row for row in self._settings()}
@@ -987,6 +989,54 @@ class RefreshPolicyMoveTest(unittest.TestCase):
                 self.assertEqual(row["address"], intel_timings.MCHBAR + offset)
                 self.assertEqual(row["parameters"],
                                  {"bit_start": start, "bit_length": length})
+
+    def test_add_one_qclk_delay_completes_the_power_down_block(self):
+        row = self._row("Add 1 QCLK Delay")
+        self.assertIsNotNone(row)
+        self.assertEqual(row.get("Tab"), intel_timings.IMC_TAB)
+        self.assertEqual(row.get("Category"), "Power Down")
+        self.assertEqual(row["address"], intel_timings.MCHBAR + 0xE278)
+        self.assertEqual(row["parameters"],
+                         {"bit_start": 12, "bit_length": 1})
+
+
+class VainDdr4BlockCoverageTest(unittest.TestCase):
+    """Every named row in Vain's DDR4 MR and power-down blocks exists."""
+
+    MODE_REGISTER_ROWS = {
+        "Burst Length", "CAS Latency", "Read Burst Type", "Test Mode",
+        "DLL Reset", "DLL Enable", "RON", "Additive Latency",
+        "Write Leveling", "RTT Nom", "TDQS Enable",
+        "Data Output Disable", "tCWL_MR", "Low Power ASR", "RTT Wr",
+        "Write CRC", "MPR Page Select", "MPR Operation", "CS Geardown",
+        "Per DRAM Addr", "Temp Sensor Readout", "Refresh tRFC Mode",
+        "Write CMD Latency", "MPR Read Format", "Max Power Down",
+        "Temp Refresh Range", "Temp Ctrl Refresh", "Internal Vref Mon",
+        "Soft PPR", "CS to CMD Latency", "Self Refresh Abort",
+        "Read Preamble Train", "Read Preamble", "Write Preamble",
+        "Hard PPR", "CA Parity Latency", "CRC Error Clear",
+        "CA Parity Err Status", "ODT Buffer (PD)", "RTT Park",
+        "CA Parity Persist Err", "DM Enable", "Write DBI", "Read DBI",
+        "VrefDQ Train Value", "VrefDQ Train Range",
+        "VrefDQ Train Enable", "tCCD_L_MR",
+    }
+    POWER_DOWN_ROWS = {
+        "powerdown_enable", "powerdown_latency", "powerdown_length",
+        "selfrefresh_enable", "selfrefresh_latency", "selfrefresh_length",
+        "ckevalid_enable", "ckevalid_length", "idle_enable", "idle_length",
+        "Add 1 QCLK Delay", "DLL_CODEPI", "DLL_CODEWL", "DLL BWSEL",
+        "BWSEL LO Threshold", "QX Count", "RX VREF", "RcvEn PI",
+    }
+
+    def test_all_48_vain_mode_register_rows_are_present(self):
+        names = {row.get("name") for row in intel_timings.TIMINGS}
+        self.assertEqual(len(self.MODE_REGISTER_ROWS), 48)
+        self.assertLessEqual(self.MODE_REGISTER_ROWS, names)
+
+    def test_all_18_vain_power_down_rows_are_present(self):
+        names = {row.get("name") for row in intel_timings.TIMINGS}
+        self.assertEqual(len(self.POWER_DOWN_ROWS), 18)
+        self.assertLessEqual(self.POWER_DOWN_ROWS, names)
 
 
 if __name__ == "__main__":

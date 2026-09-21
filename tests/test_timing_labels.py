@@ -149,19 +149,25 @@ class Ddr5LabelTest(unittest.TestCase):
         with table_for(LGA1700_DDR4) as built:
             timings = {t.get("name"): t for t in built.TIMINGS
                        if t.get("Tab") == "Timings"}
-            imc = {t.get("name"): t for t in built.TIMINGS
-                   if t.get("Tab") == built.IMC_TAB}
+            training = {t.get("name"): t for t in built.TIMINGS
+                        if t.get("Tab") == "Training"}
         self.assertNotIn("tWPRE", timings)
         self.assertEqual(
-            imc["Add tCWL"]["parameters"],
+            training["Add tCWL"]["parameters"],
             {"bit_start": 6, "bit_length": 6},
         )
         self.assertEqual(
-            imc["Dec tCWL"]["parameters"],
+            training["Dec tCWL"]["parameters"],
             {"bit_start": 0, "bit_length": 6},
         )
-        self.assertFalse(built.is_dual_timing(imc["Add tCWL"]))
-        self.assertFalse(built.is_dual_timing(imc["Dec tCWL"]))
+        for name in ("Add tCWL", "Dec tCWL"):
+            with self.subTest(name=name):
+                row = training[name]
+                self.assertTrue(built.is_dual_timing(row))
+                self.assertEqual(
+                    row["address_b"] - row["address_a"],
+                    built.CHANNEL_B_OFFSET,
+                )
 
     def test_a_ddr5_table_keeps_per_bank_refresh(self):
         with table_for(LGA1700_DDR5) as built:

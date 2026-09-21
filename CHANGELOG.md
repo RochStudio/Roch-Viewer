@@ -12,6 +12,9 @@
 - Completed the Raptor Lake DDR4 timing set with the verified Add/Dec tCWL,
   refresh-stagger, scheduler, weak-lock and scramble-timer fields; removed the
   overlapping controller row that had been mislabeled as tWPRE.
+- Completed Vain's DDR4 Power Down Settings block with Add 1 QCLK Delay and
+  moved Add/Dec tCWL to Training after a live controller audit found Dec tCWL
+  differs between A2 and B2.
 
 - Restored the raw DDR4 controller tRFCpb field on Timings to match the
   reference viewer; moved Allow 2Cyc B2B LPDDR to IMC Command and removed the
