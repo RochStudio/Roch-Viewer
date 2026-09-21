@@ -174,9 +174,6 @@ class Am5RuntimeTest(unittest.TestCase):
             # is what a kit is looked up by.
             "Type", "Slots Used", "Channels", "Memory Capacity",
             "DIMM Size", "Rank",
-            "Part Number", "Module Manufacturer",
-            "IC Manufacturer", "DRAM Die",
-            "Serial Number", "Manufactured",
             "Status", "Read Status", "Training Status",
             "Voltage Status", "Power Status",
             "GPU", "Board Manufacturer", "GPU Code Name", "GPU Revision",
@@ -220,22 +217,13 @@ class Am5RuntimeTest(unittest.TestCase):
             seen, [title for title, _names in am5_profile.SYSTEM_INFO_SECTIONS]
         )
 
-    def test_dram_rows_read_spd_and_fall_back_to_the_part_number_table(self):
-        # The maker and die must come off the module when the SMBus path is
-        # open; the part-number table is a fallback, not the source.
+    def test_spd_identity_is_not_repeated_in_system_info(self):
         runtime = Am5Runtime(reader_factory=lambda: FakeReader(_oracle_regs()))
         rows = {row["name"]: row for row in build_timings(runtime)}
-
-        spd = [{"dram_manufacturer": "SK hynix", "dram_die": "A-die"}]
-        with mock.patch("rochviewer.memory.ddr5_spd.read_identity", return_value=spd):
-            self.assertEqual(rows["IC Manufacturer"]["value"](), "SK hynix")
-            self.assertEqual(rows["DRAM Die"]["value"](), "A-die")
-
-        modules = [{"ic": "Micron (die unknown)"}]
-        with mock.patch("rochviewer.memory.ddr5_spd.read_identity", return_value=[]), \
-                mock.patch("rochviewer.memory.dimm_inventory.read_modules", return_value=modules):
-            self.assertEqual(rows["IC Manufacturer"]["value"](), "Micron")
-            self.assertEqual(rows["DRAM Die"]["value"](), "—")
+        for name in ("Part Number", "Module Manufacturer", "IC Manufacturer",
+                     "DRAM Die", "Serial Number", "Manufactured"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, rows)
 
     def test_tertiary_groups_cover_every_row_and_split_across_columns(self):
         rows = build_timings(

@@ -32,7 +32,7 @@ intel_timings = None
 
 NEW_ROWS = (
     "Platform", "OS", "OS Version", "GPU",
-    "DRAM Technology", "DIMM Size", "Rank", "DRAM Manufacturer", "DRAM Die",
+    "DRAM Technology", "DIMM Size", "Rank",
 )
 
 
@@ -213,25 +213,12 @@ class PresenceTest(unittest.TestCase):
         self.assertEqual(temperature.get("display_name"), "CPU")
         self.assertEqual(temperature.get("Tab"), intel_timings.SENSOR_TAB)
 
-    def test_the_module_rows_read_the_module_without_going_on_the_timer(self):
-        # These come off the DIMM over SMBus rather than from WMI, so they are
-        # getters: resolving them at import would run a bus scan before the
-        # platform is even known. Being a getter is not permission to poll --
-        # none of them may carry `live`, which is what would put them on the
-        # refresh worker.
+    def test_spd_identity_is_not_repeated_in_system_info(self):
         by_name = {row.get("name"): row for row in system_info_rows()}
-        # Manufactured is in this list even on a bench where it reads
-        # nothing. It is the one identity row whose only source is SPD, so it
-        # stays blank wherever the SPD hub is unreachable -- the row is still
-        # the right row, and its absence would say the module has no build
-        # date rather than that this machine cannot reach it.
         for name in ("RAM Manufacturer", "DRAM Manufacturer", "DRAM Die",
                      "Part Number", "Serial Number", "Manufactured"):
-            row = by_name.get(name)
-            self.assertIsNotNone(row, "%s is missing from System Info" % name)
             with self.subTest(name=name):
-                self.assertTrue(callable(row.get("value")))
-                self.assertFalse(row.get("live"))
+                self.assertNotIn(name, by_name)
 
     def test_the_platform_identity_rows_are_present_and_sectioned(self):
         # Added to line the tab up with CPU-Z's Mainboard and CPU tabs. Each
@@ -378,9 +365,8 @@ class OrderTest(unittest.TestCase):
         names = row_names()
         start = names.index("Memory Capacity")
         self.assertEqual(
-            names[start + 1:start + 6],
-            ["Slots Used", "DIMM Size", "Rank",
-             "DRAM Manufacturer", "DRAM Die"],
+            names[start + 1:start + 4],
+            ["Slots Used", "DIMM Size", "Rank"],
         )
 
     def test_the_removed_rows_are_gone(self):
@@ -460,17 +446,6 @@ class ValueTest(unittest.TestCase):
     def test_module_size_and_rank_come_from_smbios(self):
         self.assertEqual(value_of("DIMM Size"), "16 GB")
         self.assertEqual(value_of("Rank"), "2R")
-
-    def test_the_dram_component_is_split_into_maker_and_die(self):
-        self.assertEqual(value_of("DRAM Manufacturer"), "Samsung")
-        self.assertEqual(value_of("DRAM Die"), "B-die")
-
-    def test_the_memory_manufacturer_labels_are_compact(self):
-        by_name = {row.get("name"): row for row in system_info_rows()}
-        self.assertEqual(by_name["RAM Manufacturer"].get("display_name"),
-                         "Module Manuf.")
-        self.assertEqual(by_name["DRAM Manufacturer"].get("display_name"),
-                         "DRAM Manuf.")
 
     def test_capacity_and_bus_clock_labels_match_the_requested_names(self):
         by_name = {row.get("name"): row for row in system_info_rows()}

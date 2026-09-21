@@ -154,38 +154,7 @@ class FollowsTheHardwareTest(unittest.TestCase):
         return mock.patch("rochviewer.memory.ddr5_spd.read_identity",
                           return_value=entries)
 
-    def test_the_module_rows_follow_the_spd(self):
-        # SPD is the primary source for the maker, the die and the serial:
-        # SMBIOS does not carry the DRAM component at all, so the modules are
-        # asked directly and the inventory is only the fallback below.
-        spd = [{
-            "part_number": "F5-6000J3038F16G",
-            "module_manufacturer": "Corsair", "serial_number": "0000ABCD",
-            "manufacture_date": "31 / 2023", "dram_manufacturer": "Micron",
-            "dram_stepping": 66, "dram_die": "B-die",
-        }]
-        with self._with_spd(spd):
-            self.assertEqual(_require(self, "Module Manufacturer"), "Corsair")
-            self.assertEqual(_require(self, "IC Manufacturer"), "Micron")
-            self.assertEqual(_require(self, "DRAM Die"), "B-die")
-            self.assertEqual(_require(self, "Serial Number"), "0000ABCD")
-            self.assertEqual(_require(self, "Manufactured"), "31 / 2023")
-
-    def test_the_ic_row_splits_the_inventory_string_without_spd(self):
-        # With no SPD answer the inventory carries "SK hynix A-die" as one
-        # string, and the two rows must take their own halves of it rather
-        # than a fixed pair.
-        modules = [{
-            "serial_number": "1", "device_locator": "DIMMA1", "slot": "A1",
-            "channel": "A", "part_number": "X", "capacity_gb": 16,
-            "capacity": "16GB", "rank_count": 1, "rank": "SR",
-            "module_manufacturer": "G.Skill", "ic": "Micron B-die",
-        }]
-        with self._with_spd([]), self._with_modules(modules):
-            self.assertEqual(_require(self, "IC Manufacturer"), "Micron")
-            self.assertEqual(_require(self, "DRAM Die"), "B-die")
-
-    def test_the_module_rows_follow_the_inventory(self):
+    def test_memory_summary_rows_follow_the_inventory(self):
         other = [{
             "serial_number": "0000ABCD", "device_locator": "DIMMA1",
             "slot": "A1", "channel": "A", "part_number": "F5-6000J3038F16G",
@@ -194,16 +163,22 @@ class FollowsTheHardwareTest(unittest.TestCase):
             "ic": "Samsung B-die",
         }]
         with self._with_spd([]), self._with_modules(other):
-            self.assertEqual(_require(self, "Part Number"),
-                             "F5-6000J3038F16G")
-            self.assertEqual(_require(self, "Module Manufacturer"), "Corsair")
-            self.assertEqual(_require(self, "Serial Number"), "0000ABCD")
             # From rank_count, not from the inventory's own "DR" string --
             # two ranks reads as 2R, the way one reads as 1R on this bench.
             self.assertEqual(_require(self, "Rank"), "2R")
             # From capacity_gb, formatted here -- not the inventory's own
             # "32GB" string passed through.
             self.assertEqual(_require(self, "DIMM Size"), "32 GB")
+
+    def test_spd_identity_is_not_repeated_in_system_info(self):
+        names = {
+            row.get("name") for row in build_timings(Am5Runtime())
+            if row.get("Tab") == SYSTEM_INFO_TAB
+        }
+        for name in ("Part Number", "Module Manufacturer", "IC Manufacturer",
+                     "DRAM Die", "Serial Number", "Manufactured"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, names)
 
     def _with_card(self, card):
         return mock.patch("rochviewer.gpu.radeon.read_gpu", return_value=card)

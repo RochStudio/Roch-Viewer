@@ -172,44 +172,15 @@ class FollowsTheHardwareTest(unittest.TestCase):
         return mock.patch.object(
             intel_timings, "detect_ddr_generation", return_value=generation)
 
-    def test_the_module_rows_follow_the_spd(self):
-        other = {
-            "part_number": "F5-6000J3038F16G", "dram_manufacturer": "Samsung",
-            "dram_die": "B-die", "manufacture_date": "31 / 2023",
-            "serial_number": "0000ABCD", "module_manufacturer": "G.Skill",
+    def test_spd_identity_is_not_repeated_in_system_info(self):
+        names = {
+            row.get("name") for row in intel_timings.TIMINGS
+            if row.get("Tab") == "System Info"
         }
-        with self._generation("DDR5"), \
-                mock.patch("rochviewer.memory.ddr5_spd.read_identity", return_value=[other]):
-            self.assertEqual(_require(self, "Part Number"), "F5-6000J3038F16G")
-            self.assertEqual(_require(self, "DRAM Die"), "B-die")
-            self.assertEqual(_require(self, "Manufactured"), "31 / 2023")
-            self.assertEqual(_require(self, "Serial Number"), "0000ABCD")
-
-    def test_ddr4_takes_identity_from_its_own_reader(self):
-        module = {
-            "serial_number": "0000ABCD",
-            "manufacture_date": "31 / 2023",
-            "dram_manufacturer": "Samsung",
-        }
-        with self._generation("DDR4"), \
-                mock.patch("rochviewer.memory.ddr4_spd.read_identity", return_value=[module]), \
-                mock.patch("rochviewer.memory.ddr5_spd.read_identity",
-                           side_effect=AssertionError) as ddr5:
-            self.assertEqual(_require(self, "Serial Number"), "0000ABCD")
-            self.assertEqual(_require(self, "Manufactured"), "31 / 2023")
-            self.assertEqual(_require(self, "DRAM Manufacturer"), "Samsung")
-            ddr5.assert_not_called()
-
-    def test_ddr4_does_not_take_the_die_from_a_blank_stepping(self):
-        # The DDR4 block carries a stepping byte, and it reads 0x00 on the
-        # bench kit. Sourcing the die from it would turn a "B-die" the
-        # part-number table gets right into a useless raw byte.
-        module = {"dram_die": "0x00", "dram_manufacturer": "0x0000",
-                  "part_number": "NOT-THE-REAL-SKU"}
-        with self._generation("DDR4"), \
-                mock.patch("rochviewer.memory.ddr4_spd.read_identity", return_value=[module]):
-            self.assertNotEqual(_require(self, "DRAM Die"), "0x00")
-            self.assertNotEqual(_require(self, "Part Number"), "NOT-THE-REAL-SKU")
+        for name in ("RAM Manufacturer", "DRAM Manufacturer", "DRAM Die",
+                     "Part Number", "Serial Number", "Manufactured"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, names)
 
     def test_the_table_backed_gpu_rows_fail_closed_on_another_card(self):
         # ROPs/TMUs and the code-name SKU are the two values on this tab that

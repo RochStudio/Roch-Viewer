@@ -1807,14 +1807,10 @@ SYSTEM_INFO_SECTIONS = (
                      "Chipset", "Southbridge", "LPCIO", "AGESA")),
     ("Clocks", ("BCLK", "MCLK", "FCLK", "UCLK", "DRAM Frequency",
                 "UCLK:MCLK", "DRAM Ratio")),
-    # What the memory is, then how much of it, then whose it is: the sockets
-    # and channels sit together above the capacity they add up to, and the
-    # part number leads the maker rows because it is what a kit is looked up
-    # by.
+    # System Info keeps the machine-wide memory configuration. Per-module
+    # identity and profile details are shown once in the SPD tab.
     ("Memory", ("Type", "Slots Used", "Channels", "Memory Capacity",
-                "DIMM Size", "Rank", "Part Number",
-                "Module Manufacturer", "IC Manufacturer", "DRAM Die",
-                "Serial Number", "Manufactured")),
+                "DIMM Size", "Rank")),
     ("Status", ("Status", "Read Status", "Training Status", "Voltage Status",
                 "Power Status")),
     ("Graphics", ("GPU", "Board Manufacturer", "GPU Code Name",
@@ -1881,15 +1877,6 @@ def build_timings(runtime):
         # What is installed, next to the total it adds up to.
         info("DIMM Size", _dimm_value("size")),
         info("Rank", _dimm_value("rank")),
-        # The part number first, because that is what a kit is looked up by.
-        # Then whose stick it is, then whose chips are on it: two different
-        # companies, so two rows named for what each one made.
-        info("Part Number", _dimm_value("part_number")),
-        info("Module Manufacturer", _dimm_value("module_manufacturer")),
-        info("IC Manufacturer", _dimm_value("dram_manufacturer")),
-        info("DRAM Die", _dimm_value("dram_die")),
-        info("Serial Number", _dimm_value("serial_number")),
-        info("Manufactured", _dimm_value("manufacture_date")),
         # Status. One line covering every transport. The four it replaces are
         # kept below, marked diagnostic: the tab shows the summary, the dump
         # keeps the full text including the APOB record addresses.

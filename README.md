@@ -31,7 +31,7 @@ The InpOut DLL contains a kernel driver and can install a persistent Windows ser
 ## Features
 
 - **Summary:** CPU name, cores/threads, microcode, motherboard model/BIOS, memory speed, supported clock ratios, key timings, RTT/RON/VREF and voltage snapshots. Select one module or all modules; matching channel values display once and differences display side by side.
-- **System Info:** two columns for system, processor, motherboard and graphics identity on the left, with configured clocks and memory/module details on the right.
+- **System Info:** two columns for system, processor, motherboard and graphics identity on the left, with configured clocks and the machine-wide memory configuration on the right.
 - **SPD:** select a physical DIMM slot to see module identity, geometry, maximum JEDEC bandwidth, DDR4 JEDEC timing choices, and Intel XMP 2.0 profiles read directly from the module.
 - **Timings:** primary, secondary and tertiary timings, including per-channel values where exposed, balanced across three columns without scrolling.
 - **Voltages:** startup snapshots of supported CPU, motherboard and memory rails. Use Telemetry for live readings.

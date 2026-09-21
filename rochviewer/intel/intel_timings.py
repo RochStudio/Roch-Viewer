@@ -7078,22 +7078,6 @@ def _install_system_info_identity_rows():
         [
             _system_info_row("DIMM Size", lambda: _dimm_field("size")),
             _system_info_row("Rank", lambda: _dimm_field("rank")),
-            _system_info_row(
-                "DRAM Manufacturer", lambda: _dimm_field("dram_manufacturer"),
-                display_name="DRAM Manuf.",
-            ),
-            _system_info_row("DRAM Die", lambda: _dimm_field("dram_die")),
-            # Ordered as CPU-Z's SPD tab reads them: what the module is, then
-            # which one it is, then when it was built.
-            _system_info_row(
-                "Part Number", lambda: _dimm_field("part_number")
-            ),
-            _system_info_row(
-                "Serial Number", lambda: _dimm_field("serial_number")
-            ),
-            _system_info_row(
-                "Manufactured", lambda: _dimm_field("manufacture_date")
-            ),
         ],
     )
 
@@ -7114,6 +7098,14 @@ SYSTEM_INFO_REMOVED = (
     "Memory Scrambler",
     "Row Hammer",
     "Power Down Mode",
+    # Per-module identity belongs in the SPD tab.  Keep System Info focused on
+    # the machine-wide memory configuration instead of repeating it here.
+    "RAM Manufacturer",
+    "DRAM Manufacturer",
+    "DRAM Die",
+    "Part Number",
+    "Serial Number",
+    "Manufactured",
     # Variable CPU clocks belong in Telemetry. System Info keeps the bus and
     # memory/controller ratios, which describe the configured platform.
     "Core Clock",
@@ -7145,10 +7137,8 @@ SYSTEM_INFO_SECTIONS = (
     ("Clocks", "Right", ("DRAM Frequency", "DRAM Ratio", "QCLK Ratio",
                          "BCLK", "Core Ratio", "Uncore Ratio", "MCLK",
                          "UCLK", "PSF0 PLL", "Gear Mode")),
-    ("Memory", "Right", ("DRAM Technology", "Channels", "RAM Manufacturer",
-                         "Memory Capacity", "Slots Used", "DIMM Size", "Rank",
-                         "DRAM Manufacturer", "DRAM Die", "Part Number",
-                         "Serial Number", "Manufactured")),
+    ("Memory", "Right", ("DRAM Technology", "Channels", "Memory Capacity",
+                         "Slots Used", "DIMM Size", "Rank")),
 )
 
 
