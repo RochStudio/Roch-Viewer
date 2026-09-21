@@ -2,6 +2,9 @@
 
 ## 1.0.5 (2026-09-20)
 
+- Added every detected Nuvoton NCT6798D voltage input to the Voltages tab while keeping Summary limited to primary rails.
+- Gave the dense IMC register table an 11-point Consolas font sized for its unscrolled 17-pixel row pitch.
+- Removed the comparison tool's name from source comments, tests and documentation.
 - Added a physical-slot SPD tab with DDR4 module identity, geometry, maximum JEDEC bandwidth, three useful JEDEC timing choices and both supported Intel XMP 2.0 profiles.
 - Removed repeated module manufacturer, DRAM manufacturer/die, part number, serial number and manufacturing date rows from System Info; those per-DIMM details now live only in SPD.
 - Moved Channels and Capacity into SPD, removed the remaining Memory section from System Info, and placed Graphics below Clocks in the right column.
@@ -12,7 +15,7 @@
 - Completed the Raptor Lake DDR4 timing set with the verified Add/Dec tCWL,
   refresh-stagger, scheduler, weak-lock and scramble-timer fields; removed the
   overlapping controller row that had been mislabeled as tWPRE.
-- Completed Vain's DDR4 Power Down Settings block with Add 1 QCLK Delay and
+- Completed the supplied DDR4 Power Down Settings block with Add 1 QCLK Delay and
   moved Add/Dec tCWL to Training after a live controller audit found Dec tCWL
   differs between A2 and B2.
 - Audited every DDR4 Training and IMC row for a live hardware source and

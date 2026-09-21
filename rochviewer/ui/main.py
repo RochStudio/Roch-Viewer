@@ -247,6 +247,7 @@ def summary_snapshot_voltage_rows(timings):
         timing for timing in timings
         if timing.get("Tab") == "Voltages"
         and timing.get("Category") != "Snapshot"
+        and timing.get("show_on_summary", True)
         and timing.get("name") not in SUMMARY_HIDDEN_SNAPSHOT_NAMES
     ]
 
@@ -1104,6 +1105,12 @@ class TimingGUI:
         self.COMPACT_BOLD = (self.GLOBAL_FONT_FAMILY, self.COMPACT_FONT_SIZE, "bold")
         self.TRAINING_FONT = self.COMPACT_FONT
         self.TRAINING_BOLD = self.COMPACT_BOLD
+        # The complete IMC register table uses a 17-pixel row pitch so it can
+        # remain unscrolled on a 1080p display.  A dedicated 11-point face
+        # keeps Consolas glyphs clear inside that pitch instead of clipping
+        # the top and bottom of the shared 12-point font.
+        self.IMC_FONT = (self.GLOBAL_FONT_FAMILY, 11)
+        self.IMC_BOLD = (self.GLOBAL_FONT_FAMILY, 11, "bold")
         self.HEADER_FONT = (self.GLOBAL_FONT_FAMILY, 12, "bold")
         self.TAB_FONT = (self.GLOBAL_FONT_FAMILY, 13, "bold")
         self.ROW_PADX = 0
@@ -4758,12 +4765,16 @@ class TimingGUI:
             if tab_name in ("Timings", "Training", "IMC")
             else 4
         )
-        content_font = (
-            self.TRAINING_FONT if tab_name == "Training" else self.COMPACT_FONT
-        )
-        content_bold = (
-            self.TRAINING_BOLD if tab_name == "Training" else self.COMPACT_BOLD
-        )
+        if tab_name == "Training":
+            content_font = self.TRAINING_FONT
+            content_bold = self.TRAINING_BOLD
+        elif tab_name == "IMC":
+            content_font = self.IMC_FONT
+            content_bold = self.IMC_BOLD
+        else:
+            content_font = self.COMPACT_FONT
+            content_bold = self.COMPACT_BOLD
+        header_font = self.IMC_BOLD if tab_name == "IMC" else self.HEADER_FONT
         system_info_frames = self.grid_frames.get("System Info", {})
         name_padx = (
             self.SYSTEM_INFO_TEXT_INSET
@@ -4822,7 +4833,7 @@ class TimingGUI:
         header = ctk.CTkLabel(
             header_frame,
             text=section_name.upper(),
-            font=self.HEADER_FONT,
+            font=header_font,
             anchor="w",
             padx=name_padx,
             # On a continuous tab the heading is a row among rows, so it takes
@@ -4854,7 +4865,7 @@ class TimingGUI:
                     text=self._detail_channel_header(
                         a_text, b_text, output_column, tab_name
                     ),
-                    font=self.HEADER_FONT,
+                    font=header_font,
                     anchor="w", padx=name_padx,
                     text_color=self.SUBTITLE_COLOR,
                     **header_kwargs,

@@ -12,8 +12,8 @@ Version 1.0.5 expands DDR4 support and reorganizes the interface:
 - Shows DDR4 RTT and RON in resistance-first RZQ notation, such as `80 RZQ/3`.
 - Reads separate A2/B2 module identity on supported four-DIMM ASUS boards and reports module vendor, DRAM manufacturer/die, part number, serial number and manufacture date.
 - Covers all 48 DDR4 mode-register rows and all 18 power-down settings in the
-  supplied Vain reference dump, with independent A2/B2 sources for Training.
-- Reports the ASUS Z790-A D4 DRAM rail and the complete supported Nuvoton NCT6798D voltage and temperature set in Telemetry.
+  supplied DDR4 reference dump, with independent A2/B2 sources for Training.
+- Reports the ASUS Z790-A D4 DRAM rail and the complete supported Nuvoton NCT6798D voltage set in both Voltages and Telemetry, with temperatures in Telemetry.
 - Uses fixed-width, unscrolled main tabs with per-tab heights and keeps the window's top edge fixed while switching tabs.
 - Opens Advanced beside the right edge of the viewer and Telemetry beside the left edge when screen space permits.
 
@@ -37,7 +37,7 @@ The InpOut DLL contains a kernel driver and can install a persistent Windows ser
 - **System Info:** system, processor and motherboard identity on the left, with configured clocks and graphics identity on the right.
 - **SPD:** select a physical DIMM slot to see system channels and capacity, module identity and geometry, maximum JEDEC bandwidth, DDR4 JEDEC timing choices, and Intel XMP 2.0 profiles read directly from the module.
 - **Timings:** primary, secondary and tertiary timings, including per-channel values where exposed, balanced across three columns without scrolling.
-- **Voltages:** startup snapshots of supported CPU, motherboard and memory rails. Use Telemetry for live readings.
+- **Voltages:** startup snapshots of every detected supported CPU, motherboard and memory rail. Use Telemetry for live readings.
 - **Training and IMC:** supported RTT/ODT, RON, ODT delay, VREF, drive strength, power-down, refresh, mode-register and integrated-memory-controller configuration fields. Independent module/channel values remain visible where the hardware exposes them. AMD IMC includes native preamble/postamble and ECC status (memory-controller ECC, not DDR5 on-die ECC). Granite Ridge also exposes eight raw training codes with compatibility labels; those labels are not verified physical VREF/DFE readings. Unavailable reads stay blank.
 - **RTL:** compact per-memory-controller/channel round-trip-latency values.
 - **Native telemetry:** CPU/effective clocks, temperatures, power and supported motherboard voltages, plus each DIMM's temperature and PMIC rails. On the ASUS Z790-A D4, supported NCT6798D readings include Vcore, +5V, AVSB, 3VCC, +12V, VIN inputs, standby/battery rails, VTT, DRAM, CPU L2, CPU VCCSA, CPU AUX and motherboard/CPU/PCH temperatures. Current/minimum/maximum/average statistics and reset controls are included.

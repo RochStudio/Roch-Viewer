@@ -100,6 +100,39 @@ class IntelVoltageSnapshotTest(unittest.TestCase):
         self.assertIn('Vcore snapshot', names)
         self.assertNotIn('VCCIO snapshot', names)
 
+    def test_snapshot_uses_every_detected_board_voltage_row(self):
+        base = Mock(return_value='1.2 V')
+        extra = Mock(return_value='5.0 V')
+        detected_rows = (
+            ('DLVR Vcore', 'Voltages', base, 'Left'),
+            ('+5V', 'Voltages', extra, 'Left'),
+            ('CPU Temp', 'Thermal & Power', Mock(), 'Right'),
+        )
+        snapshots = self.intel._voltage_snapshot_rows(
+            self.intel.LGA1700_DDR4,
+            sensor_rows=detected_rows,
+        )
+        by_name = {row['name']: row for row in snapshots}
+        self.assertIn('Vcore snapshot', by_name)
+        self.assertIn('+5V snapshot', by_name)
+        self.assertNotIn('CPU Temp snapshot', by_name)
+        self.assertTrue(by_name['Vcore snapshot']['show_on_summary'])
+        self.assertFalse(by_name['+5V snapshot']['show_on_summary'])
+
+    def test_detected_board_voltage_rows_still_obey_absent_filter(self):
+        detected_rows = (
+            ('VTT', 'Voltages', Mock(return_value='1.0 V'), 'Left'),
+            ('VIN8', 'Voltages', Mock(return_value='1.1 V'), 'Left'),
+        )
+        snapshots = self.intel._voltage_snapshot_rows(
+            self.intel.LGA1700_DDR4,
+            absent=('VIN8',),
+            sensor_rows=detected_rows,
+        )
+        names = {row['name'] for row in snapshots}
+        self.assertIn('VTT snapshot', names)
+        self.assertNotIn('VIN8 snapshot', names)
+
     def test_intel_snapshot_keeps_the_fixed_summary_width(self):
         from rochviewer.ui.main import summary_column_count
 

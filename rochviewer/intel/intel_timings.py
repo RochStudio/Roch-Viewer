@@ -6238,7 +6238,8 @@ def absent_sensor_rows(platform, arrow_lake, manufacturer=None):
     return board
 
 
-def _voltage_snapshot_rows(platform, absent=(), read_dimms=None):
+def _voltage_snapshot_rows(platform, absent=(), read_dimms=None,
+                           sensor_rows=None):
     """Build one startup voltage snapshot from the Intel telemetry readers.
 
     The live rows remain on ``Sensors`` for the Telemetry window, where their
@@ -6249,9 +6250,14 @@ def _voltage_snapshot_rows(platform, absent=(), read_dimms=None):
     from functools import lru_cache
 
     excluded = set(absent)
+    declared_rows = SENSOR_ROWS if sensor_rows is None else tuple(sensor_rows)
+    summary_voltage_names = {
+        name for name, category, _getter, _column in SENSOR_ROWS
+        if category == "Voltages"
+    }
     voltage_rows = [
         (name, getter, column)
-        for name, category, getter, column in SENSOR_ROWS
+        for name, category, getter, column in declared_rows
         if category == "Voltages" and name not in excluded
     ]
     dimm_rails = (
@@ -6312,6 +6318,9 @@ def _voltage_snapshot_rows(platform, absent=(), read_dimms=None):
             "Tab": "Voltages",
             "Column": column,
             "read_type": "standard",
+            # Chip-specific diagnostic inputs remain available in Voltages,
+            # while Summary keeps its compact set of primary rails.
+            "show_on_summary": name in summary_voltage_names,
         })
     if platform in DDR5_TIMING_PLATFORMS:
         for channel, channel_label in (("a", "CHA"), ("b", "CHB")):
@@ -6347,9 +6356,12 @@ def _install_sensors_tab():
         # LGA1700 board profiles keep the platform fallback that omits it.
         absent = tuple(name for name in absent if name != "VTT")
 
-    TIMINGS.extend(_voltage_snapshot_rows(platform, absent))
+    live_rows = sensor_rows_for_chip(chip_name)
+    TIMINGS.extend(_voltage_snapshot_rows(
+        platform, absent, sensor_rows=live_rows
+    ))
 
-    for name, category, getter, column in sensor_rows_for_chip(chip_name):
+    for name, category, getter, column in live_rows:
         if name in absent:
             continue
         label = sensor_row_label(platform, name)
@@ -8657,7 +8669,7 @@ DDR4_ADDITIONAL_COMMAND_FIELDS = (
 DDR4_ADDITIONAL_POWER_DOWN_FIELDS = (
     # MC_INIT_STATE_G: the reference executable descriptor is 0x4278[12].
     # On Raptor Lake DDR4 that maps to MCHBAR 0xE278 bit 12 and reads 0 on
-    # both live controllers, matching the supplied Vain dump.
+    # both live controllers, matching the supplied DDR4 reference dump.
     ("Add 1 QCLK Delay", 0xE278, 12, 1),
 )
 

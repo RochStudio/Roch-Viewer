@@ -1032,8 +1032,8 @@ class RefreshPolicyMoveTest(unittest.TestCase):
                          {"bit_start": 12, "bit_length": 1})
 
 
-class VainDdr4BlockCoverageTest(unittest.TestCase):
-    """Every named row in Vain's DDR4 MR and power-down blocks exists."""
+class Ddr4ReferenceBlockCoverageTest(unittest.TestCase):
+    """Every named row in the DDR4 MR and power-down blocks exists."""
 
     MODE_REGISTER_ROWS = {
         "Burst Length", "CAS Latency", "Read Burst Type", "Test Mode",
@@ -1060,12 +1060,12 @@ class VainDdr4BlockCoverageTest(unittest.TestCase):
         "BWSEL Low Threshold", "QX Count", "RX VREF", "Receive Enable PI",
     }
 
-    def test_all_48_vain_mode_register_rows_are_present(self):
+    def test_all_48_mode_register_rows_are_present(self):
         names = {row.get("name") for row in intel_timings.TIMINGS}
         self.assertEqual(len(self.MODE_REGISTER_ROWS), 48)
         self.assertLessEqual(self.MODE_REGISTER_ROWS, names)
 
-    def test_all_18_vain_power_down_rows_are_present(self):
+    def test_all_18_power_down_rows_are_present(self):
         names = {row.get("name") for row in intel_timings.TIMINGS}
         self.assertEqual(len(self.POWER_DOWN_ROWS), 18)
         self.assertLessEqual(self.POWER_DOWN_ROWS, names)
