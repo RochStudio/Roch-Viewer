@@ -5,6 +5,7 @@ from unittest import mock
 
 from rochviewer.memory.ddr4_spd import read_modules as read_ddr4_modules
 from rochviewer.memory.spd_profiles import (
+    _join_slots,
     decode_ddr4_base,
     decode_ddr4_spd,
     decode_ddr4_xmp,
@@ -78,6 +79,24 @@ class Ddr4SpdProfileTest(unittest.TestCase):
         values = sample_spd()
         values[2] = 0x12
         self.assertIsNone(decode_ddr4_spd(values))
+
+    def test_slot_join_does_not_infer_dram_identity_from_part_number(self):
+        module = {
+            "part_number": "KNOWN-KIT",
+            "serial_number": "1",
+            "dram_manufacturer": "—",
+            "dram_die": "—",
+        }
+        inventory = [{
+            "part_number": "KNOWN-KIT",
+            "serial_number": "1",
+            "slot": "A2",
+            "ic": "Samsung B-die",
+        }]
+        joined = _join_slots([module], inventory)[0]
+        self.assertEqual(joined["slot"], "A2")
+        self.assertEqual(joined["dram_manufacturer"], "—")
+        self.assertEqual(joined["dram_die"], "—")
 
     def test_reader_skips_reserved_spd_ranges(self):
         class Reader:

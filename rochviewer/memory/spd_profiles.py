@@ -234,20 +234,10 @@ def _join_slots(modules, inventory):
                 module["module_manufacturer"] = (
                     match.get("module_manufacturer") or module_vendor or EM_DASH
                 )
-            try:
-                from rochviewer.memory.dimm_inventory import split_ic
-
-                dram_vendor, dram_die = split_ic(match.get("ic"))
-                current_vendor = str(module.get("dram_manufacturer") or "")
-                if (not current_vendor or current_vendor == EM_DASH
-                        or current_vendor.lower().startswith("0x")):
-                    module["dram_manufacturer"] = dram_vendor
-                current_die = str(module.get("dram_die") or "")
-                if (not current_die or current_die == EM_DASH
-                        or current_die.lower().startswith("0x")):
-                    module["dram_die"] = dram_die
-            except Exception:
-                pass
+            # Do not fill the DRAM maker or die from the inventory's
+            # part-number lookup. SPD is a readout page: if those bytes do
+            # not identify the component, preserve the unavailable/raw value
+            # instead of substituting a result inferred from a known kit.
         module.setdefault("slot", "SPD 0x%02X" % module.get("address", 0))
     return modules
 
