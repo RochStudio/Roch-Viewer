@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.6 (2026-09-21)
+
+- Added a physical-slot SPD tab for DDR4 module identity, geometry, JEDEC timing tables and Intel XMP 2.0 profiles; moved per-DIMM identity, capacity and channel details out of System Info.
+- Added processor package/socket and CPUID family/model/stepping to System Info, placed Graphics below Clocks and kept its two-column 750×750 layout fully visible without scrolling.
+- Completed the Raptor Lake DDR4 primary, secondary, tertiary, refresh and controller timing audit; restored the raw `tRFCpb` field and removed DDR5-only `tDLLK`, `tCCD_L_WR` and `tCCD_L_WR2` from DDR4.
+- Completed and source-audited all 48 DDR4 mode-register rows and all 18 power-down rows, preserving independent A2/B2 values wherever the controller exposes them and removing the LPDDR-only Allow 2Cyc B2B control.
+- Reorganized Training and IMC by function, removed raw register labels, kept both tabs unscrolled and sized the dense IMC rows with a dedicated 11-point Consolas font.
+- Added every detected ASUS NCT6798D voltage input to both Voltages and live Telemetry while keeping Summary limited to its primary rails.
+- Removed the comparison tool's name from source comments, test names and documentation.
+
 ## 1.0.5 (2026-09-20)
 
 - Added every detected Nuvoton NCT6798D voltage input to the Voltages tab while keeping Summary limited to primary rails.

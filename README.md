@@ -1,16 +1,17 @@
-# Roch Viewer 1.0.5
+# Roch Viewer 1.0.6
 
-Version 1.0.5 is the current published release and is available from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/tag/v1.0.5).
+Version 1.0.6 is the current published release and is available from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/tag/v1.0.6).
 
 Roch Viewer is a read-only Windows memory-timing and hardware-monitoring tool for supported Intel and AMD systems. It displays clocks, timings, per-channel settings, RAM identity, motherboard sensors and native CPU/memory telemetry in a compact light/dark interface. It does not require HWiNFO.
 
-Version 1.0.5 expands DDR4 support and reorganizes the interface:
+Version 1.0.6 adds a dedicated SPD view and completes the latest DDR4 controller audit:
 
 - Shows the raw DDR4 controller `tRFCpb` field to match the reference viewer;
   it normally reads `0` because DDR4 uses all-bank refresh. `VDD2` remains
   hidden on DDR4.
 - Shows DDR4 RTT and RON in resistance-first RZQ notation, such as `80 RZQ/3`.
 - Reads separate A2/B2 module identity on supported four-DIMM ASUS boards and reports module vendor, DRAM manufacturer/die, part number, serial number and manufacture date.
+- Adds a physical-slot SPD tab with module identity, geometry, JEDEC timings and Intel XMP 2.0 profiles.
 - Covers all 48 DDR4 mode-register rows and all 18 power-down settings in the
   supplied DDR4 reference dump, with independent A2/B2 sources for Training.
 - Reports the ASUS Z790-A D4 DRAM rail and the complete supported Nuvoton NCT6798D voltage set in both Voltages and Telemetry, with temperatures in Telemetry.
