@@ -13,7 +13,9 @@
   refresh-stagger, scheduler, weak-lock and scramble-timer fields; removed the
   overlapping controller row that had been mislabeled as tWPRE.
 
-- Removed tRFCpb from DDR4 timing views; per-bank refresh is a DDR5 timing.
+- Restored the raw DDR4 controller tRFCpb field on Timings to match the
+  reference viewer; moved Allow 2Cyc B2B LPDDR to IMC Command and removed the
+  DDR5 MR13-only tDLLK row from DDR4.
 - Renamed the DDR4 DRAM RON row to RON and formatted DDR4 RTT/RON values as resistance-first RZQ ratios, matching the reference viewer.
 - Disambiguated A2/B2 modules on four-DIMM ASUS boards whose SMBIOS repeats `ChannelA` inside two different memory controllers.
 - Read the DDR4 EE1004 manufacturing page so System Info reports the DRAM manufacturer, manufacture date and serial; identify Acer `BL.9BWWR.298` modules as Samsung B-die.

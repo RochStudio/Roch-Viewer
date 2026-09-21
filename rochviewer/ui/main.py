@@ -707,11 +707,15 @@ def intel_summary_timing_columns(timings):
     # spell it differently -- DDR5 renames it to tRFC2 -- so on either
     # platform exactly one of that pair exists and the other resolves to
     # nothing. tRFCns is not in that position: it is the same derived row
-    # under the same name on both, and tRFCpb only ever exists on DDR5.
+    # under the same name on both. The raw DDR4 tRFCpb field stays on the full
+    # Timings page; only DDR5's active per-bank interval is summarized here.
+    names = {timing.get("name") for timing in timings}
+    refresh_rows = [name for name in ("tRFCns", "tRFC2", "tRFC")
+                    if name in names]
+    if "tRFC2" in names and "tRFCpb" in names:
+        refresh_rows.append("tRFCpb")
     primary_secondary = insert_summary_rows_after(
-        primary_secondary, "tWR",
-        [name for name in ("tRFCns", "tRFC2", "tRFC", "tRFCpb")
-         if any(timing.get("name") == name for timing in timings)],
+        primary_secondary, "tWR", refresh_rows,
     )
     # The refresh interval heads the column, ahead of the turnarounds.
     tertiary = ["tREFI", "tREFIx9", "tCKE"] + [

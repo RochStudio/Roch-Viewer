@@ -795,16 +795,18 @@ class TimingsSectionOrderTest(unittest.TestCase):
         names = {row.get("name") for row in intel_timings.TIMINGS}
         # tRFCns first -- the same derived row under the same name on both
         # generations -- then whichever spelling this platform uses for the
-        # all-bank interval, then the per-bank one. Written from the names
-        # that exist rather than fixed to DDR5's, because the suite's stub
-        # loads a DDR4 fixture and DDR4 neither renames tRFC nor has a
-        # per-bank interval at all.
-        expected = [name for name in
-                    ("tRFCns", "tRFC2", "tRFC", "tRFCpb")
+        # all-bank interval, then DDR5's active per-bank one. DDR4 exposes its
+        # raw tRFCpb register only on the full Timings page, where a zero does
+        # not consume a Summary row or imply an active DDR4 timing.
+        expected = [name for name in ("tRFCns", "tRFC2", "tRFC")
                     if name in names]
+        if "tRFC2" in names and "tRFCpb" in names:
+            expected.append("tRFCpb")
         self.assertTrue(expected, "no refresh cycle row to place")
         start = primary.index("tWR") + 1
         self.assertEqual(primary[start:start + len(expected)], expected)
+        if "tRFC2" not in names:
+            self.assertNotIn("tRFCpb", primary)
 
     def test_tmod_follows_the_last_write_turnaround(self):
         from rochviewer.intel import intel_timings

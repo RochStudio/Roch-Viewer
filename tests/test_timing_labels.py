@@ -124,7 +124,22 @@ class Ddr5LabelTest(unittest.TestCase):
             names = {t.get("name") for t in built.TIMINGS}
         self.assertIn("tRFC", names)
         self.assertNotIn("tRFC2", names)
-        self.assertNotIn("tRFCpb", names)
+        self.assertIn("tRFCpb", names)
+        self.assertNotIn("tDLLK", names)
+
+    def test_ddr4_trfcpb_exposes_the_reference_register_field(self):
+        with table_for(LGA1700_DDR4) as built:
+            row = next(t for t in built.TIMINGS
+                       if t.get("name") == "tRFCpb")
+        self.assertEqual(row.get("Tab"), "Timings")
+        self.assertEqual(row["address"], built.MCHBAR + 0xE488)
+        self.assertEqual(row["parameters"],
+                         {"bit_start": 10, "bit_length": 11})
+
+    def test_ddr5_keeps_tdllk(self):
+        with table_for(LGA1700_DDR5) as built:
+            names = {t.get("name") for t in built.TIMINGS}
+        self.assertIn("tDLLK", names)
 
     def test_controller_cwl_adjustments_replace_the_false_twpre_row(self):
         with table_for(LGA1700_DDR4) as built:

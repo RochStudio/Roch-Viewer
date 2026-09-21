@@ -6,7 +6,9 @@ Roch Viewer is a read-only Windows memory-timing and hardware-monitoring tool fo
 
 Version 1.0.5 expands DDR4 support and reorganizes the interface:
 
-- Removes the DDR5-only `tRFCpb` and `VDD2` fields from DDR4 views.
+- Shows the raw DDR4 controller `tRFCpb` field to match the reference viewer;
+  it normally reads `0` because DDR4 uses all-bank refresh. `VDD2` remains
+  hidden on DDR4.
 - Shows DDR4 RTT and RON in resistance-first RZQ notation, such as `80 RZQ/3`.
 - Reads separate A2/B2 module identity on supported four-DIMM ASUS boards and reports module vendor, DRAM manufacturer/die, part number, serial number and manufacture date.
 - Decodes supported DDR4 MR0-MR6 training, power and operating fields without exposing raw RON shadow diagnostics in Advanced.

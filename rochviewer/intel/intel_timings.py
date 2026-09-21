@@ -6415,11 +6415,11 @@ _install_refresh_mode_row()
 
 # --- Rows the active refresh mode is not using.
 #
-# tRFCpb is the per-bank refresh interval. Under the normal all-bank tRFC
-# schedule the controller does not refresh a bank at a time, so the register
-# still reads but nothing acts on it, and showing it at full weight implies
-# otherwise. main.py dims a row whose "dim" callable returns True, which is
-# what that hook exists for.
+# tRFCpb is the controller's per-bank refresh field. DDR4 normally leaves it
+# at zero, but the reference viewer exposes the raw field, so keep it visible
+# and dim it while the active policy is the normal all-bank tRFC schedule.
+# main.py dims a row whose "dim" callable returns True, which is what that
+# hook exists for.
 #
 # Attached here rather than on the row literal because refresh_is_normal is
 # defined further down the file: the literal would capture the name before it
@@ -6485,10 +6485,9 @@ TIMINGS_SECTION_MOVES = {
     "tMRR": "Command",
     # The mode-register write timing sits with the read it pairs with.
     "tMRRMRW": "Command",
-    # A mode-register command delay and the enabled back-to-back command
-    # allowance belong with the rest of the command-bus timings.
+    # A mode-register command delay belongs with the command-bus timings.
+    # The shared LPDDR back-to-back policy is moved to IMC later.
     "tMOD": "Command",
-    "Allow 2cyc B2B LPDDR": "Command",
     # Keep the complete column-to-column delay family together.
     "tCCD": "CAS to CAS",
     "tCCD_L": "CAS to CAS",
@@ -6507,7 +6506,7 @@ TIMINGS_SECTION_ROW_ORDER = {
     ),
     "Command": (
         "tCSH", "tCSL", "tCA2CS", "tOSCO", "tPREMRR", "tMRRMRW",
-        "tMRR", "tMOD", "Allow 2cyc B2B LPDDR",
+        "tMRR", "tMOD",
     ),
     "Refresh timings": (
         "Refresh Mode", "tREFI", "tREFIns", "tREFIx9", "tRFCns", "tRFC", "tRFC2", "tRFCpb",
@@ -8220,21 +8219,18 @@ def _install_ddr5_timing_labels():
 _install_ddr5_timing_labels()
 
 
-def _remove_ddr4_per_bank_refresh():
-    """DDR4 has no per-bank refresh interval, so it has no tRFCpb row."""
+def _remove_inapplicable_ddr4_timings():
+    """Drop the DDR5 MR13 DLL-lock timing from a DDR4 timing table."""
     global TIMINGS
     if detect_ddr_generation() != "DDR4":
         return
     TIMINGS = [
         timing for timing in TIMINGS
-        if not (
-            timing.get("Tab") == "Timings"
-            and timing.get("name") == "tRFCpb"
-        )
+        if timing.get("name") != "tDLLK"
     ]
 
 
-_remove_ddr4_per_bank_refresh()
+_remove_inapplicable_ddr4_timings()
 
 
 # --- Training drops the rows that read nothing.
@@ -8559,6 +8555,25 @@ def _combine_intel_detail_tabs():
         tab = timing.get("Tab")
         category = timing.get("Category")
         name = str(timing.get("name", ""))
+
+        if tab == "Timings" and name == "Allow 2cyc B2B LPDDR":
+            # This is one shared command-scheduler policy bit. It is not a
+            # trained, per-DIMM result, despite the LPDDR name, so the IMC
+            # Command section is the truthful place for it.
+            timing.update({
+                "Tab": IMC_TAB,
+                "Category": "Command",
+                "Column": PHY_SETTINGS_COLUMNS["Command"],
+                "source_scope": "controller",
+            })
+            for key in (
+                "address_a", "address_b", "parameters_a", "parameters_b",
+                "read_type_a", "read_type_b", "value_a", "value_b",
+                "name_a", "name_b", "parameter_name", "dynamic_params_a",
+                "dynamic_params_b",
+            ):
+                timing.pop(key, None)
+            continue
 
         if tab == RTL_TAB:
             # The unnamed row already present between MC0 and MC1 is kept as
