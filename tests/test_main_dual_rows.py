@@ -678,7 +678,7 @@ class TimingsSectionOrderTest(unittest.TestCase):
 
         present = {timing.get("name") for timing in main.TIMINGS}
         if "DLL BWSEL" not in present:
-            self.skipTest("platform has no MISC Additional block")
+            self.skipTest("platform has no PHY Control block")
         for name in SUMMARY_SIGNAL_TAIL_ROWS:
             with self.subTest(name=name):
                 self.assertIn(name, present)

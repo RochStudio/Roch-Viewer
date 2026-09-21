@@ -268,6 +268,12 @@ class TrainingLivenessTest(unittest.TestCase):
                     frozen_values(row), [],
                     f"{name} stores a reading taken while building the table")
 
+    def test_ddr4_display_names_are_human_readable(self):
+        for row in skew_rows():
+            name = str(row.get("name", ""))
+            with self.subTest(name=name):
+                self.assertNotIn("_", name)
+
     def test_every_supported_intel_profile_is_entirely_live(self):
         # A platform-specific installer must not escape the default-profile
         # test above. Unsupported DDR4 CA/CS VREF rows are omitted; DDR5 and
@@ -351,8 +357,8 @@ class TrainingLivenessTest(unittest.TestCase):
             "CTL Drv Up": "63", "CTL Drv Dn": "54",
             "CTL SComp": "32", "CTL VssHiFF": "63",
             "CTL CkeCsUp": "0",
-            "CMD SlewStatlegen": "1", "SComp codelive": "0",
-            "SComp cmn bonus": "4",
+            "CMD SlewStatlegen": "1", "SComp Code Live": "0",
+            "SComp Common Bonus": "4",
         }
         self.assertEqual(
             {name: rows[name]["value"]() for name in expected}, expected)
@@ -462,7 +468,7 @@ class ReferenceNameTest(unittest.TestCase):
         expected = {
             "RTT": "Left", "ODT": "Left", "RON": "Left",
             "ODT DELAY": "Left", "DFE": "Left",
-            "MISC Additional": "Right",
+            "PHY Control": "Right",
             "DATA": "Right", "CMD": "Right",
             "CLK": "Right", "CTL": "Right",
             "SComp": "Right",
@@ -487,11 +493,11 @@ class ReferenceNameTest(unittest.TestCase):
             with self.subTest(name=row.get("name")):
                 self.assertEqual(row.get("Column"), expected_column)
 
-    def test_misc_additional_uses_the_second_phy_column(self):
+    def test_phy_control_uses_the_second_imc_column(self):
         rows = [row for row in skew_rows()
-                if row.get("Category") == "MISC Additional"]
+                if row.get("Category") == "PHY Control"]
         if not rows:
-            self.skipTest("platform has no MISC Additional block")
+            self.skipTest("platform has no PHY Control block")
         self.assertTrue(all(row.get("Column") == "Right"
                             for row in rows))
 

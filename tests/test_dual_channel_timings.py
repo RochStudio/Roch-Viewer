@@ -436,9 +436,11 @@ class ReferenceAdditionsTest(unittest.TestCase):
         # its dump on this bench at once -- 6, 7, 0, 1, 2, 5.
         rows = register_rows()
         expected = {
-            "Refresh HP WM": (8, 4), "Refresh panic WM": (12, 4),
-            "CounttREFIWhileRefEnOff": (16, 1), "HPRefOnMRS": (17, 1),
-            "SRX_Ref_Debits": (18, 2), "RAISE_BLK_WAIT": (20, 4),
+            "Refresh HP WM": (8, 4), "Refresh Panic WM": (12, 4),
+            "Count tREFI While Ref Disabled": (16, 1),
+            "HP Refresh On MRS": (17, 1),
+            "Self Refresh Exit Debits": (18, 2),
+            "Raise Block Wait": (20, 4),
         }
         for name, (start, length) in expected.items():
             with self.subTest(name=name):
@@ -468,8 +470,8 @@ class ReferenceAdditionsTest(unittest.TestCase):
         rows = register_rows()
         expected = {
             "PBR Disable": (0, 1), "PBR OOO Disable": (1, 1),
-            "PBR Disable on hot": (3, 1), "PBR Exit on idle": (4, 6),
-            "Refresh ABR release": (21, 4),
+            "PBR Disable On Hot": (3, 1), "PBR Exit On Idle": (4, 6),
+            "Refresh ABR Release": (21, 4),
         }
         for name, (start, length) in expected.items():
             with self.subTest(name=name):
@@ -482,7 +484,7 @@ class ReferenceAdditionsTest(unittest.TestCase):
         # are Training rows, not Timings ones, so they are looked up in the whole
         # table rather than through the tab-scoped helper.
         rows = {row.get("name"): row for row in intel_timings.TIMINGS}
-        for name, start in (("DLL_CODEPI", 0), ("DLL_CODEWL", 6),
+        for name, start in (("DLL Code PI", 0), ("DLL Code WL", 6),
                             ("DLL BWSEL", 12)):
             with self.subTest(name=name):
                 row = rows.get(name)

@@ -2303,9 +2303,9 @@ TIMINGS = [
     # All five match the reference tool's dump on this bench.
     {"name": "PBR Disable", "address": MCHBAR + 0xE488, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 0, "bit_length": 1}, "Column": "Right", "read_type": "standard", "Formula": {0: "Disabled", 1: "Enabled"}},
     {"name": "PBR OOO Disable", "address": MCHBAR + 0xE488, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 1, "bit_length": 1}, "Column": "Right", "read_type": "standard", "Formula": {0: "Disabled", 1: "Enabled"}},
-    {"name": "PBR Disable on hot", "address": MCHBAR + 0xE488, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 3, "bit_length": 1}, "Column": "Right", "read_type": "standard", "Formula": {0: "Disabled", 1: "Enabled"}},
-    {"name": "PBR Exit on idle", "address": MCHBAR + 0xE488, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 4, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
-    {"name": "Refresh ABR release", "address": MCHBAR + 0xE488, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 21, "bit_length": 4}, "Column": "Right", "read_type": "standard"},
+    {"name": "PBR Disable On Hot", "address": MCHBAR + 0xE488, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 3, "bit_length": 1}, "Column": "Right", "read_type": "standard", "Formula": {0: "Disabled", 1: "Enabled"}},
+    {"name": "PBR Exit On Idle", "address": MCHBAR + 0xE488, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 4, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
+    {"name": "Refresh ABR Release", "address": MCHBAR + 0xE488, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 21, "bit_length": 4}, "Column": "Right", "read_type": "standard"},
     {"name": "tZQCAL", "address": MCHBAR + 0xE44C, "Category": "Other Timings", "Tab": "Timings", "parameters": {"bit_start": 0, "bit_length": 13}, "Column": "Right", "read_type": "standard"},
     {"name": "tZQCS", "address": MCHBAR + 0xE448, "Category": "Other Timings", "Tab": "Timings", "parameters": {"bit_start": 10, "bit_length": 11}, "Column": "Right", "read_type": "standard"},
     {"name": "ZQCS period", "address": MCHBAR + 0xE448, "Category": "Other Timings", "Tab": "Timings", "parameters": {"bit_start": 0, "bit_length": 10}, "Column": "Right", "read_type": "standard"},
@@ -2361,11 +2361,11 @@ TIMINGS = [
     # with its dump -- 6, 7, 0, 1, 2, 5 -- which is what pins the layout,
     # since a register that only half matched would not.
     {"name": "Refresh HP WM", "address": MCHBAR + 0xE438, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 8, "bit_length": 4}, "Column": "Left", "read_type": "standard"},
-    {"name": "Refresh panic WM", "address": MCHBAR + 0xE438, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 12, "bit_length": 4}, "Column": "Left", "read_type": "standard"},
-    {"name": "CounttREFIWhileRefEnOff", "address": MCHBAR + 0xE438, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 16, "bit_length": 1}, "Column": "Left", "read_type": "standard", "Formula": {0: "Disabled", 1: "Enabled"}},
-    {"name": "HPRefOnMRS", "address": MCHBAR + 0xE438, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 17, "bit_length": 1}, "Column": "Left", "read_type": "standard", "Formula": {0: "Disabled", 1: "Enabled"}},
-    {"name": "SRX_Ref_Debits", "address": MCHBAR + 0xE438, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 18, "bit_length": 2}, "Column": "Left", "read_type": "standard"},
-    {"name": "RAISE_BLK_WAIT", "address": MCHBAR + 0xE438, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 20, "bit_length": 4}, "Column": "Left", "read_type": "standard"},
+    {"name": "Refresh Panic WM", "address": MCHBAR + 0xE438, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 12, "bit_length": 4}, "Column": "Left", "read_type": "standard"},
+    {"name": "Count tREFI While Ref Disabled", "address": MCHBAR + 0xE438, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 16, "bit_length": 1}, "Column": "Left", "read_type": "standard", "Formula": {0: "Disabled", 1: "Enabled"}},
+    {"name": "HP Refresh On MRS", "address": MCHBAR + 0xE438, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 17, "bit_length": 1}, "Column": "Left", "read_type": "standard", "Formula": {0: "Disabled", 1: "Enabled"}},
+    {"name": "Self Refresh Exit Debits", "address": MCHBAR + 0xE438, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 18, "bit_length": 2}, "Column": "Left", "read_type": "standard"},
+    {"name": "Raise Block Wait", "address": MCHBAR + 0xE438, "Category": "Refresh timings", "Tab": "Timings", "parameters": {"bit_start": 20, "bit_length": 4}, "Column": "Left", "read_type": "standard"},
     # The reference tools' POWERDOWN group carries six more than we did.
     #
     # tSR is written there as bit 52 of a 64-bit read at 0xE4C0. That is the
@@ -2929,19 +2929,17 @@ TIMINGS = [
     # BWSEL match the reference tool exactly; CODEPI is a live DLL phase
     # code and was seen moving between 35 and 37 while sampled, so it is
     # read rather than compared against a captured number.
-    {"name": "DLL_CODEPI", "address": MCHBAR + 0x01BC, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 0, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
-    {"name": "DLL_CODEWL", "address": MCHBAR + 0x01BC, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 6, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
-    {"name": "DLL BWSEL", "address": MCHBAR + 0x01BC, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 12, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
+    {"name": "DLL Code PI", "address": MCHBAR + 0x01BC, "Category": "PHY Control", "Tab": "Training", "parameters": {"bit_start": 0, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
+    {"name": "DLL Code WL", "address": MCHBAR + 0x01BC, "Category": "PHY Control", "Tab": "Training", "parameters": {"bit_start": 6, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
+    {"name": "DLL BWSEL", "address": MCHBAR + 0x01BC, "Category": "PHY Control", "Tab": "Training", "parameters": {"bit_start": 12, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
     # The rest of the bandwidth-select and receive-enable group that sits with
     # DLL BWSEL. Verified on the bench at 4, 128 and 1253.
-    {"name": "BWSEL LO Threshold", "address": MCHBAR + 0x3CA4, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 16, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
-    {"name": "DCC Control Code", "address": MCHBAR + 0x2C38, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 11, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
-    {"name": "RcvEn PI", "address": MCHBAR + 0x00F4, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 0, "bit_length": 12}, "Column": "Right", "read_type": "standard"},
-    #{"name": "ODTFINETUNE_CHA", "address": None, "Category": "MISC Additional", "Tab": "Training", "parameters": {}, "Column": "Right", "read_type": "standard"},
-    #{"name": "ODTFINETUNE_CHB", "address": None, "Category": "MISC Additional", "Tab": "Training", "parameters": {}, "Column": "Right", "read_type": "standard"},
-    {"name": "VTT ODT", "address": MCHBAR + 0x017C, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 0, "bit_length": 1},"Formula": EN_DIS_FORMULA, "Column": "Right", "read_type": "standard"},
-    {"name": "VSS ODT", "address": MCHBAR + 0x017C, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 1, "bit_length": 1},"Formula": EN_DIS_FORMULA, "Column": "Right", "read_type": "standard"},
-    {"name": "VDDQ ODT", "address": MCHBAR + 0x017C, "Category": "MISC Additional", "Tab": "Training", "parameters": {"bit_start": 2, "bit_length": 1},"Formula": EN_DIS_FORMULA, "Column": "Right", "read_type": "standard"},
+    {"name": "BWSEL Low Threshold", "address": MCHBAR + 0x3CA4, "Category": "PHY Control", "Tab": "Training", "parameters": {"bit_start": 16, "bit_length": 6}, "Column": "Right", "read_type": "standard"},
+    {"name": "DCC Control Code", "address": MCHBAR + 0x2C38, "Category": "PHY Control", "Tab": "Training", "parameters": {"bit_start": 11, "bit_length": 8}, "Column": "Right", "read_type": "standard"},
+    {"name": "Receive Enable PI", "address": MCHBAR + 0x00F4, "Category": "PHY Control", "Tab": "Training", "parameters": {"bit_start": 0, "bit_length": 12}, "Column": "Right", "read_type": "standard"},
+    {"name": "VTT ODT", "address": MCHBAR + 0x017C, "Category": "PHY Control", "Tab": "Training", "parameters": {"bit_start": 0, "bit_length": 1},"Formula": EN_DIS_FORMULA, "Column": "Right", "read_type": "standard"},
+    {"name": "VSS ODT", "address": MCHBAR + 0x017C, "Category": "PHY Control", "Tab": "Training", "parameters": {"bit_start": 1, "bit_length": 1},"Formula": EN_DIS_FORMULA, "Column": "Right", "read_type": "standard"},
+    {"name": "VDDQ ODT", "address": MCHBAR + 0x017C, "Category": "PHY Control", "Tab": "Training", "parameters": {"bit_start": 2, "bit_length": 1},"Formula": EN_DIS_FORMULA, "Column": "Right", "read_type": "standard"},
     
     # 0xE070 holds all four read/write duration and delay fields, one nibble
     # each. These rows used to carry only the two write fields and label the
@@ -4756,16 +4754,16 @@ def _install_slew_rate_rows():
         # VssHiFF row. They resolve by id, so the row renders CTL VssHiFF, and
         # CTL VssHiFF is 48. The number never came from this register at all.
         _make_slew_rate_row("CMD SlewStatlegen", 0x2C24, 0, 1),
-        _make_slew_rate_row("SComp codelive", 0x2C24, 2, 8),
-        _make_slew_rate_row("SComp cmn bonus", 0x2C24, 12, 8),
+        _make_slew_rate_row("SComp Code Live", 0x2C24, 2, 8),
+        _make_slew_rate_row("SComp Common Bonus", 0x2C24, 12, 8),
     ]
 
-    # Place the new panel before MISC Additional in the Training right column.
+    # Place the new panel before PHY Control in the Training right column.
     insert_at = next(
         (
             index for index, timing in enumerate(TIMINGS)
             if timing.get("Tab") == "Training"
-            and timing.get("Category") == "MISC Additional"
+            and timing.get("Category") == "PHY Control"
         ),
         len(TIMINGS),
     )
@@ -5304,7 +5302,7 @@ _remove_jedec_tab()
 
 
 def _place_misc_additional_after_vref():
-    """Put MISC Additional directly after VREF in the middle Training column.
+    """Put PHY Control directly after VREF in the middle Training column.
 
     They are the leftovers of the tab -- bandwidth select, the DCC code, the
     ODT enables -- and belong beside the VREF state they supplement rather
@@ -5315,7 +5313,7 @@ def _place_misc_additional_after_vref():
     misc = [
         timing for timing in TIMINGS
         if timing.get("Tab") == "Training"
-        and timing.get("Category") == "MISC Additional"
+        and timing.get("Category") == "PHY Control"
     ]
     if not misc:
         return
@@ -7248,16 +7246,16 @@ RTL_TAB = "RTL"
 # reachable, and a wrong unit is worse than a raw count.
 MISC_CKE_CONFIG_OFFSET = 0xE0B8
 MISC_CKE_CONFIG_FIELDS = (
-    ("idle_length", 1, 4),
-    ("powerdown_latency", 5, 5),
-    ("powerdown_length", 10, 4),
-    ("selfrefresh_latency", 14, 6),
-    ("selfrefresh_length", 20, 4),
-    ("ckevalid_length", 24, 4),
-    ("ckevalid_enable", 28, 1),
-    ("idle_enable", 29, 1),
-    ("powerdown_enable", 30, 1),
-    ("selfrefresh_enable", 31, 1),
+    ("Idle Length", 1, 4),
+    ("Power Down Latency", 5, 5),
+    ("Power Down Length", 10, 4),
+    ("Self Refresh Latency", 14, 6),
+    ("Self Refresh Length", 20, 4),
+    ("CKE Valid Length", 24, 4),
+    ("CKE Valid Enable", 28, 1),
+    ("Idle Enable", 29, 1),
+    ("Power Down Enable", 30, 1),
+    ("Self Refresh Enable", 31, 1),
 )
 
 # SC_GS_CFG -- the register get_cmd_stretch() already decodes. Reported raw
@@ -7265,8 +7263,8 @@ MISC_CKE_CONFIG_FIELDS = (
 # rate stays on System Info.
 MISC_GS_CONFIG_OFFSET = 0xE088
 MISC_GS_CONFIG_FIELDS = (
-    ("CMD_STRETCH", 3, 2),
-    ("N_TO_1_RATIO", 5, 3),
+    ("CMD Stretch", 3, 2),
+    ("N:1 Ratio", 5, 3),
 )
 
 # Feature switches, each in its own register, in display order. The final
@@ -8078,16 +8076,16 @@ _move_mode_register_timings()
 # them takes. They are read from the same two registers as Rank Idle and
 # tRFCpb, which is why they were built beside them.
 #
-# PBR Exit on idle stays on Timings: it was not among those asked for, and
-# moving it because its neighbours moved would be inventing the request.
+# The complete PBR control block moves together; splitting one register
+# between Timings and IMC made neither page describe the policy completely.
 REFRESH_POLICY_ROWS = (
-    "Refresh Interval", "Refresh Stagger En", "Refresh Stagger Mode",
-    "Disable Stolen Refresh", "Enable Refresh Type Display",
-    "tREFI Pulse Stagger Dis", "Wake Up On HPM",
-    "PBR Disable", "PBR OOO Disable", "PBR Disable on hot",
-    "PBR Exit on idle", "Refresh ABR release", "Refresh HP WM",
-    "Refresh panic WM", "CounttREFIWhileRefEnOff", "HPRefOnMRS",
-    "SRX_Ref_Debits", "RAISE_BLK_WAIT",
+    "Refresh Interval", "Refresh Stagger", "Refresh Stagger Mode",
+    "Stolen Refresh", "Refresh Type Display",
+    "tREFI Pulse Stagger", "Wake Up On HPM",
+    "PBR Disable", "PBR OOO Disable", "PBR Disable On Hot",
+    "PBR Exit On Idle", "Refresh ABR Release", "Refresh HP WM",
+    "Refresh Panic WM", "Count tREFI While Ref Disabled",
+    "HP Refresh On MRS", "Self Refresh Exit Debits", "Raise Block Wait",
 )
 
 
@@ -8340,7 +8338,7 @@ def _place_skew_columns():
         # DFE remains with the read/termination training values.
         "DFE": "Left",
         "VREF": "Middle",
-        "MISC Additional": "Middle",
+        "PHY Control": "Middle",
         "DATA": "Right",
         "CMD": "Right",
         "CLK": "Right",
@@ -8516,7 +8514,7 @@ SKEW_MISC_COLUMNS = {
     "DFE": "Middle",
     "VREF": "Middle",
     "ODTL": "Middle",
-    "MPR / WRITE": "Middle",
+    "MPR / ACCESS": "Right",
     "MR2 / MR3": "Middle",
     "Command": "Right",
     "PARITY / CRC": "Right",
@@ -8543,7 +8541,7 @@ PHY_SETTINGS_COLUMNS = {
     "CMD": "Right",
     "CLK": "Right",
     "CTL": "Right",
-    "MISC Additional": "Right",
+    "PHY Control": "Right",
     "Features": "Right",
     "Power Down": "Left",
     "MR0 / MR1": "Middle",
@@ -8639,13 +8637,13 @@ DDR4_INVERTED_DISABLE = {0: "Enabled", 1: "Disabled"}
 
 DDR4_ADDITIONAL_REFRESH_FIELDS = (
     ("Refresh Interval", 0xE444, 0, 13, None),
-    ("Refresh Stagger En", 0xE444, 15, 1, DDR4_ENABLED),
+    ("Refresh Stagger", 0xE444, 15, 1, DDR4_ENABLED),
     ("Refresh Stagger Mode", 0xE444, 16, 1,
      DDR4_REFRESH_STAGGER_MODE),
-    ("Disable Stolen Refresh", 0xE444, 13, 1,
+    ("Stolen Refresh", 0xE444, 13, 1,
      DDR4_INVERTED_DISABLE),
-    ("Enable Refresh Type Display", 0xE444, 14, 1, DDR4_ENABLED),
-    ("tREFI Pulse Stagger Dis", 0xE444, 17, 1,
+    ("Refresh Type Display", 0xE444, 14, 1, DDR4_ENABLED),
+    ("tREFI Pulse Stagger", 0xE444, 17, 1,
      DDR4_INVERTED_DISABLE),
     ("Wake Up On HPM", 0xE444, 19, 13, None),
 )
@@ -8653,7 +8651,7 @@ DDR4_ADDITIONAL_REFRESH_FIELDS = (
 DDR4_ADDITIONAL_COMMAND_FIELDS = (
     # SC_GS_CFG is 64 bits; both fields are in its upper dword.
     ("Write 0", 0xE088, 49, 1, "wide"),
-    ("MultiCycCmd", 0xE088, 51, 1, "wide"),
+    ("Multi-Cycle Command", 0xE088, 51, 1, "wide"),
 )
 
 DDR4_ADDITIONAL_POWER_DOWN_FIELDS = (
@@ -8669,9 +8667,9 @@ DDR4_ADDITIONAL_CWL_FIELDS = (
 )
 
 DDR4_ADDITIONAL_PHY_FIELDS = (
-    ("WEAKLOCKENDLY", 0x01AC, 8, 5),
-    ("SCR DLL En Timer Value", 0x2D1C, 13, 10),
-    ("SCR PIEN Timer Value", 0x2D20, 0, 11),
+    ("Weak Lock End Delay", 0x01AC, 8, 5),
+    ("SCR DLL Enable Timer", 0x2D1C, 13, 10),
+    ("SCR PI Enable Timer", 0x2D20, 0, 11),
 )
 
 
@@ -8740,7 +8738,7 @@ def _install_additional_ddr4_controller_fields():
             "name": name,
             "address": MCHBAR + offset,
             "parameters": {"bit_start": start, "bit_length": length},
-            "Category": "MISC Additional",
+            "Category": "PHY Control",
             "Tab": IMC_TAB,
             "Column": "Right",
             "read_type": "standard",
@@ -8901,8 +8899,8 @@ DDR4_TRAINING_MODE_REGISTER_ROWS = frozenset(
 
 DDR4_TRAINING_SECTION_ROWS = {
     "DLL / LATENCY": (
-        "CAS Latency", "Read Burst Type", "Test Mode", "DLL Reset",
-        "DLL Enable", "Additive Latency", "Write Leveling",
+        "Add tCWL", "Dec tCWL", "CAS Latency", "DLL Reset", "DLL Enable",
+        "Additive Latency", "Write Leveling",
     ),
     "DATA CONTROL": (
         "Data Output Disable", "TDQS Enable", "DM Enable",
@@ -8912,21 +8910,22 @@ DDR4_TRAINING_SECTION_ROWS = {
         "VrefDQ Train Value", "VrefDQ Train Range",
         "VrefDQ Train Enable",
     ),
-    "MPR / WRITE": (
-        "Write CRC", "MPR Page Select", "MPR Operation", "Per DRAM Addr",
-        "Temp Sensor Readout", "Write CMD Latency", "MPR Read Format",
-    ),
     "Command": (
-        "Burst Length", "CS Geardown", "CS to CMD Latency",
+        "Burst Length", "Read Burst Type", "Test Mode", "Write CMD Latency",
+        "CS Geardown", "CS to CMD Latency",
+    ),
+    "MPR / ACCESS": (
+        "MPR Page Select", "MPR Operation", "MPR Read Format",
+        "Per DRAM Addr",
     ),
     "PARITY / CRC": (
-        "CA Parity Latency", "CRC Error Clear", "CA Parity Err Status",
-        "CA Parity Persist Err",
+        "Write CRC", "CA Parity Latency", "CRC Error Clear",
+        "CA Parity Err Status", "CA Parity Persist Err",
     ),
     "REFRESH / POWER": (
         "Refresh tRFC Mode", "Low Power ASR", "Max Power Down",
         "Temp Refresh Range", "Temp Ctrl Refresh", "Internal Vref Mon",
-        "Self Refresh Abort",
+        "Self Refresh Abort", "Temp Sensor Readout",
     ),
     "PREAMBLE / PPR": (
         "Soft PPR", "Read Preamble Train", "Read Preamble",
@@ -8942,8 +8941,9 @@ DDR4_TRAINING_CATEGORY_BY_NAME = {
 
 DDR4_TRAINING_SECTION_ORDER = (
     "RTT", "ODT", "RON", "ODT DELAY", "VREF",
-    "DLL / LATENCY", "DATA CONTROL", "DFE", "ODTL", "MPR / WRITE",
-    "Command", "PARITY / CRC", "REFRESH / POWER", "PREAMBLE / PPR",
+    "DLL / LATENCY", "DATA CONTROL", "DFE", "ODTL", "Command",
+    "MPR / ACCESS",
+    "PARITY / CRC", "REFRESH / POWER", "PREAMBLE / PPR",
 )
 
 DDR4_TRAINING_TWO_COLUMN_COLUMNS = {
@@ -8956,8 +8956,8 @@ DDR4_TRAINING_TWO_COLUMN_COLUMNS = {
     "DFE": "Left",
     "VREF": "Left",
     "ODTL": "Left",
-    "MPR / WRITE": "Right",
     "Command": "Right",
+    "MPR / ACCESS": "Right",
     "PARITY / CRC": "Right",
     "REFRESH / POWER": "Right",
     "PREAMBLE / PPR": "Right",
@@ -9026,9 +9026,45 @@ def _organize_ddr4_training_sections():
     rank = {
         name: index for index, name in enumerate(DDR4_TRAINING_SECTION_ORDER)
     }
-    rows.sort(key=lambda timing: rank.get(timing.get("Category"), len(rank)))
+    row_rank = {
+        name: index
+        for names in DDR4_TRAINING_SECTION_ROWS.values()
+        for index, name in enumerate(names)
+    }
+    rows.sort(key=lambda timing: (
+        rank.get(timing.get("Category"), len(rank)),
+        row_rank.get(timing.get("name"), len(row_rank)),
+    ))
     for index, timing in zip(positions, rows):
         TIMINGS[index] = timing
 
 
 _organize_ddr4_training_sections()
+
+
+DDR4_IMC_SECTION_ORDER = (
+    "VREF", "Command", "Refresh", "Power Down",
+    "DATA", "CMD", "CLK", "CTL", "SComp", "ODTL",
+    "PHY Control", "Features",
+)
+
+
+def _organize_ddr4_imc_sections():
+    """Keep each DDR4 controller group contiguous and in functional order."""
+    if active_platform() != LGA1700_DDR4:
+        return
+
+    positions = [
+        index for index, timing in enumerate(TIMINGS)
+        if timing.get("Tab") == IMC_TAB
+    ]
+    rows = [TIMINGS[index] for index in positions]
+    rank = {
+        name: index for index, name in enumerate(DDR4_IMC_SECTION_ORDER)
+    }
+    rows.sort(key=lambda timing: rank.get(timing.get("Category"), len(rank)))
+    for index, timing in zip(positions, rows):
+        TIMINGS[index] = timing
+
+
+_organize_ddr4_imc_sections()

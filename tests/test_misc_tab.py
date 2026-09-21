@@ -153,7 +153,7 @@ class MiscRowTest(unittest.TestCase):
                 "DLL / LATENCY", "DATA CONTROL", "DFE", "ODTL",
             ],
             "Right": [
-                "MPR / WRITE", "Command", "PARITY / CRC",
+                "Command", "MPR / ACCESS", "PARITY / CRC",
                 "REFRESH / POWER", "PREAMBLE / PPR",
             ],
         }
@@ -167,6 +167,23 @@ class MiscRowTest(unittest.TestCase):
                     seen.append(category)
             with self.subTest(column=column):
                 self.assertEqual(seen, [name for name in expected if name in seen])
+
+    def test_mode_register_fields_are_grouped_by_function(self):
+        expected = {
+            "Read Burst Type": "Command",
+            "Test Mode": "Command",
+            "Write CMD Latency": "Command",
+            "MPR Page Select": "MPR / ACCESS",
+            "MPR Operation": "MPR / ACCESS",
+            "MPR Read Format": "MPR / ACCESS",
+            "Per DRAM Addr": "MPR / ACCESS",
+            "Write CRC": "PARITY / CRC",
+            "Temp Sensor Readout": "REFRESH / POWER",
+        }
+        rows = {row.get("name"): row for row in self._tab_rows()}
+        for name, category in expected.items():
+            with self.subTest(name=name):
+                self.assertEqual(rows[name].get("Category"), category)
 
     def test_every_row_carries_a_value(self):
         # A row with no value renders as an empty line rather than as a
@@ -207,8 +224,8 @@ class MiscRowTest(unittest.TestCase):
         cke = [name for name, _, _ in intel_timings.MISC_CKE_CONFIG_FIELDS]
         self.assertGreater(len({by_name[name] for name in cke}), 1)
         # The bench's own register: bits 1-4 hold 3 and bits 24-27 hold 8.
-        self.assertEqual(by_name["idle_length"], "3")
-        self.assertEqual(by_name["ckevalid_length"], "8")
+        self.assertEqual(by_name["Idle Length"], "3")
+        self.assertEqual(by_name["CKE Valid Length"], "8")
 
     def test_the_tab_is_offered_once_it_has_rows(self):
         tabs = select_tab_names(intel_timings.TIMINGS)
@@ -324,6 +341,21 @@ class SettingsSourceSplitTest(unittest.TestCase):
         self.assertEqual(
             intel_timings.PHY_SETTINGS_COLUMNS["Power Down"], "Left"
         )
+
+    def test_each_imc_section_is_one_contiguous_block(self):
+        for column in ("Left", "Right"):
+            seen = []
+            previous = None
+            for row in self._settings():
+                if row.get("Column") != column:
+                    continue
+                category = row.get("Category")
+                if category == previous:
+                    continue
+                with self.subTest(column=column, category=category):
+                    self.assertNotIn(category, seen)
+                seen.append(category)
+                previous = category
 
     def test_every_former_misc_row_has_an_independent_module_source(self):
         rows = [row for row in intel_timings.TIMINGS
@@ -937,19 +969,19 @@ class RefreshPolicyMoveTest(unittest.TestCase):
     def test_the_whole_of_0xe488_moved_together(self):
         # All four PBR controls share that register, so leaving one on
         # Timings split a single register across two tabs.
-        for name in ("PBR Disable", "PBR OOO Disable", "PBR Disable on hot",
-                     "PBR Exit on idle"):
+        for name in ("PBR Disable", "PBR OOO Disable", "PBR Disable On Hot",
+                     "PBR Exit On Idle"):
             with self.subTest(name=name):
                 self.assertIn(name, intel_timings.REFRESH_POLICY_ROWS)
 
     def test_the_additional_refresh_fields_match_the_reference_map(self):
         expected = {
             "Refresh Interval": (0xE444, 0, 13),
-            "Refresh Stagger En": (0xE444, 15, 1),
+            "Refresh Stagger": (0xE444, 15, 1),
             "Refresh Stagger Mode": (0xE444, 16, 1),
-            "Disable Stolen Refresh": (0xE444, 13, 1),
-            "Enable Refresh Type Display": (0xE444, 14, 1),
-            "tREFI Pulse Stagger Dis": (0xE444, 17, 1),
+            "Stolen Refresh": (0xE444, 13, 1),
+            "Refresh Type Display": (0xE444, 14, 1),
+            "tREFI Pulse Stagger": (0xE444, 17, 1),
             "Wake Up On HPM": (0xE444, 19, 13),
         }
         for name, (offset, start, length) in expected.items():
@@ -963,7 +995,7 @@ class RefreshPolicyMoveTest(unittest.TestCase):
                 )
 
     def test_the_upper_scheduler_fields_request_a_wide_read(self):
-        expected = {"Write 0": 49, "MultiCycCmd": 51}
+        expected = {"Write 0": 49, "Multi-Cycle Command": 51}
         for name, start in expected.items():
             with self.subTest(name=name):
                 row = self._row(name)
@@ -976,16 +1008,16 @@ class RefreshPolicyMoveTest(unittest.TestCase):
 
     def test_the_additional_phy_fields_match_live_verified_offsets(self):
         expected = {
-            "WEAKLOCKENDLY": (0x01AC, 8, 5),
-            "SCR DLL En Timer Value": (0x2D1C, 13, 10),
-            "SCR PIEN Timer Value": (0x2D20, 0, 11),
+            "Weak Lock End Delay": (0x01AC, 8, 5),
+            "SCR DLL Enable Timer": (0x2D1C, 13, 10),
+            "SCR PI Enable Timer": (0x2D20, 0, 11),
         }
         for name, (offset, start, length) in expected.items():
             with self.subTest(name=name):
                 row = self._row(name)
                 self.assertIsNotNone(row)
                 self.assertEqual(row.get("Tab"), intel_timings.IMC_TAB)
-                self.assertEqual(row.get("Category"), "MISC Additional")
+                self.assertEqual(row.get("Category"), "PHY Control")
                 self.assertEqual(row["address"], intel_timings.MCHBAR + offset)
                 self.assertEqual(row["parameters"],
                                  {"bit_start": start, "bit_length": length})
@@ -1021,11 +1053,11 @@ class VainDdr4BlockCoverageTest(unittest.TestCase):
         "VrefDQ Train Enable", "tCCD_L_MR",
     }
     POWER_DOWN_ROWS = {
-        "powerdown_enable", "powerdown_latency", "powerdown_length",
-        "selfrefresh_enable", "selfrefresh_latency", "selfrefresh_length",
-        "ckevalid_enable", "ckevalid_length", "idle_enable", "idle_length",
-        "Add 1 QCLK Delay", "DLL_CODEPI", "DLL_CODEWL", "DLL BWSEL",
-        "BWSEL LO Threshold", "QX Count", "RX VREF", "RcvEn PI",
+        "Power Down Enable", "Power Down Latency", "Power Down Length",
+        "Self Refresh Enable", "Self Refresh Latency", "Self Refresh Length",
+        "CKE Valid Enable", "CKE Valid Length", "Idle Enable", "Idle Length",
+        "Add 1 QCLK Delay", "DLL Code PI", "DLL Code WL", "DLL BWSEL",
+        "BWSEL Low Threshold", "QX Count", "RX VREF", "Receive Enable PI",
     }
 
     def test_all_48_vain_mode_register_rows_are_present(self):

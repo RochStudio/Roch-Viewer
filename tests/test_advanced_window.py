@@ -134,7 +134,7 @@ class SearchTest(unittest.TestCase):
         self.assertFalse(matches("skew vref", "timings primary tcl"))
 
     def test_the_tab_name_is_searchable(self):
-        self.assertTrue(matches("misc", "misc power down idle_length"))
+        self.assertTrue(matches("imc", "imc power down idle length"))
 
     def test_matching_ignores_case(self):
         self.assertTrue(matches("vref", "skew vref ca vref"))

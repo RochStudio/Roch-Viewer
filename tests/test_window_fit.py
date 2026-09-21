@@ -304,8 +304,8 @@ class ChromeTest(unittest.TestCase):
         self.assertEqual(
             SKEW_SECTION_ORDER,
             ("RTT", "ODT", "RON", "ODT DELAY", "VREF",
-             "DLL / LATENCY", "DATA CONTROL", "DFE", "ODTL", "MPR / WRITE",
-             "Command", "PARITY / CRC", "REFRESH / POWER",
+             "DLL / LATENCY", "DATA CONTROL", "DFE", "ODTL", "Command",
+             "MPR / ACCESS", "PARITY / CRC", "REFRESH / POWER",
              "PREAMBLE / PPR", "MR0 / MR1", "MR2 / MR3", "MR4",
              "MR5 / MR6", "Mode Registers", "DQS", "Preamble", "ECS"),
         )
@@ -327,9 +327,9 @@ class ChromeTest(unittest.TestCase):
 
         self.assertEqual(
             IMC_SECTION_ORDER,
-            ("VREF", "Command", "ODTL", "Refresh", "Power Down",
+            ("VREF", "Command", "Refresh", "Power Down",
              "DATA", "CMD", "CLK", "CTL", "SComp",
-             "MISC Additional", "Features",
+             "ODTL", "PHY Control", "Features",
              "MR0 / MR1", "MR2 / MR3", "MR4", "MR5 / MR6"),
         )
 

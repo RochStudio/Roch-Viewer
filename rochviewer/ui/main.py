@@ -383,9 +383,10 @@ SKEW_SECTION_ORDER = (
     # The termination stack stays intact in the first column.
     "RTT", "ODT", "RON", "ODT DELAY", "VREF",
     # Latency and data controls follow the termination/reference stack.
-    "DLL / LATENCY", "DATA CONTROL", "DFE", "ODTL", "MPR / WRITE",
-    # Command, integrity, refresh, and preamble state share the third column.
-    "Command", "PARITY / CRC", "REFRESH / POWER", "PREAMBLE / PPR",
+    "DLL / LATENCY", "DATA CONTROL", "DFE", "ODTL", "Command",
+    "MPR / ACCESS",
+    # Command, integrity, refresh, and preamble state share the second column.
+    "PARITY / CRC", "REFRESH / POWER", "PREAMBLE / PPR",
     # Legacy section names remain as fallbacks for other memory generations.
     "MR0 / MR1", "MR2 / MR3", "MR4", "MR5 / MR6",
     "Mode Registers", "DQS", "Preamble", "ECS",
@@ -395,9 +396,9 @@ SKEW_SECTION_ORDER = (
 # the signal-compensation group; Command is the controller configuration
 # group, so both names are intentionally present.
 IMC_SECTION_ORDER = (
-    "VREF", "Command", "ODTL", "Refresh", "Power Down",
+    "VREF", "Command", "Refresh", "Power Down",
     "DATA", "CMD", "CLK", "CTL", "SComp",
-    "MISC Additional", "Features",
+    "ODTL", "PHY Control", "Features",
     "MR0 / MR1", "MR2 / MR3", "MR4", "MR5 / MR6",
 )
 
@@ -4899,7 +4900,7 @@ class TimingGUI:
             # not have to share a name width, and sharing one meant the
             # longest name anywhere on the tab set the gap for every row in
             # both columns -- tCL sat 169px from its value because
-            # CounttREFIWhileRefEnOff is in the other column.
+            # Count tREFI While Ref Disabled is in the other column.
             self._dual_content_frames.setdefault(
                 (tab_name, id(parent)), []).append(content_frame)
             first_dual_timing = next(

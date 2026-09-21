@@ -17,6 +17,8 @@
   differs between A2 and B2.
 - Audited every DDR4 Training and IMC row for a live hardware source and
   removed the LPDDR-only Allow 2Cyc B2B control from the DDR4 profile.
+- Reorganized DDR4 Training by function, consolidated every IMC category into
+  one block, and replaced raw register identifiers with readable row names.
 
 - Restored the raw DDR4 controller tRFCpb field on Timings to match the
   reference viewer and removed the DDR5 MR13-only tDLLK, tCCD_L_WR and
