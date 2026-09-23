@@ -1,6 +1,6 @@
 # Roch Viewer 1.0.7
 
-Version 1.0.7 is the current source version. Published builds are on [Releases](https://github.com/RochStudio/Roch-Viewer/releases).
+Version 1.0.7 is the current published release and is available from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/tag/v1.0.7).
 
 Roch Viewer is a read-only Windows memory-timing and hardware-monitoring tool for supported Intel and AMD systems. It displays clocks, timings, per-channel settings, RAM identity, motherboard sensors and native CPU/memory telemetry in a compact light/dark interface. It does not require HWiNFO.
 
