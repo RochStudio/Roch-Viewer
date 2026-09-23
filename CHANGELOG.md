@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.7 (2026-09-23)
+
+- Restyled the dark theme ("Refined dark"): neutral black with the Summary split into three bordered panels -- CPU/Model, clocks, and the timing columns -- a brighter red for readings and the selected tab, and values right-aligned so every column's names start and values end on one line across all three panels. The Summary window is 775×775.
+- Added DDR5 JEDEC timing tables and Intel XMP 3.0 profiles to the SPD tab, with module type, maximum bandwidth and the XMP/EXPO extension read from the module; ranks now read 1R/2R.
+- Fixed the DDR5 Training rows for RTT, ODT, drive strength and DFE gain, whose second column read module A1's other sub-channel instead of module B1.
+- Added tCCD_S on DDR5 from the burst length in MR0.
+- Added every NCT6687D voltage, temperature and fan on the MSI Z790MPOWER to Telemetry, and its voltages to the Voltages tab: +12V, +5V, VIN3, VIN7, +3.3V, the T0/T1 headers, and the CPU, PUMP1 and System 1 fans.
+- Summary: DRAM Frequency is read once instead of following the measured BCLK's wander; RTL shows R0 only; tRDPRE and tWRPRE moved below tMOD; CPU AUX and the unreachable IMC VREF rows removed; the SPD tab's row shading no longer breaks between cells.
+- Widened the Training window to fit the DDR5 mode-register rows, and fixed the tests that failed on DDR5 boards.
+
 ## 1.0.6 (2026-09-21)
 
 - Added a physical-slot SPD tab for DDR4 module identity, geometry, JEDEC timing tables and Intel XMP 2.0 profiles; moved per-DIMM identity, capacity and channel details out of System Info.
