@@ -46,10 +46,10 @@ class ChromeTest(unittest.TestCase):
     """The app's own title bar and footer, and what they cost the tabs."""
 
     def test_summary_owns_the_startup_size(self):
-        self.assertEqual(TimingGUI.WINDOW_WIDTH, 750)
-        self.assertEqual(TimingGUI.WINDOW_HEIGHT, 750)
+        self.assertEqual(TimingGUI.WINDOW_WIDTH, 775)
+        self.assertEqual(TimingGUI.WINDOW_HEIGHT, 775)
         self.assertEqual(
-            TimingGUI.window_size_for_tab("Summary"), (750, 750)
+            TimingGUI.window_size_for_tab("Summary"), (775, 775)
         )
         self.assertIn("Summary", TimingGUI.UNSCROLLED_TABS)
         self.assertIn("System Info", TimingGUI.UNSCROLLED_TABS)
@@ -58,17 +58,17 @@ class ChromeTest(unittest.TestCase):
 
     def test_each_main_tab_has_its_own_size(self):
         self.assertEqual(TimingGUI.TAB_WINDOW_SIZES, {
-            "Summary": (750, 750),
+            "Summary": (775, 775),
             "System Info": (750, 750),
             "SPD": (750, 750),
             "Timings": (750, 750),
-            "Training": (750, 800),
+            "Training": (1010, 800),
             "IMC": (750, 1100),
             "RTL": (750, 654),
             "Voltages": (750, 654),
         })
         self.assertEqual(
-            TimingGUI.window_size_for_tab("unknown"), (750, 750)
+            TimingGUI.window_size_for_tab("unknown"), (775, 775)
         )
 
     def test_spd_resolves_the_moved_system_memory_values(self):
@@ -196,11 +196,12 @@ class ChromeTest(unittest.TestCase):
         # The strip went from blue to the app's red. TEXT_COLOR is near-black
         # in light mode, which the old blue was light enough to carry and
         # #B91C1C is not: it measured 2.8:1, under the 4.5:1 floor. White is
-        # 6.5:1 there and 12.9:1 on the dark red.
+        # 6.5:1 there, and 4.9:1 on the Refined dark red -- #E0383E, the
+        # mockup's, was 4.4:1 and is the hover colour instead.
         source = inspect.getsource(TimingGUI.setup_appearance)
         self.assertIn('self.TAB_SELECTED_TEXT_COLOR = ("#FFFFFF", "#FFFFFF")',
                       source)
-        self.assertIn('self.TAB_SELECTED_COLOR = ("#B91C1C", "#5D1A1A")',
+        self.assertIn('self.TAB_SELECTED_COLOR = ("#B91C1C", "#D0343A")',
                       source)
 
     def test_title_bar_uses_clean_windows_style_symbols(self):

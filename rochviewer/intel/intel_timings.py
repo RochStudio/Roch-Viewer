@@ -1830,6 +1830,24 @@ def _ddr4_ccd_s(base=None):
     return None if code is None else DDR4_TCCD_S.get(code)
 
 
+# DDR5's tCCD_S, the same way: JESD79-5 fixes it at half the burst length and
+# gives no field to program, so it is keyed on the burst mode MR0 reports --
+# 8 nCK for BL16 and BC8, 16 for BL32. BL32 on the fly chooses per command, so
+# no one number describes it and the row stays empty.
+DDR5_TCCD_S = {
+    0: 8,    # BL16
+    1: 8,    # BC8 OTF
+    2: 16,   # BL32
+}
+DDR5_BURST_LENGTH_MODE_REGISTER = 0x00
+
+
+def _ddr5_ccd_s(base=None):
+    """tCCD_S, from the burst length DDR5 MR0 reports. See DDR5_TCCD_S."""
+    raw = read_mode_register(DDR5_BURST_LENGTH_MODE_REGISTER, base)
+    return None if raw is None else DDR5_TCCD_S.get(raw & 0x03)
+
+
 CCD_MODE_REGISTER = 0x0D
 CCD_CODE_RESERVED = 0x0F
 CCD_FROM_MR13 = {
@@ -1888,7 +1906,7 @@ def get_ccd_timing(name, base=None):
 
     field = CCD_CONFIRMED_FIELDS.get(name)
     if field is None:
-        return None
+        return _ddr5_ccd_s(base) if name == "tCCD" else None
     offset, bit_start = field
     value = _get_bank_group_timing(name, offset, bit_start, base)
     return None if value in ("Unknown", "Error") else value
@@ -3757,6 +3775,12 @@ def get_speed():
         bclk = get_bclk()
         if not isinstance(bclk, (int, float)):
             return "Unknown"
+        # The measured BCLK wanders by a few hundredths of a MHz (99.98 to
+        # 100.00 on one bench, read seconds apart), and at a ratio of 80 that
+        # is DDR5-8000 reading as 7998 one moment and 8000 the next. Rounded
+        # to 0.1 MHz the wander goes and a real BCLK change -- 102.5 MHz, say
+        # -- still shows in full.
+        bclk = round(float(bclk), 1)
 
         ratio = read_timing(MCHBAR + 0x5E04, bit_start=0, bit_length=8, read_type="standard")
         raw_multiplier = read_timing(MCHBAR + 0x5E04, bit_start=8, bit_length=4, read_type="standard")
@@ -5547,6 +5571,32 @@ def _install_dual_channel_timings():
 _install_dual_channel_timings()
 
 
+def _point_mode_register_rows_at_channel_b():
+    """Read the second column of the hand-written MR rows from channel B.
+
+    The RTT, ODT, drive-strength and DFE rows on Training were written with
+    both sides spelled out, the second at MCHBAR2 -- the DDR4 twin. On DDR5
+    that is MC1 channel A, which is the same A1 module as the first column,
+    so the table compared A1 with itself and never read B1. Checked on the
+    Z790 DDR5 bench: the mode-register table is present at MCHBAR + 0x800
+    with its own trained payload (one byte reads 0xCD there against 0xCC in
+    channel A), which is where every mirrored row's channel B already reads.
+
+    Pointing them at CHANNEL_B puts them where the rest of the table is. On
+    DDR4 CHANNEL_B is MCHBAR2, so nothing there changes.
+    """
+    for timing in TIMINGS:
+        params_a = timing.get("dynamic_params_a")
+        params_b = timing.get("dynamic_params_b")
+        if not isinstance(params_a, dict) or not isinstance(params_b, dict):
+            continue
+        if params_a.get("mchbar") == MCHBAR and params_b.get("mchbar") == MCHBAR2:
+            timing["dynamic_params_b"] = dict(params_b, mchbar=CHANNEL_B)
+
+
+_point_mode_register_rows_at_channel_b()
+
+
 # --- Sensors tab.
 #
 # Voltages are live readings, unlike everything on the Timings tab, which
@@ -5976,9 +6026,82 @@ NCT6798D_SENSOR_ROWS = (
 )
 
 
+# The NCT6687D's own inputs beyond the common rows, as HWiNFO lists them on
+# the MSI Z790MPOWER. Each carries the board-sensor key it reads; a row is
+# installed only when this board's map has that key, so the same chip on
+# another board -- whose inputs are wired differently -- does not gain rows
+# it has no confirmed reading for.
+NCT6687D_SENSOR_ROWS = (
+    ("T0", "Thermal & Power", lambda: _board_temperature("t0"), "Right", "t0"),
+    ("T1", "Thermal & Power", lambda: _board_temperature("t1"), "Right", "t1"),
+    ("+12V", "Voltages", lambda: _board_rail("plus12v"), "Left", "plus12v"),
+    ("+5V", "Voltages", lambda: _board_rail("plus5v"), "Left", "plus5v"),
+    ("VIN3", "Voltages", lambda: _board_rail("vin3"), "Left", "vin3"),
+    ("VIN7", "Voltages", lambda: _board_rail("vin7"), "Left", "vin7"),
+    ("+3.3V", "Voltages", lambda: _board_rail("plus3v3"), "Left", "plus3v3"),
+    ("CPU Fan", "Fans", lambda: _board_fan("cpu_fan"), "Left", "cpu_fan"),
+    ("PUMP1", "Fans", lambda: _board_fan("pump1"), "Left", "pump1"),
+    ("System 1", "Fans", lambda: _board_fan("system1"), "Left", "system1"),
+)
+
+
+def _board_fan(key):
+    """Read one board fan, importing that path only when it is used."""
+    try:
+        from rochviewer.sensors.board_sensors import fan_text
+
+        return fan_text(key)
+    except Exception:
+        return None
+
+
+def _nct6687d_rows():
+    """The NCT6687D rows this board's sensor maps can actually fill."""
+    try:
+        from rochviewer.sensors.board_sensors import (
+            nct668x_fans, nct668x_rails, nct668x_temperatures,
+        )
+
+        mapped = (set(nct668x_rails()) | set(nct668x_temperatures())
+                  | set(nct668x_fans()))
+    except Exception:
+        return ()
+    return tuple(row[:4] for row in NCT6687D_SENSOR_ROWS if row[4] in mapped)
+
+
 def sensor_rows_for_chip(chip_name):
     """Return live rows for the detected board-monitor chip."""
-    if str(chip_name or "").upper() != "NCT6798D":
+    chip = str(chip_name or "").upper()
+    if chip == "NCT6687D":
+        extra = _nct6687d_rows()
+        if not extra:
+            return SENSOR_ROWS
+        rows = SENSOR_ROWS + extra
+        # HWiNFO's own order for this chip.
+        thermal_order = (
+            "DIMM A Temp", "DIMM B Temp", "CPU Temp", "Core Max",
+            "System Temp", "VRM Temp", "PCH Temp", "CPU Socket Temp",
+            "T0", "T1", "CPU Package Power", "CPU Cores Power",
+        )
+        voltage_order = (
+            "+12V", "+5V", "DLVR Vcore", "VIN3", "VDD2", "CPU SA (VRM)",
+            "CPU AUX", "VIN7", "+3.3V",
+        )
+
+        def ordered(category, names):
+            group = [row for row in rows if row[1] == category]
+            rank = {name: index for index, name in enumerate(names)}
+            return sorted(group, key=lambda row: rank.get(row[0], len(rank)))
+
+        return tuple(
+            [row for row in rows if row[1] == "Clocks"]
+            + ordered("Thermal & Power", thermal_order)
+            + ordered("Voltages", voltage_order)
+            + [row for row in rows if row[1] == "Fans"]
+            + [row for row in rows if row[1] == "Graphics"]
+            + [row for row in rows if row[1] == "Errors"]
+        )
+    if chip != "NCT6798D":
         return SENSOR_ROWS
 
     rows = SENSOR_ROWS + NCT6798D_SENSOR_ROWS

@@ -286,3 +286,33 @@ def read_identity(reader_factory=None, refresh=False, generation=None):
         _CACHE.clear()
         _CACHE.append(modules)
     return modules
+
+
+# The whole EEPROM: the base block, the identity at 0x200 and the XMP / EXPO
+# extension area at 0x280-0x3FF. read_spd pages through it under the bus
+# lock and puts the hub back on the page it found it on.
+SPD_FULL_LENGTH = 0x400
+
+
+def read_spd_bytes(address, controller, reader_factory=None):
+    """All of one module's SPD as ``{offset: byte}``, or {} if unreadable.
+
+    Not cached: the SPD tab reads it once, off the UI thread, when the page is
+    first opened. DDR4 never reaches here -- see DDR4_GENERATION.
+    """
+    if address is None or controller is None:
+        return {}
+    try:
+        if reader_factory is None:
+            from rochviewer.memory.ddr5_telemetry import default_smbus_backend
+
+            backend = default_smbus_backend()
+            if backend is None:
+                return {}
+            reader_factory = backend[0]
+        reader = reader_factory()
+        if not reader.is_driver_open():
+            return {}
+        return reader.read_spd(address, 0, SPD_FULL_LENGTH, controller)
+    except Exception:
+        return {}

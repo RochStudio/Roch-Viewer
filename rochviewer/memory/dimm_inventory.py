@@ -304,7 +304,9 @@ def _decode(connection):
             "capacity_gb": capacity_gb,
             "capacity": f"{capacity_gb}GB",
             "rank_count": ranks,
-            "rank": rank_short(ranks),
+            # 1R / 2R, as ZenTimings and the rest of this viewer write it.
+            # rank_short's SR / DR stays the DRAM IC lookup's own key above.
+            "rank": rank_numeric(ranks),
             "module_manufacturer": module_manufacturer,
             "ic": ic_label,
         })

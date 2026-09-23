@@ -55,17 +55,20 @@ def every_platform_row_name():
     """
     from rochviewer.ui import main as main_module
     from rochviewer.intel import intel_timings
-    from rochviewer.platform_profiles import LGA1700_DDR5
+    from rochviewer.platform_profiles import LGA1700_DDR4, LGA1700_DDR5
     from tests import intel_stub
 
     names = {row.get("name") for row in main_module.TIMINGS}
     names |= {row.get("name") for row in intel_timings.TIMINGS}
-    # The other Intel generation, built on purpose rather than waited for.
-    ddr5 = intel_stub.install(LGA1700_DDR5)
-    try:
-        names |= {row.get("name") for row in ddr5.TIMINGS}
-    finally:
-        intel_stub.restore()
+    # Both Intel generations, built on purpose rather than waited for. Only
+    # DDR5 was built here, on the assumption that the bench itself was the
+    # DDR4 one -- so on a DDR5 bench neither table had the DDR4-only rows.
+    for platform in (LGA1700_DDR4, LGA1700_DDR5):
+        stubbed = intel_stub.install(platform)
+        try:
+            names |= {row.get("name") for row in stubbed.TIMINGS}
+        finally:
+            intel_stub.restore()
     return names
 
 
@@ -711,11 +714,14 @@ class TimingsSectionOrderTest(unittest.TestCase):
                 self.assertEqual(len(entry), 3)
 
     def test_summary_rtl_labels_match_the_misc_row_names(self):
+        # R0 only: the label is the row's own name and there is no second.
         from rochviewer.ui.main import SUMMARY_RTL_ROWS
 
         for label, first, second in SUMMARY_RTL_ROWS:
             with self.subTest(label=label):
-                self.assertEqual(label, first + "/" + second.rsplit(" ", 1)[-1])
+                self.assertEqual(label, first)
+                self.assertTrue(first.endswith(" R0"))
+                self.assertIsNone(second)
 
     def test_summary_does_not_include_dfe_taps(self):
         from rochviewer.ui.main import SUMMARY_DFE_BIAS_ROWS
@@ -726,7 +732,9 @@ class TimingsSectionOrderTest(unittest.TestCase):
         self.assertIn('self._detail_channel_text(timing, "a")', source)
         self.assertNotIn("summary_rtt_display", source)
 
-    def test_summary_adds_filtered_imc_vref_and_keeps_compact_rtl(self):
+    def test_summary_leaves_imc_vref_to_imc_and_keeps_compact_rtl(self):
+        # The IMC VREF levels were carried under RON and, once every board
+        # voltage was listed, sat below the window unseen. They are on IMC.
         from rochviewer.ui import main
 
         self.assertEqual(
@@ -734,7 +742,7 @@ class TimingsSectionOrderTest(unittest.TestCase):
             (("RTT",), ("ODT",), ("RON",)),
         )
         source = inspect.getsource(TimingGUI.build_summary_tab)
-        self.assertIn("summary_vref_row_names", source)
+        self.assertNotIn("summary_vref_row_names", source)
         self.assertIn('"show_header": False', source)
         primary, tertiary = main.intel_summary_timing_columns(main.TIMINGS)
         self.assertEqual(

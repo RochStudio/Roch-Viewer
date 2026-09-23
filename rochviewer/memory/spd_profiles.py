@@ -205,6 +205,202 @@ def decode_ddr4_spd(values, identity=None):
     return record
 
 
+# --- DDR5 (JESD400-5 base block, Intel XMP 3.0) ---------------------------
+#
+# DDR5 SPD states every timing in whole picoseconds, little-endian, rather
+# than DDR4's medium/fine timebase pair. The offsets below were confirmed on
+# an LGA1700 bench kit (V-Color TMXFL1680838KWK): the base block decodes to
+# DDR5-4800 40-39-39-77, and XMP profile 1 to DDR5-8000 38-48-48-128 at
+# 1.45 V, which is the kit's label and what the board trains it to.
+
+DDR5 = 0x12
+
+DDR5_MODULE_TYPES = {
+    0x01: "RDIMM",
+    0x02: "UDIMM",
+    0x03: "SO-DIMM",
+    0x04: "LRDIMM",
+    0x05: "CUDIMM",
+    0x06: "CSODIMM",
+    0x07: "MRDIMM",
+    0x08: "CAMM2",
+}
+
+# JEDEC DDR5 data rates, each with the tCK the standard rounds it to.
+DDR5_SPEED_BINS = (
+    (3200, 625), (3600, 555), (4000, 500), (4400, 454), (4800, 416),
+    (5200, 384), (5600, 357), (6000, 333), (6400, 312), (6800, 294),
+    (7200, 277), (7600, 263), (8000, 250), (8400, 238), (8800, 227),
+)
+
+DDR5_TCK_MIN = 20
+DDR5_CAS_MASK = 24          # five bytes, bit n = CL 20 + 2n
+DDR5_TAA = 30              # then tRCD, tRP, tRAS, tRC, two bytes each
+DDR5_JEDEC_VOLTAGE = 1.10
+
+XMP3_HEADER = 0x280
+XMP3_PROFILES = (0x2C0, 0x300, 0x340, 0x380, 0x3C0)
+# Within an XMP 3.0 profile: the voltages lead, then tCK, the CAS mask, and
+# tAA onward in the same order as the base block.
+XMP3_VDD = 1
+XMP3_TCK = 5
+XMP3_CAS_MASK = 7
+XMP3_TAA = 0x0D
+EXPO_HEADER = 0x340
+
+
+def _word(values, offset):
+    return _byte(values, offset) | (_byte(values, offset + 1) << 8)
+
+
+def _ddr5_cycles(time_ps, tck_ps):
+    """JESD400-5 rounding: nCK = trunc((t x 0.997 / tCK) + 1)."""
+    if not time_ps or not tck_ps:
+        return None
+    return int((time_ps * 997 // tck_ps + 1000) // 1000)
+
+
+def _ddr5_supported_cls(values, start):
+    result = []
+    for byte_index in range(5):
+        bits = _byte(values, start + byte_index)
+        for bit in range(8):
+            if bits & (1 << bit):
+                result.append(20 + 2 * (byte_index * 8 + bit))
+    return result
+
+
+def _ddr5_rate(tck_ps):
+    """The standard data rate for a tCK, or the raw figure off the table."""
+    for rate, bin_tck in DDR5_SPEED_BINS:
+        if abs(bin_tck - tck_ps) <= 1:
+            return rate
+    return int(round(2_000_000.0 / tck_ps / 100.0) * 100)
+
+
+def _ddr5_profile(name, values, taa, tck_ps, voltage, supported):
+    """One table column: timings in clocks at ``tck_ps``.
+
+    ``taa`` is where tAA sits; tRCD, tRP, tRAS and tRC follow it two bytes
+    apart in the base block and in an XMP profile alike.
+    """
+    cl = _ddr5_cycles(_word(values, taa), tck_ps)
+    if cl is None:
+        return None
+    # CAS latency only comes in the values the module lists as supported.
+    if supported:
+        cl = next((value for value in supported if value >= cl), cl)
+    rate = _ddr5_rate(tck_ps)
+    return {
+        "name": name,
+        # Half the data rate, as the speed is named: 416 ps is DDR5-4800 and
+        # 2400 MHz, not the 2404 its rounded tCK works out to.
+        "frequency": "%d MHz" % (rate // 2),
+        "data_rate": "DDR5-%d" % rate,
+        "cl": cl,
+        "trcd": _ddr5_cycles(_word(values, taa + 2), tck_ps),
+        "trp": _ddr5_cycles(_word(values, taa + 4), tck_ps),
+        "tras": _ddr5_cycles(_word(values, taa + 6), tck_ps),
+        "trc": _ddr5_cycles(_word(values, taa + 8), tck_ps),
+        "voltage": "%.2f V" % voltage,
+    }
+
+
+def decode_ddr5_base(values):
+    """Decode the module type and the fastest three JEDEC speed bins."""
+    if _byte(values, 2) != DDR5:
+        return {}
+    tck_min = _word(values, DDR5_TCK_MIN)
+    supported = _ddr5_supported_cls(values, DDR5_CAS_MASK)
+    taa = _word(values, DDR5_TAA)
+
+    profiles = []
+    if tck_min:
+        # From the module's own top bin down, each speed the standard defines
+        # that it can run, as CPU-Z and Thaiphoon list them.
+        for rate, bin_tck in sorted(DDR5_SPEED_BINS, reverse=True):
+            if bin_tck < tck_min - 1:
+                continue
+            tck = max(bin_tck, tck_min)
+            if supported and _ddr5_cycles(taa, tck) > supported[-1]:
+                continue
+            profile = _ddr5_profile(
+                "JEDEC %d" % rate, values, DDR5_TAA, tck,
+                DDR5_JEDEC_VOLTAGE, supported,
+            )
+            if profile:
+                profiles.append(profile)
+            if len(profiles) == 3:
+                break
+
+    module_code = _byte(values, 3) & 0x0F
+    return {
+        "memory_type": "DDR5",
+        "module_type": DDR5_MODULE_TYPES.get(
+            module_code, "Type 0x%X" % module_code
+        ),
+        "max_bandwidth": (
+            "DDR5-%d (%d MHz)" % (
+                _ddr5_rate(tck_min), _ddr5_rate(tck_min) // 2
+            ) if tck_min else EM_DASH
+        ),
+        "profiles": profiles,
+    }
+
+
+def _xmp3_voltage(value):
+    """Bits 6:5 are whole volts, bits 4:0 count 0.05 V: 0x29 is 1.45 V."""
+    value = int(value) & 0xFF
+    return ((value >> 5) & 0x03) + (value & 0x1F) * 0.05
+
+
+def decode_ddr5_xmp(values):
+    """Decode the enabled Intel XMP 3.0 profiles."""
+    extensions = []
+    profiles = []
+    if (_byte(values, XMP3_HEADER), _byte(values, XMP3_HEADER + 1)) == (0x0C, 0x4A):
+        revision = _byte(values, XMP3_HEADER + 2)
+        extensions.append("XMP %d.%d" % (revision >> 4, revision & 0x0F))
+        enabled = _byte(values, XMP3_HEADER + 3)
+        for index, base in enumerate(XMP3_PROFILES):
+            if not enabled & (1 << index):
+                continue
+            tck = _word(values, base + XMP3_TCK)
+            if not tck:
+                continue
+            profile = _ddr5_profile(
+                "XMP-%d" % _ddr5_rate(tck), values, base + XMP3_TAA, tck,
+                _xmp3_voltage(_byte(values, base + XMP3_VDD)),
+                _ddr5_supported_cls(values, base + XMP3_CAS_MASK),
+            )
+            if profile:
+                profiles.append(profile)
+    # An EXPO block shares the extension area on kits sold for both
+    # platforms. Only its presence is reported: its profiles are AMD's to
+    # describe, and this table is read on Intel.
+    if bytes(_byte(values, EXPO_HEADER + i) for i in range(4)) == b"EXPO":
+        extensions.append("EXPO")
+    return {
+        "extension": ", ".join(extensions) if extensions else EM_DASH,
+        "profiles": profiles,
+    }
+
+
+def decode_ddr5_spd(values, identity=None):
+    """Return one complete DDR5 SPD display record, or None."""
+    record = decode_ddr5_base(values)
+    if not record:
+        return None
+    xmp = decode_ddr5_xmp(values)
+    record["extension"] = xmp["extension"]
+    # Five columns in the table. XMP is the reason anybody opens this page,
+    # so it keeps its columns and JEDEC gives way.
+    jedec = record["profiles"][:max(0, 5 - len(xmp["profiles"]))]
+    record["profiles"] = jedec + xmp["profiles"]
+    record.update(identity or {})
+    return record
+
+
 def _join_slots(modules, inventory):
     """Attach SMBIOS physical slot labels without guessing from addresses."""
     remaining = sorted(
@@ -254,7 +450,7 @@ def read_spd_modules(reader_factory=None, refresh=False):
 
         modules = read_ddr4_modules(reader_factory=reader_factory, refresh=refresh)
     elif generation == "DDR5":
-        from rochviewer.memory.ddr5_spd import read_identity
+        from rochviewer.memory.ddr5_spd import read_identity, read_spd_bytes
 
         for identity in read_identity(reader_factory=reader_factory,
                                       refresh=refresh, generation="DDR5"):
@@ -268,6 +464,15 @@ def read_spd_modules(reader_factory=None, refresh=False):
                 "extension": EM_DASH,
                 "profiles": [],
             })
+            values = read_spd_bytes(
+                identity.get("address"), identity.get("controller"),
+                reader_factory=reader_factory,
+            )
+            # Identity is already decoded from the same read; only the
+            # module description and the timing columns come from here.
+            decoded = decode_ddr5_spd(values) if values else None
+            if decoded:
+                module.update(decoded)
             modules.append(module)
     try:
         inventory = read_modules(refresh=refresh)

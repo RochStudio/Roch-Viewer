@@ -236,6 +236,9 @@ SUMMARY_BASE_COLUMNS = 3
 # output diagnostics belong in the dedicated voltage view.
 SUMMARY_HIDDEN_SNAPSHOT_NAMES = frozenset({
     "VTT snapshot",
+    # An auxiliary CPU rail rather than one a memory tuner sets. It stays on
+    # the Voltages tab and in Telemetry.
+    "CPU AUX snapshot",
     "CHA VIN", "CHA 1.8V output", "CHA 1.0V output",
     "CHB VIN", "CHB 1.8V output", "CHB 1.0V output",
 })
@@ -434,6 +437,7 @@ SENSOR_GROUP_ORDER = (
     "Clocks",
     "Thermal & Power",
     "Voltages",
+    "Fans",
     "Graphics",
     # Last, because it is the one section that should stay empty of news.
     "Errors",
@@ -497,6 +501,13 @@ def summary_column_width(width, is_last, gap=0):
         return width
     width += gap
     return width + width % 2
+
+
+# Summary rows read once when the window opens rather than on the live
+# refresh. DRAM Frequency is derived from the measured BCLK, which wanders by a
+# few hundredths of a MHz, so the live copy flickers between 8000 and 7998 for
+# a setting that has not changed. The Telemetry tab still reads it live.
+SUMMARY_STATIC_ROWS = ("DRAM Frequency",)
 
 
 def summary_system_memory_names():
@@ -601,11 +612,14 @@ def summary_vref_row_names(timings):
     return names
 
 
+# R0 only. R1 is the second rank's latency, and on a single-rank kit it
+# reads the untrained 25 -- a number beside every real one that says nothing
+# about the module. It is on the RTL tab with the rest.
 SUMMARY_RTL_ROWS = (
-    ("RTL MC0 CHA R0/R1", "RTL MC0 CHA R0", "RTL MC0 CHA R1"),
-    ("RTL MC0 CHB R0/R1", "RTL MC0 CHB R0", "RTL MC0 CHB R1"),
-    ("RTL MC1 CHA R0/R1", "RTL MC1 CHA R0", "RTL MC1 CHA R1"),
-    ("RTL MC1 CHB R0/R1", "RTL MC1 CHB R0", "RTL MC1 CHB R1"),
+    ("RTL MC0 CHA R0", "RTL MC0 CHA R0", None),
+    ("RTL MC0 CHB R0", "RTL MC0 CHB R0", None),
+    ("RTL MC1 CHA R0", "RTL MC1 CHA R0", None),
+    ("RTL MC1 CHB R0", "RTL MC1 CHB R0", None),
 )
 
 # Shown directly under the RTL pairs, and written as (label, name) rather
@@ -701,9 +715,7 @@ def intel_summary_timing_columns(timings):
             and timing.get("name") not in SUMMARY_EXCLUDED_TIMING_NAMES
         ]
 
-    primary_secondary = wanted("Primary") + wanted("Secondary") + [
-        "tRDPRE", "tWRPRE",
-    ]
+    primary_secondary = wanted("Primary") + wanted("Secondary")
     # The refresh cycle times follow the write recovery, which is where they
     # were asked for. tRFC is named both ways because the two generations
     # spell it differently -- DDR5 renames it to tRFC2 -- so on either
@@ -724,13 +736,15 @@ def intel_summary_timing_columns(timings):
         name for name in wanted("Tertiary")
         if name not in ("tREFI", "tREFIx9", "tCKE", "tXP")
     ]
-    # tMOD follows the final write-to-write turnaround. The full per-rank RTL
-    # table remains on its dedicated tab; Summary's four pairs sit with the
-    # precharge timings in the first column below tWRPRE.
+    # tMOD follows the final write-to-write turnaround, and the two precharge
+    # timings follow tMOD: the middle column is the shorter one, and they sit
+    # with the command timings there rather than lengthening the first.
     tertiary = insert_summary_rows_after(tertiary, "tWRWR_dd", ["tMOD"])
-    primary_secondary = insert_summary_rtl_after(
-        primary_secondary, "tWRPRE"
-    )
+    tertiary = insert_summary_rows_after(
+        tertiary, "tMOD", ["tRDPRE", "tWRPRE"])
+    # The full per-rank RTL table remains on its dedicated tab; the Summary's
+    # four rows close the first column.
+    primary_secondary = list(primary_secondary) + list(SUMMARY_RTL_ROWS)
     return primary_secondary, tertiary
 
 
@@ -801,6 +815,8 @@ class TimingGUI:
         self._dual_content_frames = {}
         # Summary About rows that sit on the timing columns below them.
         self._summary_about_rows = []
+        # The CPU and Model rows, lined up on the timing columns once drawn.
+        self._summary_identity_rows = []
         # How many shaded rows a column has drawn, so a headerless section
         # continues the alternation instead of restarting it, and the grid
         # its last row sits in, so the bands can be carried to the foot of
@@ -1135,28 +1151,36 @@ class TimingGUI:
         # the same lift reads as less separation the darker the pair gets --
         # are exactly what they were. Only the floor moved. The light half is
         # untouched: darkening a light theme changes what it is.
+        # Refined dark: the neutral black floor, with the Summary's blocks as
+        # bordered panels a step above it and a brighter red accent, so the
+        # active tab and the readings carry the colour and everything else
+        # steps back. Neutral greys throughout -- a blue-tinted black was
+        # tried and read as a different app.
         self.BG_COLOR = ("#F1F5F9", "#101010")
         self.BG_COLOR2 = ("#FFFFFF", "#161616")
         self.SECTION_COLOR = ("#E2E8F0", "#161616")
         self.ROW_COLOR = ("#F8FAFC", "#1A1A1A")
         self.BORDER_COLOR = ("#CBD5E1", "#0A0A0A")
         self.PANEL_BORDER_COLOR = ("#CBD5E1", "#2A2A2A")
-        self.TEXT_COLOR = ("#0F172A", "#FFFFFF")
-        self.VALUE_COLOR = ("#B91C1C", "#FF4D4D")
-        self.HIGHLIGHT_COLOR = ("#E8EEF5", "#171717")
+        # The Summary panels: a card one step above the floor, its border a
+        # step above that. The zebra band is one step above the card.
+        self.PANEL_COLOR = ("#FFFFFF", "#161616")
+        self.TEXT_COLOR = ("#0F172A", "#EDEDED")
+        self.VALUE_COLOR = ("#B91C1C", "#FF5A5F")
+        self.HIGHLIGHT_COLOR = ("#E8EEF5", "#1C1C1C")
         # The tab strip follows the title bar and the footer link: the app's
         # red rather than the theme's blue. Saturated in light, muted in dark,
         # which is the pair the blue used and the reason a flat #B91C1C in
         # both looked like a warning banner against the dark surfaces.
-        self.TAB_SELECTED_COLOR = ("#B91C1C", "#5D1A1A")
-        self.TAB_UNSELECTED_COLOR = ("#D7E1EC", "#282828")
-        self.TAB_HOVER_COLOR = ("#DC2626", "#792A2A")
+        self.TAB_SELECTED_COLOR = ("#B91C1C", "#D0343A")
+        self.TAB_UNSELECTED_COLOR = ("#D7E1EC", "#222222")
+        self.TAB_HOVER_COLOR = ("#DC2626", "#E0383E")
         # White on the selected tab in both modes. TEXT_COLOR is near-black
         # in light mode, and near-black on a dark red is unreadable -- the
         # blue it replaced was light enough to carry it.
         self.TAB_SELECTED_TEXT_COLOR = ("#FFFFFF", "#FFFFFF")
-        self.TAB_UNSELECTED_HOVER_COLOR = ("#C5D2E0", "#343434")
-        self.SUBTITLE_COLOR = ("#475569", "#B0B0B0")
+        self.TAB_UNSELECTED_HOVER_COLOR = ("#C5D2E0", "#2E2E2E")
+        self.SUBTITLE_COLOR = ("#475569", "#8C8C8C")
         # A rule between Summary blocks: visible against both backgrounds
         # without competing with the values, which are the loudest thing on
         # the tab and should stay that way.
@@ -1173,12 +1197,12 @@ class TimingGUI:
         # light one from 5.9:1 to 4.8:1. Both stay well clear of the point a
         # hairline starts disappearing, and a full-strength red on a one-pixel
         # line was reading heavier than the line actually was.
-        self.HAIRLINE_COLOR = ("#C13D3D", "#C53F3F")
+        self.HAIRLINE_COLOR = ("#C13D3D", "#B8363B")
         # The app's own red, used for the title-bar name and the footer link.
         # Same pair as VALUE_COLOR, named separately because these two follow
         # the brand rather than the reading-is-red rule the tables use.
-        self.BRAND_COLOR = ("#B91C1C", "#FF4D4D")
-        self.BRAND_HOVER_COLOR = ("#DC2626", "#FF8080")
+        self.BRAND_COLOR = ("#B91C1C", "#FF5A5F")
+        self.BRAND_HOVER_COLOR = ("#DC2626", "#FF8A8D")
         self.root.configure(fg_color=self.BG_COLOR)
 
     def settings_path(self):
@@ -1623,10 +1647,13 @@ class TimingGUI:
             self.tab_frames[name] = holder
 
             frame = ctk.CTkFrame(holder, corner_radius=0, fg_color=self.BG_COLOR)
+            # Summary is sized close to its content: the panels and 24 rows
+            # come to 616px against the 624px 775x775 leaves, so the 1px
+            # margin above and below is left off rather than spent.
             frame.pack(
                 fill="both", expand=True,
                 padx=0 if name == "System Info" else 2,
-                pady=1,
+                pady=0 if name == "Summary" else 1,
             )
 
             if name == "SPD":
@@ -1654,19 +1681,42 @@ class TimingGUI:
                 )
                 full_width_frame.grid(
                     row=0, column=0, columnspan=column_count, sticky="ew",
-                    pady=(0, self.SECTION_GAP)
+                    pady=(0, self.PANEL_GAP)
                 )
                 full_width_frame.grid_columnconfigure(0, weight=1)
+
+                # The three timing columns share one panel, the way the
+                # identity rows and the clock block above have one each.
+                columns_panel = self._summary_panel(frame)
+                columns_panel.grid(
+                    row=1, column=0, columnspan=column_count, sticky="nsew"
+                )
+                columns_panel.grid_columnconfigure(0, weight=1)
+                # The inset lives on one frame around all three columns, the
+                # way the clock strip carries its own. Padding the outer
+                # columns instead put six pixels inside the first column's
+                # width, and the strip above came out six pixels right of it.
+                columns_inner = ctk.CTkFrame(
+                    columns_panel, corner_radius=0, fg_color="transparent"
+                )
+                columns_inner.grid(
+                    row=0, column=0, sticky="nsew",
+                    padx=self.PANEL_PADX, pady=self.PANEL_PADY,
+                )
+                for column in range(column_count):
+                    columns_inner.grid_columnconfigure(
+                        column, weight=1 if column == column_count - 1 else 0
+                    )
 
                 compact_columns = []
                 for column in range(column_count):
                     column_frame = ctk.CTkFrame(
-                        frame, corner_radius=0, fg_color=self.BG_COLOR
+                        columns_inner, corner_radius=0, fg_color="transparent"
                     )
                     # Columns touch so a shaded row remains continuous. The
                     # layout pass reserves the 25px content gap inside each
                     # leading column instead of cutting a hole between frames.
-                    column_frame.grid(row=1, column=column, sticky="nsew")
+                    column_frame.grid(row=0, column=column, sticky="nsew")
                     column_frame.grid_columnconfigure(0, weight=1)
                     compact_columns.append(column_frame)
                 self.grid_frames[name] = {
@@ -1826,13 +1876,13 @@ class TimingGUI:
                     column_frame, text=label, font=self.COMPACT_FONT,
                     height=self.ROW_HEIGHT, anchor="w", padx=self.ROW_PADX,
                     pady=self.ROW_PADY, text_color=self.TEXT_COLOR,
-                    fg_color=background, corner_radius=0,
+                    fg_color=background, bg_color=background, corner_radius=0,
                 )
                 value = ctk.CTkLabel(
                     column_frame, text="—", font=self.COMPACT_FONT,
                     height=self.ROW_HEIGHT, anchor="w", padx=25,
                     pady=self.ROW_PADY, text_color=self.VALUE_COLOR,
-                    fg_color=background, corner_radius=0,
+                    fg_color=background, bg_color=background, corner_radius=0,
                 )
                 name.grid(row=local_row, column=0, sticky="nsew")
                 value.grid(row=local_row, column=1, sticky="nsew")
@@ -1875,7 +1925,7 @@ class TimingGUI:
                 table, text=label, font=self.COMPACT_FONT,
                 height=self.ROW_HEIGHT, anchor="w", padx=self.ROW_PADX,
                 pady=self.ROW_PADY, text_color=self.TEXT_COLOR,
-                fg_color=background, corner_radius=0,
+                fg_color=background, bg_color=background, corner_radius=0,
             ).grid(row=row, column=0, sticky="nsew")
             labels = []
             for column in range(5):
@@ -1883,7 +1933,7 @@ class TimingGUI:
                     table, text="", font=self.COMPACT_FONT,
                     height=self.ROW_HEIGHT, anchor="center", padx=2,
                     pady=self.ROW_PADY, text_color=self.VALUE_COLOR,
-                    fg_color=background, corner_radius=0,
+                    fg_color=background, bg_color=background, corner_radius=0,
                 )
                 value.grid(row=row, column=column + 1, sticky="nsew")
                 labels.append(value)
@@ -2459,14 +2509,19 @@ class TimingGUI:
     )
 
     # Each page gets enough room for its own column count and row density.
-    # Training stays compact while IMC gets extra width for its three dense
-    # controller-data columns.
+    # Training is the one wider page: on DDR5 its right column carries the
+    # mode-register rows, worded as the reference tools word them ("Package
+    # Output Driver Test Mode", "Timer Stops at 2048th clocks"), and at 750
+    # that column ran 260px past the window's edge.
     TAB_WINDOW_SIZES = {
-        "Summary": (750, 750),
+        # Larger than the other pages: the Summary's blocks are bordered
+        # panels, which cost 17px of height over the rules that divided them,
+        # and the width gives the three columns room to breathe.
+        "Summary": (775, 775),
         "System Info": (750, 750),
         "SPD": (750, 750),
         "Timings": (750, 750),
-        "Training": (750, 800),
+        "Training": (1010, 800),
         "IMC": (750, 1100),
         "RTL": (750, 654),
         "Voltages": (750, 654),
@@ -2962,7 +3017,10 @@ class TimingGUI:
                 self._read_compact_side(timing, "b"),
             )
 
-        first, second = row_named(entry[1]), row_named(entry[2])
+        first = row_named(entry[1])
+        if entry[2] is None:
+            return self._read_compact_value(first) if first else "N/A"
+        second = row_named(entry[2])
         return "%s/%s" % (
             self._read_compact_value(first) if first else "N/A",
             self._read_compact_value(second) if second else "N/A",
@@ -3408,10 +3466,18 @@ class TimingGUI:
     def _summary_system_memory_section(self, parent, timing_names, label_overrides=None, show_header=True):
         """Create a compact full-width About panel for the Summary tab."""
         label_overrides = label_overrides or {}
-        timing_by_name = {
-            timing.get("name"): timing for timing in TIMINGS
-            if timing.get("name") in timing_names
-        }
+        timing_by_name = {}
+        for timing in TIMINGS:
+            name = timing.get("name")
+            if name not in timing_names:
+                continue
+            # The Telemetry copy of a row shares its name and is appended
+            # after it, so it would win here and put the Summary on the live
+            # refresh. For these the Summary keeps the reading taken once.
+            if (name in SUMMARY_STATIC_ROWS and timing.get("live")
+                    and name in timing_by_name):
+                continue
+            timing_by_name[name] = timing
 
         section = ctk.CTkFrame(
             parent,
@@ -3453,7 +3519,10 @@ class TimingGUI:
         # memory is doing below, and one under the whole block before the
         # timing columns start.
         grid_row = body_row
-        drawn_aligned = False
+        # The rules that used to divide these blocks are the panel borders
+        # now: the identity rows in one panel, the clock block in the next.
+        identity_panel = None
+        identity_row = 0
         # Every aligned row goes into one grid rather than one grid each.
         # They used to be a frame apiece, aligned afterwards by giving each
         # the same column minsize -- but a minsize is a floor, and the widest
@@ -3464,10 +3533,6 @@ class TimingGUI:
         aligned_run = []
         for row_names, aligned in row_layout:
             is_aligned = aligned and 1 < len(row_names) <= column_count
-            if is_aligned and not drawn_aligned:
-                self._summary_rule(section, grid_row)
-                grid_row += 1
-                drawn_aligned = True
 
             # An aligned row is laid out on the Summary columns, so its first
             # entry starts where tCL does, its second where tREFI does, and
@@ -3476,18 +3541,37 @@ class TimingGUI:
             if is_aligned:
                 aligned_run.append(row_names)
                 continue
-            body = ctk.CTkFrame(section, corner_radius=0, fg_color="transparent")
-            body.grid(row=grid_row, column=0, sticky="ew")
-            grid_row += 1
+            if identity_panel is None:
+                identity_panel = self._summary_panel(section)
+                identity_panel.grid(row=grid_row, column=0, sticky="ew",
+                                    pady=(0, self.PANEL_GAP))
+                identity_panel.grid_columnconfigure(0, weight=1)
+                grid_row += 1
+            body = ctk.CTkFrame(identity_panel, corner_radius=0,
+                                fg_color="transparent")
+            self._summary_identity_rows.append(body)
+            body.grid(row=identity_row, column=0, sticky="ew",
+                      padx=self.PANEL_PADX,
+                      pady=(self.PANEL_PADY if identity_row == 0 else 0, 0))
+            identity_row += 1
             self._summary_about_tight_row(
                 body, row_names, timing_by_name, label_overrides,
             )
+        if identity_panel is not None:
+            # The last identity row takes the bottom inset as well.
+            for widget in identity_panel.grid_slaves(row=identity_row - 1):
+                widget.grid_configure(pady=(
+                    self.PANEL_PADY if identity_row == 1 else 0,
+                    self.PANEL_PADY))
         if aligned_run:
-            grid_row = self._summary_about_block(
-                section, grid_row, aligned_run, timing_by_name,
+            clock_panel = self._summary_panel(section)
+            clock_panel.grid(row=grid_row, column=0, sticky="ew")
+            clock_panel.grid_columnconfigure(0, weight=1)
+            grid_row += 1
+            self._summary_about_block(
+                clock_panel, 0, aligned_run, timing_by_name,
                 label_overrides, column_count,
             )
-        self._summary_rule(section, grid_row, pady=(4, 2))
 
     def _summary_about_block(self, section, grid_row, rows, timing_by_name,
                              label_overrides, column_count):
@@ -3499,7 +3583,8 @@ class TimingGUI:
         share.
         """
         body = ctk.CTkFrame(section, corner_radius=0, fg_color="transparent")
-        body.grid(row=grid_row, column=0, sticky="ew")
+        body.grid(row=grid_row, column=0, sticky="ew",
+                  padx=self.PANEL_PADX, pady=self.PANEL_PADY)
         for column in range(column_count):
             body.grid_columnconfigure(
                 column, weight=1 if column == column_count - 1 else 0
@@ -3524,6 +3609,23 @@ class TimingGUI:
                 column_count, row=offset, bg=bg,
             )
         return grid_row + 1
+
+    # The Summary panels: rounded, a one-pixel border, and content inset far
+    # enough to clear the corner.
+    PANEL_RADIUS = 8
+    PANEL_PADX = 6
+    PANEL_PADY = 4
+    PANEL_GAP = 6
+    # The least space left between a CPU / Model name and its value when the
+    # value is pulled left to end on its column's edge.
+    IDENTITY_MIN_GAP = 8
+
+    def _summary_panel(self, parent):
+        """One bordered Summary panel; content is gridded inside it."""
+        return ctk.CTkFrame(
+            parent, corner_radius=self.PANEL_RADIUS, border_width=1,
+            border_color=self.PANEL_BORDER_COLOR, fg_color=self.PANEL_COLOR,
+        )
 
     def _summary_rule(self, parent, row, pady=(4, 4)):
         """Draw a hairline across the panel, the way ZenTimings separates its
@@ -3751,21 +3853,15 @@ class TimingGUI:
             primary_secondary_names, "tRC", ("CR",)
         )
 
-        # Summary keeps the high-level electrical groups and the useful IMC
-        # VREF levels. Per-device DQ VREF, QX/RX diagnostics and CKeCs Vref Up
-        # remain on IMC. The third column reads Voltages, RTT, ODT, RON, VREF.
+        # Summary keeps the high-level electrical groups: Voltages, RTT, ODT
+        # and RON. The IMC VREF levels were carried under them too, and once
+        # every board voltage was listed they no longer fit -- on an LGA1700
+        # DDR5 board all ten sat below the window with no scrollbar to reach
+        # them. They are on IMC, with the per-device DQ VREF and the rest.
         third_column_sections = [
             {"summary_signal": categories}
             for categories in SUMMARY_SIGNAL_GROUPS
         ]
-        vref_names = summary_vref_row_names(TIMINGS)
-        if vref_names:
-            third_column_sections.append({
-                "title": "VREF",
-                "categories": ("VREF",),
-                "timing_names": vref_names,
-                "show_header": False,
-            })
 
         middle_sections = [{
             "title": "Tertiary",
@@ -3870,6 +3966,7 @@ class TimingGUI:
                     show_header=section.get("show_header", True),
                 )
 
+        self._align_summary_values()
         self._extend_summary_shading()
 
     def load_all_tabs_content(self):
@@ -4037,6 +4134,9 @@ class TimingGUI:
             self._extend_column_shading(shaded_tab)
         self._align_summary_value_columns()
         self._align_summary_about()
+        # That pass resets the widths the Summary's own alignment set, so the
+        # clock, timing and identity edges are matched again after it.
+        self._align_summary_clock_pairs()
 
     def _section_rows(self, section_name, timing_names):
         """The timings a section will actually draw, in order.
@@ -4104,6 +4204,291 @@ class TimingGUI:
                 )
         for header in headers:
             header.configure(height=pitch)
+
+    def _align_summary_values(self):
+        """Right-align the Summary readings to one edge per column.
+
+        A column is built from several blocks -- timings then RTL, or
+        voltages, RTT, ODT and RON -- and each block sized its own name and
+        value widths, so right-aligned values would have stopped at a
+        different edge in every block. Every block in a column is given the
+        widest name and the widest value any of them holds, which moves no
+        edge outward: the column was already that wide.
+        """
+        for column in self.grid_frames["Summary"].get("Columns", []):
+            bodies = {}
+            stack = list(column.winfo_children())
+            while stack:
+                widget = stack.pop()
+                stack.extend(widget.winfo_children())
+                if not isinstance(widget, ctk.CTkLabel):
+                    continue
+                if widget.winfo_manager() != "grid":
+                    continue
+                slot = widget.grid_info().get("column")
+                if slot in (0, 1):
+                    bodies.setdefault(widget.master, {0: [], 1: []})[int(slot)].append(widget)
+            bodies = {body: cells for body, cells in bodies.items()
+                      if cells[0] and cells[1]}
+            if not bodies:
+                continue
+            self.root.update_idletasks()
+            name_width = max(
+                label.winfo_reqwidth() for cells in bodies.values() for label in cells[0])
+            value_width = max(
+                label.winfo_reqwidth() for cells in bodies.values() for label in cells[1])
+            for body, cells in bodies.items():
+                body.grid_columnconfigure(
+                    0, minsize=name_width + self.COLUMN_GAP)
+                body.grid_columnconfigure(1, minsize=value_width)
+                for value in cells[1]:
+                    value.configure(anchor="e")
+        self._align_summary_clock_pairs()
+
+    def _align_summary_clock_pairs(self):
+        """Right-align the clock block, one edge per column of pairs.
+
+        Each reading there -- DRAM Frequency, BCLK, MCLK and the rest -- is
+        its own name/value frame laid out on a grid. The frames sharing a grid
+        column get that column's widest name and value, so the values stop at
+        one edge the way the timing columns below them do.
+        """
+        full_width = self.grid_frames["Summary"].get("FullWidth")
+        if full_width is None:
+            return
+        columns = {}
+        stack = list(full_width.winfo_children())
+        while stack:
+            frame = stack.pop()
+            stack.extend(frame.winfo_children())
+            labels = [child for child in frame.winfo_children()
+                      if isinstance(child, ctk.CTkLabel)
+                      and child.winfo_manager() == "grid"]
+            slots = {int(label.grid_info()["column"]): label for label in labels}
+            # A pair frame holds exactly one name and one value. The CPU and
+            # Model strips hold three and two pairs in one frame and keep
+            # their reading order left to right.
+            if set(slots) != {0, 1} or frame.winfo_manager() != "grid":
+                continue
+            key = (str(frame.master), frame.grid_info().get("column"))
+            columns.setdefault(key, []).append((frame, slots[0], slots[1]))
+        if not columns:
+            return
+        self._summary_clock_pairs = columns
+
+        def needed(label):
+            # The cell has to hold the grid padding as well: each value
+            # carries the gap to the next column as a trailing pad.
+            pad = label.grid_info().get("padx", 0)
+            pads = pad if isinstance(pad, (tuple, list)) else str(pad).split()
+            if not isinstance(pads, (tuple, list)) or not pads:
+                pads = (pad,)
+            total = sum(int(float(p)) for p in pads)
+            if len(pads) == 1:
+                total *= 2
+            return label.winfo_reqwidth() + total
+
+        self.root.update_idletasks()
+        for pairs in columns.values():
+            name_width = max(needed(name) for _f, name, _v in pairs)
+            value_width = max(needed(value) for _f, _n, value in pairs)
+            for frame, _name, value in pairs:
+                frame.grid_columnconfigure(0, minsize=name_width)
+                frame.grid_columnconfigure(1, minsize=value_width)
+                # Filling the cell is what gives the anchor room to move.
+                value.grid_configure(sticky="nsew")
+                value.configure(anchor="e")
+
+        # Then carry each column of readings out to the edge the timing
+        # values below it stop on, so DRAM Frequency ends where tCL does.
+        self.root.update_idletasks()
+        edges = self._summary_value_edges()
+        for (_master, column), pairs in columns.items():
+            try:
+                target = edges[int(column)]
+            except (IndexError, TypeError, ValueError):
+                continue
+            right = max(value.winfo_rootx() + value.winfo_width()
+                        for _f, _n, value in pairs)
+            shortfall = target - right
+            if shortfall <= 0:
+                continue
+            for frame, _name, _value in pairs:
+                current = int(frame.grid_columnconfigure(1).get("minsize") or 0)
+                frame.grid_columnconfigure(1, minsize=current + shortfall)
+        # A cell that grew widens its column in the strip but not under it;
+        # the column pass puts the two grids back on the same boundaries.
+        self._align_summary_about()
+        self._match_summary_value_edges()
+        self._align_summary_identity()
+        # And again whenever the timing columns move. During the build they
+        # have not taken their final places -- the window is sized for the
+        # tab afterwards -- so a single pass lined the rows up with where the
+        # columns were going to be rather than where they ended up.
+        columns = self.grid_frames["Summary"].get("Columns") or []
+        if columns and not getattr(self, "_identity_realign_bound", False):
+            columns[0].bind(
+                "<Configure>",
+                lambda _event: self.root.after_idle(self._align_summary_identity),
+                add="+",
+            )
+            self._identity_realign_bound = True
+
+    def _summary_clock_edges(self):
+        """Where the clock values stop, per Summary column, on screen."""
+        edges = {}
+        for (_master, column), pairs in getattr(
+                self, "_summary_clock_pairs", {}).items():
+            right = max(value.winfo_rootx() + value.winfo_width()
+                        for _f, _n, value in pairs if value.winfo_exists())
+            edges[int(column)] = right
+        return edges
+
+    def _match_summary_value_edges(self):
+        """Carry a column's timing values out to its clock values' edge.
+
+        The clock readings in the middle column -- "QCLK Ratio 100.00 MHz" --
+        are wider than any timing below them, so the timings stopped 35px
+        short. The timing column already has that room inside it, between
+        its values and the next column, so its names are widened instead of
+        the window.
+        """
+        self.root.update_idletasks()
+        clock = self._summary_clock_edges()
+        timing = self._summary_value_edges()
+        columns = self.grid_frames["Summary"].get("Columns", [])
+        for index, column in enumerate(columns):
+            if index not in clock or index >= len(timing):
+                continue
+            shortfall = clock[index] - timing[index]
+            if shortfall <= 0:
+                continue
+            bodies = set()
+            stack = list(column.winfo_children())
+            while stack:
+                widget = stack.pop()
+                stack.extend(widget.winfo_children())
+                if (isinstance(widget, ctk.CTkLabel)
+                        and widget.winfo_manager() == "grid"
+                        and widget.grid_info().get("column") == 1
+                        and widget.cget("text")):
+                    bodies.add(widget.master)
+            for body in bodies:
+                current = int(body.grid_columnconfigure(0).get("minsize") or 0)
+                body.grid_columnconfigure(0, minsize=current + shortfall)
+
+    def _align_summary_identity(self):
+        """Start each CPU / Model entry on a Summary column.
+
+        CPU sits over DRAM Frequency and tCL, Cores / Threads over BCLK and
+        tREFI, Microcode over MCLK and Vcore; the Model row follows the same
+        columns, so BIOS is under Cores / Threads. The rows pack their pairs
+        left to right, so each later pair is pushed out by widening the value
+        cell before it. A value already wider than its column -- a long board
+        name -- is left where it is rather than cut.
+        """
+        rows = [body for body in getattr(self, "_summary_identity_rows", [])
+                if body.winfo_exists()]
+        # From scratch each time, so a second pass measures the rows as they
+        # pack rather than as the last pass left them, and cannot overshoot.
+        values = []
+        for body in rows:
+            for column in range(1, 6, 2):
+                body.grid_columnconfigure(column, minsize=0)
+            for label in body.grid_slaves():
+                if not isinstance(label, ctk.CTkLabel):
+                    continue
+                if int(label.grid_info()["column"]) % 2 == 1:
+                    label.configure(width=0)
+                    values.append((int(label.grid_info()["column"]) // 2, label))
+                else:
+                    label.grid_configure(padx=(0, self.COLUMN_GAP))
+        self.root.update_idletasks()
+        starts = self._summary_column_starts()
+
+        def start_names_on_columns():
+            for body in rows:
+                names = sorted(
+                    (int(label.grid_info()["column"]), label)
+                    for label in body.grid_slaves()
+                    if isinstance(label, ctk.CTkLabel)
+                    and int(label.grid_info()["column"]) % 2 == 0)
+                for index, (column, name) in enumerate(names):
+                    if index == 0 or index >= len(starts) or column < 1:
+                        continue
+                    self.root.update_idletasks()
+                    shortfall = starts[index] - name.winfo_rootx()
+                    if shortfall <= 0:
+                        continue
+                    width = body.grid_bbox(column - 1, 0)[2]
+                    body.grid_columnconfigure(
+                        column - 1, minsize=width + shortfall)
+
+        start_names_on_columns()
+
+        # Then each value ends where the readings below it end, the way the
+        # clock and timing values do: CPU's with DRAM Frequency's and tCL's.
+        # After the names, so widening a value cannot move the name after it;
+        # the slot it widens into is the one that pushed that name out.
+        self.root.update_idletasks()
+        edges = self._summary_value_edges()
+        for index, label in values:
+            if index >= len(edges):
+                continue
+            width = edges[index] - label.winfo_rootx()
+            overrun = label.winfo_reqwidth() - width
+            if overrun > 0:
+                # A long name -- Cores / Threads -- starts its value too late
+                # to end on the edge. The gap before the value gives way,
+                # down to a floor that still reads as a gap.
+                name = next((cell for cell in label.master.grid_slaves(
+                    row=0, column=int(label.grid_info()["column"]) - 1)), None)
+                if name is None:
+                    continue
+                gap = max(self.IDENTITY_MIN_GAP, self.COLUMN_GAP - overrun)
+                name.grid_configure(padx=(0, gap))
+                self.root.update_idletasks()
+                width = edges[index] - label.winfo_rootx()
+            if width > label.winfo_reqwidth():
+                scaling = label._get_widget_scaling()
+                label.configure(width=width / scaling, anchor="e")
+        # A gap that gave way pulled every pair after it left; put them back.
+        # Their values keep their widths, so they move out onto their edges.
+        start_names_on_columns()
+
+    def _summary_column_starts(self):
+        """Where each Summary timing column's names begin, on screen."""
+        starts = []
+        for column in self.grid_frames["Summary"].get("Columns", []):
+            xs = []
+            stack = list(column.winfo_children())
+            while stack:
+                widget = stack.pop()
+                stack.extend(widget.winfo_children())
+                if (isinstance(widget, ctk.CTkLabel)
+                        and widget.winfo_manager() == "grid"
+                        and widget.grid_info().get("column") == 0
+                        and widget.cget("text")):
+                    xs.append(widget.winfo_rootx())
+            starts.append(min(xs) if xs else 0)
+        return starts
+
+    def _summary_value_edges(self):
+        """Where the right-aligned values stop, per Summary timing column."""
+        edges = []
+        for column in self.grid_frames["Summary"].get("Columns", []):
+            right = 0
+            stack = list(column.winfo_children())
+            while stack:
+                widget = stack.pop()
+                stack.extend(widget.winfo_children())
+                if (isinstance(widget, ctk.CTkLabel)
+                        and widget.winfo_manager() == "grid"
+                        and widget.grid_info().get("column") == 1
+                        and widget.cget("text")):
+                    right = max(right, widget.winfo_rootx() + widget.winfo_width())
+            edges.append(right)
+        return edges
 
     def _extend_summary_shading(self):
         """Carry the row bands down to the foot of the tallest column.

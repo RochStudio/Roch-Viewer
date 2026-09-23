@@ -236,6 +236,27 @@ class UnscrolledTabFitTest(unittest.TestCase):
             walk(self.app.tabview.tab(name), name)
         self.assertEqual(clipped, [], "labels cut off at this window width")
 
+    def test_summary_static_rows_are_not_on_the_live_refresh(self):
+        # The Telemetry copy of DRAM Frequency shares the row's name, and the
+        # Summary picked it up by name, so the Summary flickered between 8000
+        # and 7998 with the measured BCLK.
+        from rochviewer.ui.main import SUMMARY_STATIC_ROWS
+
+        summary = self.app.tab_frames["Summary"]
+
+        def on_summary(widget):
+            while widget is not None:
+                if widget is summary:
+                    return True
+                widget = widget.master
+            return False
+
+        live = [timing.get("name") for timing, label
+                in self.app.live_value_labels if on_summary(label)]
+        for name in SUMMARY_STATIC_ROWS:
+            with self.subTest(name=name):
+                self.assertNotIn(name, live)
+
     def test_every_detail_column_stays_inside_its_tab(self):
         overflow = []
         for name, frames in self.app.grid_frames.items():

@@ -85,6 +85,11 @@ INTEL_RAILS = {
     "vin2": ("VIN2", 0.00, 2.50),
     "vin9": ("VIN9", 0.00, 2.50),
     "vhif": ("VHIF", 1.00, 2.20),
+    # NCT6687D inputs HWiNFO lists on the MSI Z790MPOWER. VIN3 and VIN7 keep
+    # the chip's own names, as HWiNFO does: MSI does not label them.
+    "vin3": ("VIN3", 0.00, 2.50),
+    "vin7": ("VIN7", 0.00, 2.50),
+    "plus3v3": ("+3.3V", 3.00, 3.60),
 }
 
 # rail key -> (sensor address, volts per count).
@@ -150,12 +155,29 @@ CONFIRMED_RAILS = {
 # vdimm is deliberately absent rather than pointed elsewhere: no index in this
 # window reads the 1.470 V this board's modules are at, because they are read
 # from the PMICs instead.
+#
+# The rest of the window, matched the same way on a later boot:
+#
+#   idx  addr    reads                 HWiNFO
+#   0    0x0120  2.004 V x 6  = 12.024  +12V 12.024       <- exact
+#   1    0x0122  2.024 V x 2.5 = 5.060  +5V 5.060-5.070
+#   3    0x0126  half 0.840             VIN3 0.840-0.842
+#   7    0x012E  half 1.518             VIN7 1.518-1.520
+#   8    0x0130  half 3.344             +3.3V 3.344       <- exact
+#
+# +12V and +5V sit behind the board's own dividers, so their step is the
+# sensor LSB times the divider ratio: 6 and 2.5. Indices 9-15 read zero.
 NCT668X_BOARD_RAILS = {
     "MS-7E01": {
-        "vdd2": (0x128, 0.000125),
-        "cpu_aux": (0x12C, 0.000125),
+        "plus12v": (0x120, 0.000125 * 6),
+        "plus5v": (0x122, 0.000125 * 2.5),
         "vcore": (0x124, 0.0000625),
+        "vin3": (0x126, 0.0000625),
+        "vdd2": (0x128, 0.000125),
         "cpu_sa": (0x12A, 0.0000625),
+        "cpu_aux": (0x12C, 0.000125),
+        "vin7": (0x12E, 0.0000625),
+        "plus3v3": (0x130, 0.0000625),
     },
 }
 
@@ -255,6 +277,10 @@ INTEL_TEMPERATURES = {
     "motherboard": ("Motherboard", -20.0, 100.0),
     "cpu_weighted": ("CPU (Weighted Value)", -20.0, 120.0),
     "cpu_package": ("CPU Package", -20.0, 120.0),
+    # The external thermistor headers. Shown only where a board's map carries
+    # them, which is only where one was confirmed connected.
+    "t0": ("T0", -20.0, 120.0),
+    "t1": ("T1", -20.0, 120.0),
 }
 
 CONFIRMED_TEMPERATURES = {
@@ -264,6 +290,82 @@ CONFIRMED_TEMPERATURES = {
     "pch": 0x106,
     "socket": 0x108,
 }
+
+# On the MSI Z790MPOWER both headers read what HWiNFO reads for them -- T0
+# 16.5 C and T1 32.0 C on the same boot, exact -- so this board shows them.
+# The MS-7E06 note above still stands for that board: its T0 read 11 C with
+# nothing attached, and it keeps the five.
+NCT668X_BOARD_TEMPERATURES = {
+    "MS-7E01": dict(CONFIRMED_TEMPERATURES, t0=0x10A, t1=0x10C),
+}
+
+
+# --- Board fans.
+#
+# The same chip counts fan speed one window above the voltages, a whole RPM
+# per word. Confirmed on the MSI Z790MPOWER against HWiNFO on the same boot,
+# in HWiNFO's order, the rest of the block reading zero:
+#
+#   0x140  1010 RPM  CPU       HWiNFO 1,003-1,183
+#   0x142  2870 RPM  PUMP1     HWiNFO 2,870-2,877
+#   0x144  1468 RPM  System 1  HWiNFO 1,433-1,468
+#
+# Read only, like everything else here: the chip also drives these fans, and
+# nothing in this project writes a speed or a duty cycle.
+#
+# key -> (row label, min RPM, max RPM). 0 is allowed: a fan the board has
+# stopped is a reading, not a failure.
+FANS = {
+    "cpu_fan": ("CPU Fan", 0, 10000),
+    "pump1": ("PUMP1", 0, 10000),
+    "system1": ("System 1", 0, 10000),
+}
+
+NCT668X_BOARD_FANS = {
+    "MS-7E01": {"cpu_fan": 0x140, "pump1": 0x142, "system1": 0x144},
+}
+
+
+def nct668x_fans():
+    """The fan map for this board; none where no header was confirmed."""
+    model = _board_model_tag()
+    for tag, fans in NCT668X_BOARD_FANS.items():
+        if tag in model:
+            return fans
+    return {}
+
+
+def read_board_fans():
+    """Return ``{fan key: rpm}`` for this board's confirmed fan headers."""
+    profile = board_sensor_profile()
+    if profile is None or not profile.get("fans"):
+        return {}
+    values = {}
+    for key, address in profile["fans"].items():
+        try:
+            rpm = int(profile["reader"].read_word(address)) & 0xFFFF
+        except Exception:
+            continue
+        _label, minimum, maximum = FANS.get(key, ("", 0, 0))
+        if minimum <= rpm <= maximum:
+            values[key] = rpm
+    return values
+
+
+def fan_text(key):
+    """Format one fan for a row, or None. No thousands separator: the
+    telemetry statistics read the first plain number in the text."""
+    rpm = read_board_fans().get(key)
+    return None if rpm is None else "%d RPM" % rpm
+
+
+def nct668x_temperatures():
+    """The temperature map for this board, falling back to the five."""
+    model = _board_model_tag()
+    for tag, sensors in NCT668X_BOARD_TEMPERATURES.items():
+        if tag in model:
+            return sensors
+    return CONFIRMED_TEMPERATURES
 
 # --- ASUS Z790 boards, Nuvoton NCT6798D (chip 0xD42B, config port 0x2E,
 # monitor base 0x290). The complete voltage labels and scaling below were
@@ -452,8 +554,9 @@ def _nct668x_profile():
         return None
     return {
         "reader": reader,
-        "temperatures": CONFIRMED_TEMPERATURES,
+        "temperatures": nct668x_temperatures(),
         "rails": nct668x_rails(),
+        "fans": nct668x_fans(),
         "read_temperature": _nct668x_temperature,
         "read_rail": _nct668x_rail,
     }

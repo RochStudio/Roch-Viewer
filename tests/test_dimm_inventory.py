@@ -97,7 +97,7 @@ class ReadModulesTest(unittest.TestCase):
         self.assertEqual(module["capacity_gb"], 16)
         self.assertEqual(module["capacity"], "16GB")
         self.assertEqual(module["rank_count"], 1)
-        self.assertEqual(module["rank"], "SR")
+        self.assertEqual(module["rank"], "1R")
         self.assertEqual(module["ic"], "SK hynix A-die")
         self.assertEqual(module["part_number"], "F5-6000J2636G16G")
 
@@ -107,7 +107,7 @@ class ReadModulesTest(unittest.TestCase):
         modules = read_modules(FakeConnection([bare]))
         self.assertEqual(modules[0]["capacity_gb"], 0)
         self.assertEqual(modules[0]["part_number"], "Unknown")
-        self.assertEqual(modules[0]["rank"], "N/A")
+        self.assertEqual(modules[0]["rank"], EM_DASH)
 
     def test_a_failing_query_reports_no_modules(self):
         class Broken:
@@ -126,13 +126,13 @@ class ReadModulesTest(unittest.TestCase):
 class SharedValueTest(unittest.TestCase):
     def test_a_matched_kit_reports_the_single_value(self):
         modules = read_modules(FakeConnection([FakeModule(), FakeModule()]))
-        self.assertEqual(shared_value(modules, lambda m: m["rank"]), "SR")
+        self.assertEqual(shared_value(modules, lambda m: m["rank"]), "1R")
 
     def test_a_mixed_kit_reports_every_distinct_value(self):
         modules = read_modules(FakeConnection([
             FakeModule(), FakeModule(Attributes=2),
         ]))
-        self.assertEqual(shared_value(modules, lambda m: m["rank"]), "SR / DR")
+        self.assertEqual(shared_value(modules, lambda m: m["rank"]), "1R / 2R")
 
     def test_nothing_known_reports_the_em_dash(self):
         self.assertEqual(shared_value([], lambda m: m["rank"]), EM_DASH)
