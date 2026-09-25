@@ -1,16 +1,16 @@
-# Roch Viewer 1.0.7
+# Roch Viewer 1.0.8
 
-Version 1.0.7 is the current published release and is available from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/tag/v1.0.7).
+Version 1.0.8 is the current source version. Published builds are on [Releases](https://github.com/RochStudio/Roch-Viewer/releases).
 
 Roch Viewer is a read-only Windows memory-timing and hardware-monitoring tool for supported Intel and AMD systems. It displays clocks, timings, per-channel settings, RAM identity, motherboard sensors and native CPU/memory telemetry in a compact light/dark interface. It does not require HWiNFO.
 
-Version 1.0.7 restyles the dark theme and brings DDR5 up to the DDR4 coverage:
+Version 1.0.8 completes Raptor Lake DDR5 and regroups every tab:
 
-- A refined dark look: neutral black, the Summary in three bordered panels, and every column's names and values aligned across them.
-- DDR5 JEDEC timings and Intel XMP 3.0 profiles on the SPD tab, read from each module.
-- The DDR5 Training rows for RTT, ODT, drive strength and DFE gain now read module B1 in their second column.
-- Every Nuvoton NCT6687D voltage, temperature and fan on the MSI Z790MPOWER in Telemetry, and its voltages on the Voltages tab.
-- A leaner Summary: DRAM Frequency read once, RTL R0 only, tRDPRE/tWRPRE under tMOD.
+- DDR5 module B1 is read from its own memory controller, so every two-module row shows both modules; tCCD_L_WR and tCCD_L_WR2 are corrected.
+- The DDR5 mode registers MR2-MR4 and the remaining controller fields, with per-module registers on Training.
+- Every tab's columns in bordered panels, like the Summary, with right-aligned values and new, tighter window sizes.
+- A fuller SPD tab: every DDR5 timing and voltage in each JEDEC, XMP and EXPO profile, module organization, and the PMIC and SPD hub makers.
+- System Info adds P/E core counts, the GPU's PCIe link and VBIOS; Telemetry adds fan duty; Advanced covers Voltages and SPD.
 
 See the [changelog](CHANGELOG.md) for the full list.
 

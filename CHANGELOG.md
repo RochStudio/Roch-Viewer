@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.0.8 (2026-09-25)
+
+Nearly all of this is Raptor Lake DDR5 (LGA1700). DDR4 and the other platforms keep their readings and layout except where noted.
+
+- Fixed DDR5 module B1: every two-module row now reads it from the second memory controller (MC1), where SMBIOS, the trained DFE and VREF values and the reference tool all put it, instead of module A1's second sub-channel.
+- Fixed tCCD_L_WR and tCCD_L_WR2, which were swapped: they are four and two times tCCD_L (80 and 40 at DDR5-8000).
+- Added the DDR5 mode registers MR2-MR4 (write leveling, N-mode, MPSM, CS assertion, internal write timing, write-leveling offsets, refresh rate, TUF), Add/Dec tCWL, Add 1 QCLK Delay and the refresh and command controller fields. Controller registers each module has its own copy of moved from IMC to Training with both modules' values.
+- Every tab now groups its columns in bordered panels like the Summary, keeps 25px between one column's text and the next, and right-aligns its values. The tabs have new sizes: Summary, SPD, Timings, IMC, RTL and Voltages 700x750, System Info 775x750 (780x750 on other platforms), Training 975x950.
+- SPD: each DDR5 profile now shows tWR, tRFC1/2/sb, tRRD_L, tCCD_L, tFAW, tRTP and its own VDD, VDDQ and VPP; EXPO profiles appear beside XMP; module size, DRAM organization and ranks are decoded from the module; the PMIC and SPD hub makers are named; the build date reads as a week; the DRAM maker and die come from each module's own SPD.
+- Summary: DRAM Frequency in MT/s, QCLK Reference, BCLK to two places and Ring in whole MHz so they read the same every start, capacity as "32 GB", and tXP under tCKE; tRDPRE, tWRPRE, tREFIx9 and tMOD are left to the Timings tab. (The last-column gap fix that kept Summary inside its window applies on every platform.)
+- System Info: P- and E-core counts, the GPU's PCIe link and VBIOS version, GDDR7 and SK hynix named, and memory size in whole GB (all platforms, for the GPU rows' names and size); Core Ratio and Package removed; the GPU code name is the driver's, and the unreadable ROPs/TMUs row is gone (all platforms).
+- Timings: tCCD is labelled tCCD_S.
+- Training: rows that only list what the DRAM supports are removed, long values shortened ("Off", "1 tCK", "2048 clocks"), and ECS Mode is labelled Manual ECS.
+- IMC: CMD Slew Static Leg reads Enabled/Disabled, Realtime Memory is Realtime Memory Timing, and the tab uses the same font as the others.
+- Voltages: memory rails are named for their DIMM slot (A1 VDD) rather than the channel.
+- Telemetry: CPU fan, PUMP1 and System 1 duty on the MSI Z790MPOWER; the DIMM panels use the SPD tab's wording (all DDR5 platforms); WHEA shows its count alone; the unconnected T0 header is removed on that board.
+- Advanced: rows carry the names the tabs show (search finds either), Voltages and SPD are included, and the window is 560px wide; the Dump keeps each row's own name.
+- Fixed table shading that could run past a panel's bottom border after switching from Training to a shorter tab.
+
 ## 1.0.7 (2026-09-23)
 
 - Restyled the dark theme ("Refined dark"): neutral black with the Summary split into three bordered panels -- CPU/Model, clocks, and the timing columns -- a brighter red for readings and the selected tab, and values right-aligned so every column's names start and values end on one line across all three panels. The Summary window is 775×775.
