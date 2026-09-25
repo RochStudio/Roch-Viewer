@@ -170,6 +170,38 @@ class IntelVoltageSnapshotTest(unittest.TestCase):
         modules.assert_called_once_with()
         self.assertTrue(all(not row.get('live') for row in rows))
 
+    def test_ddr5_names_the_memory_rails_for_their_dimm(self):
+        slots = self.intel.dimm_slots_by_channel([
+            {'slot': 'A1', 'channel': 'A'}, {'slot': 'B1', 'channel': 'B'},
+        ])
+        self.assertEqual(slots, {'a': 'A1', 'b': 'B1'})
+        with patch.object(self.intel, 'SENSOR_ROWS', ()):
+            rows = self.intel._voltage_snapshot_rows(
+                self.intel.LGA1700_DDR5, read_dimms=Mock(return_value=[]),
+                slot_names=slots,
+            )
+        by_name = {row['name']: row for row in rows}
+        # The row names stay, for everything keyed on them.
+        self.assertEqual(by_name['CHA VDD']['display_name'], 'A1 VDD')
+        self.assertEqual(by_name['CHA VDD']['Category'], 'DIMM A1')
+        self.assertEqual(by_name['CHB VPP']['display_name'], 'B1 VPP')
+        self.assertEqual(by_name['Reading mode']['value'],
+                         'Snapshot at startup')
+
+    def test_a_channel_with_two_dimms_keeps_its_channel_name(self):
+        slots = self.intel.dimm_slots_by_channel([
+            {'slot': 'A1', 'channel': 'A'}, {'slot': 'A2', 'channel': 'A'},
+        ])
+        self.assertEqual(slots, {})
+        with patch.object(self.intel, 'SENSOR_ROWS', ()):
+            rows = self.intel._voltage_snapshot_rows(
+                self.intel.LGA1700_DDR5, read_dimms=Mock(return_value=[]),
+                slot_names=slots,
+            )
+        by_name = {row['name']: row for row in rows}
+        self.assertEqual(by_name['CHA VDD']['display_name'], 'CHA VDD')
+        self.assertEqual(by_name['CHA VDD']['Category'], 'CHA memory')
+
     def test_multiple_dimms_on_one_channel_are_not_collapsed(self):
         modules = Mock(return_value=[
             {'channel': 'a', 'vdd': 1440},

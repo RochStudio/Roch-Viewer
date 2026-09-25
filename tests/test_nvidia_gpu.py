@@ -16,10 +16,10 @@
 
 """Cover the graphics rows, and which of them are readings.
 
-Most of nvidia_gpu asks the card. Two rows cannot: ROP/TMU counts have no
-entry point on this driver, so they come from a table. These tests pin the
-line between the two, because a table that quietly answers for a card it does
-not know would read exactly like a measurement.
+Everything nvidia_gpu shows is asked of the card. ROP/TMU counts and the
+chip's SKU have no entry point on this driver, so they are not shown at all;
+these tests pin that, because a table that answers for a card reads exactly
+like a measurement.
 """
 
 import contextlib
@@ -29,12 +29,7 @@ from unittest import mock
 from rochviewer.gpu import nvidia_gpu
 
 BENCH_CARD = 0x2786          # AD104, the RTX 4070 on the bench
-# Pascal, a GTX 1080. Deliberately a generation the table does not reach:
-# this was 0x2C05 until that card was added to the table, at which point the
-# test asserting an unlisted card gets nothing was asserting it about a listed
-# one. An id from a family the table has no entries for cannot go stale the
-# same way.
-OTHER_CARD = 0x1B80
+OTHER_CARD = 0x1B80          # Pascal, a GTX 1080
 GIGABYTE = 0x1458
 
 
@@ -73,20 +68,52 @@ def read(**kwargs):
 class UnitCountTest(unittest.TestCase):
     def test_the_bench_card_reports_what_cpuz_reports(self):
         found = read(pci=card(), nvml={"architecture": 8})
-        self.assertEqual(found["rops_tmus"], "64 / 184")
-        self.assertEqual(found["code_name"], "AD104-250")
         self.assertEqual(found["technology"], "4 nm")
         self.assertEqual(found["revision"], "A1")
         self.assertEqual(found["board_manufacturer"], "GIGABYTE Technology")
 
-    def test_an_unlisted_card_gets_no_unit_counts_rather_than_a_neighbours(self):
-        # The failure worth guarding: a table answering confidently for a part
-        # it has never seen. The rows are absent instead.
-        found = read(pci=card(device=OTHER_CARD))
-        self.assertNotIn("rops_tmus", found)
-        self.assertNotIn("technology", found)
-        # No SKU either -- with NVAPI down there is nothing to fall back to.
-        self.assertNotIn("code_name", found)
+    def test_nothing_is_claimed_from_the_device_id_alone(self):
+        # Unit counts and a SKU have no entry point to read them from, so a
+        # card is never answered for from a table keyed on its id: with NVAPI
+        # down there is no code name at all.
+        for device in (BENCH_CARD, OTHER_CARD):
+            with self.subTest(device=hex(device)):
+                found = read(pci=card(device=device))
+                self.assertNotIn("rops_tmus", found)
+                self.assertNotIn("code_name", found)
+        self.assertFalse(hasattr(nvidia_gpu, "GPU_DEVICE_TABLE"))
+
+    def test_the_code_name_is_the_one_the_driver_reports(self):
+        class Nvapi:
+            def text(self, name):
+                return "GB203" if name == "short_name" else None
+
+            def unsigned(self, name):
+                return None
+
+        with machine(pci=card()), mock.patch.object(
+                nvidia_gpu, "_Nvapi", return_value=Nvapi()):
+            found = nvidia_gpu.read_gpu(refresh=True)
+        self.assertEqual(found["code_name"], "GB203")
+
+    def test_the_memory_reads_as_the_card_carries_it(self):
+        # This RTX 5070 Ti: what the driver leaves usable is 15.89 GB of its
+        # 16, and GPU-Z reads the codes beside it as "GDDR7 (Hynix)".
+        values = {"frame_buffer_kb": 16662528, "ram_type": 16, "ram_maker": 6}
+
+        class Nvapi:
+            def text(self, name):
+                return None
+
+            def unsigned(self, name):
+                return values.get(name)
+
+        with machine(pci=card()), mock.patch.object(
+                nvidia_gpu, "_Nvapi", return_value=Nvapi()):
+            found = nvidia_gpu.read_gpu(refresh=True)
+        self.assertEqual(found["memory_size"], "16 GB")
+        self.assertEqual(found["memory_type"], "GDDR7")
+        self.assertEqual(found["memory_vendor"], "SK hynix")
 
     def test_an_unlisted_board_vendor_prints_its_id(self):
         found = read(pci=card(subsystem=0x1234))
@@ -153,8 +180,10 @@ class MeasuredTableTest(unittest.TestCase):
         # These two enumerations are unpublished, and the values measured here
         # contradicted the ordering they are usually quoted with. Filling in
         # the rest from memory is the mistake this guards.
-        self.assertEqual(nvidia_gpu.NVAPI_RAM_TYPES, {15: "GDDR6X"})
-        self.assertEqual(nvidia_gpu.NVAPI_RAM_MAKERS, {10: "Micron"})
+        self.assertEqual(nvidia_gpu.NVAPI_RAM_TYPES,
+                         {15: "GDDR6X", 16: "GDDR7"})
+        self.assertEqual(nvidia_gpu.NVAPI_RAM_MAKERS,
+                         {6: "SK hynix", 10: "Micron"})
 
     def test_an_unmeasured_code_prints_itself(self):
         self.assertEqual(
@@ -183,52 +212,6 @@ class AdapterIdentityTest(unittest.TestCase):
         self.assertIsNone(nvidia_gpu._adapter_identity(["ROOT\\BASICDISPLAY"]))
         self.assertIsNone(nvidia_gpu._adapter_identity([""]))
         self.assertIsNone(nvidia_gpu._adapter_identity([]))
-
-
-class DeviceTableTest(unittest.TestCase):
-    """The table is a claim, so it has to stay internally checkable.
-
-    TM units are four per SM and an SM is 128 shaders, on Ada and on Blackwell
-    alike. The shader counts below are what each card reports for itself, so an
-    entry whose TM count does not follow from its shader count is a typo, not a
-    SKU difference. ROP counts follow from nothing readable and are the
-    vendor's.
-    """
-
-    SHADER_COUNTS = {
-        0x2684: 16384,        # RTX 4090
-        0x2704: 9728,         # RTX 4080
-        0x2782: 7680,         # RTX 4070 Ti -- read off this bench
-        0x2786: 5888,         # RTX 4070
-        0x2C05: 8960,         # RTX 5070 Ti -- read off this bench
-    }
-    SHADERS_PER_SM = 128
-    TMUS_PER_SM = 4
-
-    def test_the_bench_card_is_listed(self):
-        self.assertEqual(
-            nvidia_gpu.GPU_DEVICE_TABLE[0x2782], ("AD104-400", 80, 240)
-        )
-
-    def test_every_entry_has_a_shader_count_to_check_against(self):
-        self.assertEqual(
-            set(nvidia_gpu.GPU_DEVICE_TABLE), set(self.SHADER_COUNTS)
-        )
-
-    def test_tm_units_follow_the_shader_count(self):
-        for device, shaders in self.SHADER_COUNTS.items():
-            with self.subTest(device=hex(device)):
-                _, _, tmus = nvidia_gpu.GPU_DEVICE_TABLE[device]
-                self.assertEqual(
-                    tmus, shaders // self.SHADERS_PER_SM * self.TMUS_PER_SM
-                )
-
-    def test_no_two_cards_share_a_row(self):
-        # A copied entry is how a table like this starts answering for the
-        # wrong card while still looking populated.
-        rows = list(nvidia_gpu.GPU_DEVICE_TABLE.values())
-        self.assertEqual(len(rows), len(set(rows)))
-
 
 if __name__ == "__main__":
     unittest.main()

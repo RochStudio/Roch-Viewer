@@ -91,7 +91,7 @@ class FormattingTest(unittest.TestCase):
 
 class PanelTest(unittest.TestCase):
     ENTRY = {"channel": "a", "pmic_address": 0x49,
-             "vendor": "Richtek Power", "revision": "2.1"}
+             "vendor": "Richtek", "revision": "2.1"}
     MODULE = {"slot": "A2", "capacity_gb": 16, "rank_numeric": "1R",
               "ic": "SK hynix A-die", "part_number": "F5-6000J2636G16G",
               "spd_vendor": "G.Skill"}
@@ -108,15 +108,15 @@ class PanelTest(unittest.TestCase):
     def test_the_identity_lines_carry_what_was_read(self):
         left, right = w.panel_identity(self.ENTRY, self.MODULE)
         self.assertEqual(left[:3], [
-            ("IC Manufacturer", "SK hynix"),
+            ("DRAM Manuf.", "SK hynix"),
             ("DRAM Die", "A-die"),
-            ("Rank", "1R"),
+            ("Ranks", "1R"),
         ])
         self.assertEqual(right, [
-            ("DRAM Part Number", "F5-6000J2636G16G"),
-            ("Module Manufacturer", "G.Skill"),
-            ("Capacity", "16384 MB"),
-            ("PMIC", "Richtek Power rev 2.1"),
+            ("Part Number", "F5-6000J2636G16G"),
+            ("Module Manuf.", "G.Skill"),
+            ("Module Size", "16 GB"),
+            ("PMIC", "Richtek rev 2.1"),
         ])
 
     def test_the_sides_are_padded_to_the_same_length(self):
@@ -129,15 +129,37 @@ class PanelTest(unittest.TestCase):
         # G.Skill sells the stick; SK hynix made the chips on it. Two labels,
         # because they are two different companies.
         left, right = w.panel_identity(self.ENTRY, self.MODULE)
-        self.assertEqual(dict(right)["Module Manufacturer"], "G.Skill")
-        self.assertEqual(dict(left)["IC Manufacturer"], "SK hynix")
+        self.assertEqual(dict(right)["Module Manuf."], "G.Skill")
+        self.assertEqual(dict(left)["DRAM Manuf."], "SK hynix")
 
     def test_a_module_that_read_nothing_still_renders(self):
         left, right = w.panel_identity({"channel": "b"}, None)
-        self.assertEqual(left[0], ("IC Manufacturer", "—"))
-        self.assertEqual(dict(right)["Capacity"], "—")
+        self.assertEqual(left[0], ("DRAM Manuf.", "—"))
+        self.assertEqual(dict(right)["Module Size"], "—")
         self.assertEqual(dict(right)["PMIC"], "—")
-        self.assertEqual(dict(right)["DRAM Part Number"], "—")
+        self.assertEqual(dict(right)["Part Number"], "—")
+
+
+class CounterRowTest(unittest.TestCase):
+    """A count since boot shows its count, not a minimum and an average."""
+
+    def apply(self, label, texts):
+        key = ("sensor", "Errors", label)
+        cells = {(key, column): mock.Mock() for column in range(1, 5)}
+        window = mock.Mock(_stats={}, _fast_keys=set(), _sensor_cells=cells)
+        for text in texts:
+            w.DimmTelemetryWindow._apply_sensors(window, [(key, text)])
+        return {column: cells[(key, column)].configure.call_args.kwargs["text"]
+                for column in range(1, 5)}
+
+    def test_whea_shows_its_count_alone(self):
+        self.assertIn("WHEA Errors", w.COUNTER_ROWS)
+        shown = self.apply("WHEA Errors", ["0", "1"])
+        self.assertEqual(shown, {1: "1", 2: "", 3: "", 4: ""})
+
+    def test_a_reading_still_keeps_its_statistics(self):
+        shown = self.apply("VRM Temp", ["36.5 °C", "37.0 °C"])
+        self.assertTrue(all(shown[column] for column in (2, 3, 4)))
 
 
 class ParameterTest(unittest.TestCase):

@@ -14,6 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import struct
 import winreg
 import importlib
 import sys
@@ -55,22 +56,33 @@ def active_platform():
     return profile or detect_current_platform()
 
 
-# The two columns the tabs draw are the two installed modules, and how far
-# apart their registers sit depends on the memory generation.
+# The two columns the tabs draw are the two installed modules. On Raptor Lake
+# each module has a controller of its own, whatever the generation: the second
+# module is on MC1, one 0x10000 window up.
 #
-# DDR5 puts two channels inside one controller, 0x800 apart, and a module
-# drives one of them. The four selections the reference tools offer resolve
-# there, checked against their own DFE tap readings on the DDR5 bench:
+# DDR5 splits a module into two 32-bit sub-channels, 0x800 apart inside its
+# controller, so there are four trained contexts for two modules:
 #
-#   MCHBAR          MC0 CHA A1   -18 -3 +0 -3
-#   MCHBAR2         MC1 CHA A1   -22 -2 -1 +0
-#   MCHBAR + 0x800  MC0 CHB B1   -21 +2 -4 +0
-#   MCHBAR2 + 0x800 MC1 CHB B1   -16 +0 -4 -2
+#   MCHBAR          MC0 sub-channel 0   A1
+#   MCHBAR + 0x800  MC0 sub-channel 1   A1
+#   MCHBAR2         MC1 sub-channel 0   B1
+#   MCHBAR2 + 0x800 MC1 sub-channel 1   B1
 #
-# DDR4 has no sub-channels. Its second module is on the second controller, one
-# 0x10000 window up, and the 0x800 block is a channel that was never trained.
-# Measured on the Z790-P with a module in each channel, the RTL rows -- a
-# per-DIMM trained latency, reading 25 where a slot is empty -- report:
+# This used to read B1 at MCHBAR + 0x800, which is A1's second half. Three
+# independent readings on the Z790 MPOWER, same boot, say where B1 is:
+#
+#   SMBIOS names the sockets Controller0-DIMMA1 and Controller1-DIMMB1.
+#   The reference tool labels its four columns DIMM0 CH0 MC0, DIMM0 CH1
+#   MC0, DIMM1 CH0 MC1 and DIMM1 CH1 MC1, with serials 4997 and 4996 --
+#   A1's and B1's SPD serials.
+#   The trained values follow the controllers, not the 0x800 step: DFE tap 1
+#   reads -11, -11, -15, -11 across the four contexts above and DQ VREF 3
+#   66.5, 66.0, 68.5, 68.0 %, and the reference tool's DIMM1 columns are
+#   the MC1 ones.
+#
+# DDR4 has no sub-channels and the 0x800 block is a channel that was never
+# trained. Measured on the Z790-P with a module in each channel, the RTL rows
+# -- a per-DIMM trained latency, reading 25 where a slot is empty -- report:
 #
 #   MC0 CHA  77     MC1 CHA  79      the two installed modules
 #   MC0 CHB  25     MC1 CHB  25      both sub-channels empty
@@ -81,16 +93,21 @@ def active_platform():
 #
 # Either way the ordinary timing registers hold the same values in both halves
 # of a matched kit, so only a per-DIMM trained result tells the candidates
-# apart: DFE taps on DDR5, RTL on DDR4.
+# apart: DFE taps and DQ VREF on DDR5, RTL on DDR4.
+#
+# Core Ultra 200S keeps the sub-channel step. It relocates several MCHBAR
+# blocks by 0x10000, which is where MC1 sits on Raptor Lake, and no bench
+# reading has yet said where its second module is.
 CHANNEL_B_SUBCHANNEL_OFFSET = 0x800
 CHANNEL_B_CONTROLLER_OFFSET = MCHBAR2 - MCHBAR
+SUBCHANNEL_B_PLATFORMS = (LGA1851,)
 
 
 def channel_b_offset(platform=None):
     """Distance from a channel-A register to its channel-B twin."""
     if platform is None:
         platform = active_platform()
-    if platform in DDR5_TIMING_PLATFORMS:
+    if platform in SUBCHANNEL_B_PLATFORMS:
         return CHANNEL_B_SUBCHANNEL_OFFSET
     return CHANNEL_B_CONTROLLER_OFFSET
 
@@ -421,6 +438,18 @@ def get_memory_type():
     return " / ".join(found) if found else None
 
 
+# Whether this is LGA1700 DDR5, where the display changes below apply; the
+# other platforms keep the forms they had. Resolved once, on first use.
+_LGA1700_DDR5_ACTIVE = None
+
+
+def _is_lga1700_ddr5():
+    global _LGA1700_DDR5_ACTIVE
+    if _LGA1700_DDR5_ACTIVE is None:
+        _LGA1700_DDR5_ACTIVE = active_platform() == LGA1700_DDR5
+    return _LGA1700_DDR5_ACTIVE
+
+
 # The clock rows are read down one column, so they have to be written the same
 # way. Three of them were built by pasting the unit straight onto a rounded
 # float, which put "5000.0Mhz" next to "2000 MHz": no space, and a decimal
@@ -455,10 +484,20 @@ def get_bclk():
     except Exception:
         return "Error"
 
+# BCLK is measured, and its last places wander from one start to the next:
+# trimmed to whatever it happened to read, the row said "100 MHz" on one run
+# and "99.976 MHz" on another. On DDR5 it is always written to two places.
+BCLK_DECIMALS = 2
+
+
 def get_bclk_rd():
     try:
         bclk = get_bclk()
-        return _mhz(bclk) if isinstance(bclk, (int, float)) else bclk
+        if not isinstance(bclk, (int, float)):
+            return bclk
+        if _is_lga1700_ddr5():
+            return "%.*f MHz" % (BCLK_DECIMALS, bclk)
+        return _mhz(bclk)
     except Exception:
         return "Error"
 
@@ -526,7 +565,12 @@ def get_uncore_ratio():
     """Ring/uncore multiplier read directly from the controller field."""
     try:
         ratio = _ring_ratio_value()
-        return None if ratio is None else "%.1f x" % ratio
+        if ratio is None:
+            return None
+        # An eight-bit whole number, so the ".0" said nothing. DDR5 drops it.
+        if _is_lga1700_ddr5():
+            return "%d x" % ratio
+        return "%.1f x" % ratio
     except Exception:
         return None
 
@@ -538,6 +582,10 @@ def get_ring_freq():
         bclk_khz = read_timing(MCHBAR + 0x5F60, bit_start=0, bit_length=32)
         if not ratio or not bclk_khz:
             return "N/A"
+        # The ratio times the measured BCLK, so it carries the same wander --
+        # 5000 on one start, 4998.8 on the next. Whole MHz on DDR5.
+        if _is_lga1700_ddr5():
+            return "%d MHz" % round(ratio * bclk_khz / 1000)
         return _mhz(ratio * bclk_khz / 1000)
     except Exception:
         return "Error"
@@ -862,7 +910,8 @@ def get_total_physical_memory():
         computer_system = _wmi_static("Win32_ComputerSystem")[0]
         memory_bytes = int(computer_system.TotalPhysicalMemory)
         memory_gb = round(memory_bytes / (1024 ** 3))
-        return f"{memory_gb}GB"
+        # A space before the unit on DDR5, as every other value has.
+        return f"{memory_gb} GB" if _is_lga1700_ddr5() else f"{memory_gb}GB"
     except Exception as e:
         print(f"Error retrieving physical memory size: {e}")
         return "Error"
@@ -886,6 +935,73 @@ def get_cpu_cores_threads():
     except Exception as e:
         print(f"Error retrieving CPU cores/threads: {e}")
         return "Unknown"
+
+
+# GetLogicalProcessorInformationEx: one record per physical core, whose
+# PROCESSOR_RELATIONSHIP carries the core's SMT flag at byte 8 and its
+# efficiency class at byte 9.
+RELATION_PROCESSOR_CORE = 0
+LTP_PC_SMT = 0x1
+
+
+def _processor_cores():
+    """(efficiency class, has SMT) for each enabled core, or [] if unread."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    call = kernel32.GetLogicalProcessorInformationEx
+    call.argtypes = (ctypes.c_int, ctypes.c_void_p,
+                     ctypes.POINTER(wintypes.DWORD))
+    call.restype = wintypes.BOOL
+    size = wintypes.DWORD(0)
+    call(RELATION_PROCESSOR_CORE, None, ctypes.byref(size))
+    if not size.value:
+        return []
+    buffer = ctypes.create_string_buffer(size.value)
+    if not call(RELATION_PROCESSOR_CORE, buffer, ctypes.byref(size)):
+        return []
+    data, cores, offset = buffer.raw[:size.value], [], 0
+    while offset + 10 <= len(data):
+        relationship, record_size = struct.unpack_from("<II", data, offset)
+        if record_size <= 0:
+            break
+        if relationship == RELATION_PROCESSOR_CORE:
+            flags, efficiency = data[offset + 8], data[offset + 9]
+            cores.append((efficiency, bool(flags & LTP_PC_SMT)))
+        offset += record_size
+    return cores
+
+
+def core_types_text(cores):
+    """How many P- and E-cores ``cores`` holds, as "6P + 8E", or None.
+
+    On a hybrid part Windows gives the P-cores the higher efficiency class.
+    With the E-cores off in the BIOS every core shares one class; those cores
+    are all P-cores when every one of them runs two threads, as no E-core on
+    this platform does. With Hyper-Threading off as well nothing tells the two
+    apart, and the row says nothing rather than guess.
+    """
+    if not cores:
+        return None
+    classes = {efficiency for efficiency, _smt in cores}
+    if len(classes) > 1:
+        top = max(classes)
+        performance = sum(1 for efficiency, _smt in cores if efficiency == top)
+        return "%dP + %dE" % (performance, len(cores) - performance)
+    if all(smt for _efficiency, smt in cores):
+        return "%dP + 0E" % len(cores)
+    return None
+
+
+@lru_cache(maxsize=None)
+def get_core_types():
+    """The enabled P- and E-cores, from Windows' own processor records."""
+    try:
+        return core_types_text(_processor_cores())
+    except Exception as e:
+        print(f"Error retrieving core types: {e}")
+        return None
 
 @lru_cache(maxsize=None)
 def get_motherboard_display():
@@ -950,7 +1066,6 @@ GPU_ROWS = (
     ("GPU Code Name", "code_name"),
     ("GPU Revision", "revision"),
     ("Cores", "cores"),
-    ("ROPs / TMUs", "rops_tmus"),
     ("GPU Technology", "technology"),
     ("Memory Size", "memory_size"),
     ("Memory Type", "memory_type"),
@@ -958,6 +1073,12 @@ GPU_ROWS = (
     ("Bus Width", "bus_width"),
     ("Resizable BAR", "resizable_bar"),
     ("Driver Version", "driver_version"),
+)
+# Shown on LGA1700 DDR5 as well: the link the card and slot settled on, and
+# the card's own firmware, between Resizable BAR and the driver.
+DDR5_GPU_ROWS = (
+    ("PCIe Link", "pcie_link"),
+    ("VBIOS Version", "vbios_version"),
 )
 
 
@@ -1155,12 +1276,19 @@ def get_gear_mode_value():
         return "Unknown"
 
 
+# DDR5 transfers twice per clock, and the number this row shows is the
+# transfer rate: 8000 on a kit whose clock (the MCLK row) is 4000 MHz. So it
+# is MT/s, as the AM5 profile already says.
+def _dram_rate_unit():
+    return "MT/s" if _is_lga1700_ddr5() else "MHz"
+
+
 def get_dram_frequency():
     try:
         freq = _parse_first_number(get_speed())
         if freq is None:
             return "Unknown"
-        return f"{freq:.0f} MHz"
+        return f"{freq:.0f} {_dram_rate_unit()}"
     except Exception as e:
         print(f"Error retrieving DRAM frequency: {e}")
         return "Unknown"
@@ -1618,12 +1746,15 @@ def read_mode_register(number, base=None):
 # variants are fixed multiples of it. JESD79-5 encodes them as:
 #
 #   tCCD_L      = 8  + code   (8 to 22 nCK)
-#   tCCD_L_WR   = 16 + 2*code
-#   tCCD_L_WR2  = 32 + 4*code
+#   tCCD_L_WR   = 32 + 4*code (four times tCCD_L; the 20 ns write-to-write)
+#   tCCD_L_WR2  = 16 + 2*code (twice tCCD_L; the 10 ns second write)
 #
-# Confirmed on the bench: MR13 reads 0x02 on both controllers, giving 10 / 20
-# / 40. That agrees with the controller's own applied delay -- TC_RDRD.sg is
-# 16, which has to be at least tCCD_L and could not be if tCCD_L were 20.
+# The two write rows were once the other way round, which a bench reading of
+# 0x02 could not show: 10 / 20 / 40 names 20 and 40 either way. At DDR5-8000
+# on the Z790 MPOWER tCCD_L is 20, and the reference tool reads tCCD_L_WR 80
+# and tCCD_L_WR2 40 on the same boot -- four and two times, as above. tCCD_L
+# itself agrees with the controller's applied delay: TC_RDRD.sg has to be at
+# least tCCD_L.
 # Code 15 is reserved rather than a timing, so it reports nothing.
 # --- DFE, from the same mode-register table.
 #
@@ -1852,8 +1983,8 @@ CCD_MODE_REGISTER = 0x0D
 CCD_CODE_RESERVED = 0x0F
 CCD_FROM_MR13 = {
     "tCCD_L": (8, 1),
-    "tCCD_L_WR": (16, 2),
-    "tCCD_L_WR2": (32, 4),
+    "tCCD_L_WR": (32, 4),
+    "tCCD_L_WR2": (16, 2),
 }
 
 
@@ -5464,14 +5595,16 @@ DUAL_CHANNEL_COMPUTED = {
 def _channel_b_address(address):
     """Return the channel-B twin of a channel-A address, or None if there is none.
 
-    How far the twin sits depends on the generation, which is why the distance
-    comes from CHANNEL_B_OFFSET rather than being written here: a sub-channel
-    on DDR5, the second controller on DDR4. See the note beside it.
+    How far the twin sits depends on the platform, which is why the distance
+    comes from CHANNEL_B_OFFSET rather than being written here: the second
+    controller on Raptor Lake, DDR4 and DDR5 alike, and a sub-channel step on
+    Core Ultra 200S. See the note beside it.
 
-    Every row this promotes sits in the 0xE000 block, which is where the RTL
-    rows establish the twin. An address already in channel B, one a platform
-    pass cleared to None, and anything outside the window all return None so
-    the caller leaves the row alone.
+    Callers decide which registers have a twin at all -- the 0xE000 block,
+    where the RTL rows establish it, and on Raptor Lake DDR5 the 0xD800
+    controller block too; see _has_channel_b_copy. An address already in
+    channel B, one a platform pass cleared to None, and anything outside the
+    window all return None so the caller leaves the row alone.
     """
     if not isinstance(address, int) or isinstance(address, bool):
         return None
@@ -5575,15 +5708,10 @@ def _point_mode_register_rows_at_channel_b():
     """Read the second column of the hand-written MR rows from channel B.
 
     The RTT, ODT, drive-strength and DFE rows on Training were written with
-    both sides spelled out, the second at MCHBAR2 -- the DDR4 twin. On DDR5
-    that is MC1 channel A, which is the same A1 module as the first column,
-    so the table compared A1 with itself and never read B1. Checked on the
-    Z790 DDR5 bench: the mode-register table is present at MCHBAR + 0x800
-    with its own trained payload (one byte reads 0xCD there against 0xCC in
-    channel A), which is where every mirrored row's channel B already reads.
-
-    Pointing them at CHANNEL_B puts them where the rest of the table is. On
-    DDR4 CHANNEL_B is MCHBAR2, so nothing there changes.
+    both sides spelled out, the second at MCHBAR2. On Raptor Lake, DDR4 and
+    DDR5 alike, CHANNEL_B is MCHBAR2 -- B1's controller; see the note at
+    CHANNEL_B_OFFSET -- so nothing there changes. This only moves them on a
+    platform whose second module is a sub-channel step away instead.
     """
     for timing in TIMINGS:
         params_a = timing.get("dynamic_params_a")
@@ -6040,8 +6168,15 @@ NCT6687D_SENSOR_ROWS = (
     ("VIN7", "Voltages", lambda: _board_rail("vin7"), "Left", "vin7"),
     ("+3.3V", "Voltages", lambda: _board_rail("plus3v3"), "Left", "plus3v3"),
     ("CPU Fan", "Fans", lambda: _board_fan("cpu_fan"), "Left", "cpu_fan"),
+    # The first duty row refreshes all three; see fan_duty_text.
+    ("CPU Fan Duty", "Fans", lambda: _board_fan_duty("cpu_fan", True), "Left",
+     "duty:cpu_fan"),
     ("PUMP1", "Fans", lambda: _board_fan("pump1"), "Left", "pump1"),
+    ("PUMP1 Duty", "Fans", lambda: _board_fan_duty("pump1", False), "Left",
+     "duty:pump1"),
     ("System 1", "Fans", lambda: _board_fan("system1"), "Left", "system1"),
+    ("System 1 Duty", "Fans", lambda: _board_fan_duty("system1", False),
+     "Left", "duty:system1"),
 )
 
 
@@ -6055,15 +6190,27 @@ def _board_fan(key):
         return None
 
 
+def _board_fan_duty(key, refresh=True):
+    """Read one board fan's duty, importing that path only when it is used."""
+    try:
+        from rochviewer.sensors.board_sensors import fan_duty_text
+
+        return fan_duty_text(key, refresh)
+    except Exception:
+        return None
+
+
 def _nct6687d_rows():
     """The NCT6687D rows this board's sensor maps can actually fill."""
     try:
         from rochviewer.sensors.board_sensors import (
-            nct668x_fans, nct668x_rails, nct668x_temperatures,
+            nct668x_fan_duties, nct668x_fans, nct668x_rails,
+            nct668x_temperatures,
         )
 
         mapped = (set(nct668x_rails()) | set(nct668x_temperatures())
-                  | set(nct668x_fans()))
+                  | set(nct668x_fans())
+                  | {"duty:" + key for key in nct668x_fan_duties()})
     except Exception:
         return ()
     return tuple(row[:4] for row in NCT6687D_SENSOR_ROWS if row[4] in mapped)
@@ -6361,8 +6508,35 @@ def absent_sensor_rows(platform, arrow_lake, manufacturer=None):
     return board
 
 
+def dimm_slots_by_channel(modules):
+    """{"a": "A1", ...} for each channel exactly one installed module fills.
+
+    The DIMM telemetry names its channel by SPD hub, "a" or "b", and the slot
+    inventory names a module's channel by its slot's letter, so the two meet
+    on that letter -- the same pairing the rows' CHA and CHB names already
+    stood on. A channel with two modules, or none, is left out.
+    """
+    slots = {}
+    for module in modules or ():
+        slot = str(module.get("slot") or "").strip()
+        channel = str(module.get("channel") or "").strip().lower()
+        if slot and channel:
+            slots.setdefault(channel, []).append(slot)
+    return {channel: found[0] for channel, found in slots.items()
+            if len(found) == 1}
+
+
+def _installed_dimm_slots():
+    try:
+        from rochviewer.memory.dimm_inventory import read_modules
+
+        return dimm_slots_by_channel(read_modules())
+    except Exception:
+        return {}
+
+
 def _voltage_snapshot_rows(platform, absent=(), read_dimms=None,
-                           sensor_rows=None):
+                           sensor_rows=None, slot_names=None):
     """Build one startup voltage snapshot from the Intel telemetry readers.
 
     The live rows remain on ``Sensors`` for the Telemetry window, where their
@@ -6423,9 +6597,16 @@ def _voltage_snapshot_rows(platform, absent=(), read_dimms=None,
                     )
         return values
 
+    # On LGA1700 DDR5 the memory rails are named for the module each PMIC is
+    # on, "DIMM A1", rather than the channel; and the reading-mode note says
+    # just what it is, as the tab has no refresh to point at.
+    lga1700_ddr5 = platform == LGA1700_DDR5
+    if slot_names is None:
+        slot_names = _installed_dimm_slots() if lga1700_ddr5 else {}
     rows = [{
         "name": "Reading mode",
-        "value": "Snapshot at startup \u2014 reopen app to update",
+        "value": ("Snapshot at startup" if lga1700_ddr5 else
+                  "Snapshot at startup \u2014 reopen app to update"),
         "Category": "Snapshot",
         "Tab": "Voltages",
         "Column": "Left",
@@ -6447,6 +6628,7 @@ def _voltage_snapshot_rows(platform, absent=(), read_dimms=None,
         })
     if platform in DDR5_TIMING_PLATFORMS:
         for channel, channel_label in (("a", "CHA"), ("b", "CHB")):
+            slot = slot_names.get(channel)
             for key, rail_label in dimm_rails:
                 name = channel_label + " " + rail_label
                 rows.append({
@@ -6454,7 +6636,10 @@ def _voltage_snapshot_rows(platform, absent=(), read_dimms=None,
                     "value": lambda cache_key=channel + key: snapshot().get(
                         cache_key, "\u2014"
                     ),
-                    "Category": channel_label + " memory",
+                    "Category": ("DIMM " + slot if slot
+                                 else channel_label + " memory"),
+                    "display_name": (slot + " " + rail_label if slot
+                                     else name),
                     "Tab": "Voltages",
                     "Column": "Right",
                     "read_type": "standard",
@@ -7183,6 +7368,16 @@ def _install_system_info_identity_rows():
         _system_info_row(label, partial(_gpu_field, field))
         for label, field in GPU_ROWS
     ] + [_system_info_row("Driver Date", get_gpu_driver_date)])
+    if _is_lga1700_ddr5():
+        # Enabled cores by type, under the count they make up. Placed here;
+        # SYSTEM_INFO_SECTIONS puts every row in its final order.
+        _place_system_info_rows("Cores / Threads", [
+            _system_info_row("Core Types", get_core_types),
+        ])
+        _place_system_info_rows("GPU", [
+            _system_info_row(label, partial(_gpu_field, field))
+            for label, field in DDR5_GPU_ROWS
+        ])
     # Beside the firmware version it dates, and the socket count beside the
     # modules filling them.
     _place_system_info_rows("BIOS", [
@@ -7237,6 +7432,13 @@ SYSTEM_INFO_REMOVED = (
     "Core Clock",
 )
 
+# And on LGA1700 DDR5. Core Ratio is the current core clock over BCLK, a
+# reading that moves -- 53.8 x -- in a section of configured values; the live
+# clock is in Telemetry. Package was SMBIOS's socket designation, which MSI
+# fills with the board's reference designator (U3E1) rather than a package
+# name, and Platform above it already says LGA1700.
+DDR5_SYSTEM_INFO_REMOVED = ("Core Ratio", "CPU Package")
+
 # Summary's compact clock chain still includes Ring.  Keep its existing
 # hardware reader available to that purpose without exposing the changing
 # value as a System Info row; Telemetry remains the detailed live-clock view.
@@ -7250,7 +7452,7 @@ SYSTEM_INFO_SECTIONS = (
     ("System", "Left", ("OS", "OS Version", "Platform")),
     ("Processor", "Left", ("CPU", "CPU Package", "CPU Signature",
                            "Code Name", "Technology",
-                           "Cores / Threads", "Microcode")),
+                           "Cores / Threads", "Core Types", "Microcode")),
     ("Motherboard", "Left", ("Manufacturer", "Model", "Board Revision", "BIOS", "BIOS Date",
                              "Chipset", "Southbridge", "LPCIO")),
     # Configured memory clocks and ratios only. Variable CPU core/ring clocks
@@ -7259,9 +7461,10 @@ SYSTEM_INFO_SECTIONS = (
                          "BCLK", "Core Ratio", "Uncore Ratio", "MCLK",
                          "UCLK", "PSF0 PLL", "Gear Mode")),
     ("Graphics", "Right", ("GPU", "Board Manufacturer", "GPU Code Name",
-                            "GPU Revision", "Cores", "ROPs / TMUs",
+                            "GPU Revision", "Cores",
                             "GPU Technology", "Memory Size", "Memory Type",
                             "Memory Vendor", "Bus Width", "Resizable BAR",
+                            "PCIe Link", "VBIOS Version",
                             "Driver Version", "Driver Date")),
 )
 
@@ -7323,11 +7526,13 @@ def _install_system_info_order():
         ):
             timing["Tab"] = "Summary"
 
+    removed = SYSTEM_INFO_REMOVED + (
+        DDR5_SYSTEM_INFO_REMOVED if _is_lga1700_ddr5() else ())
     TIMINGS = [
         timing for timing in TIMINGS
         if not (
             timing.get("Tab") == SYSTEM_INFO_TAB
-            and timing.get("name") in SYSTEM_INFO_REMOVED
+            and timing.get("name") in removed
         )
     ]
 
@@ -7537,6 +7742,23 @@ MR_ECS_COUNTS = {
 MR_READ_DQS_OFFSET = {
     0: "0 Clock", 1: "1 Clock", 2: "2 Clocks", 3: "3 Clocks",
 }
+MR_WRITE_LEVELING = {0: "Normal Mode", 1: "Write Leveling Mode"}
+# MR2 OP[2] is set for 1N: clear, the device runs 2N, which is the default.
+MR_N_MODE = {0: "2N Mode", 1: "1N Mode"}
+MR_DISABLED_ENABLED = {0: "Disabled", 1: "Enabled"}
+MR_CS_ASSERTION = {0: "Multiple Cycles", 1: "Single Cycle"}
+# MR3's two nibbles each pull write leveling in by whole clocks.
+MR_WRITE_LEVELING_CYCLES = {
+    code: "0 tCK" if code == 0 else "-%d tCK" % code for code in range(16)
+}
+# MR4 OP[2:0]. Only the code this bench returns is named -- 2, beside the
+# reference tool's "tREFI x1" -- because the published orderings of this
+# field disagree with each other; any other code prints as itself.
+MR_MINIMUM_REFRESH_RATE = {2: "tREFI x1"}
+MR_RATE_INDICATOR = {0: "Not implemented", 1: "Implemented"}
+# MR4 OP[7], the temperature update flag: set when OP[2:0] has changed since
+# the controller last read MR4.
+MR_TUF = {0: "No Change", 1: "Changed"}
 # DDR5 MR0 encodes CAS latency in A6:A2. The codes are the even CL values
 # from 22 through 84; code 8 is the reference machine's CL38 setting.
 MR_TCL = {code: str(22 + 2 * code) for code in range(32)}
@@ -7592,6 +7814,21 @@ MISC_MODE_REGISTER_STATE = (
     ("DM Enable", 0x05, 5, 1, MR_ENABLED),
     ("tWR_MR", 0x06, 0, 4, MR_TWR),
     ("tRTP_MR", 0x06, 4, 4, MR_TRTP),
+    # MR2, MR3 and MR4 as JESD79-5 lays them out. Checked against the reference
+    # tool on the Z790 MPOWER, same boot: MR2 reads 0x90 -- CS assertion
+    # duration and internal write timing set, the rest clear -- MR3 reads 0x04,
+    # and MR4 0x12, and every row below decodes to what that tool shows.
+    ("Write Leveling", 0x02, 1, 1, MR_WRITE_LEVELING),
+    ("N-Mode", 0x02, 2, 1, MR_N_MODE),
+    ("MPSM", 0x02, 3, 1, MR_DISABLED_ENABLED),
+    ("CS Assertion Duration", 0x02, 4, 1, MR_CS_ASSERTION),
+    ("Device 15 MPSM", 0x02, 5, 1, MR_DISABLED_ENABLED),
+    ("Internal Write Timing", 0x02, 7, 1, MR_DISABLED_ENABLED),
+    ("Write Leveling LB", 0x03, 0, 4, MR_WRITE_LEVELING_CYCLES),
+    ("Write Leveling UB", 0x03, 4, 4, MR_WRITE_LEVELING_CYCLES),
+    ("Minimum Refresh Rate", 0x04, 0, 3, MR_MINIMUM_REFRESH_RATE),
+    ("Refresh Interval Rate Indicator", 0x04, 3, 1, MR_RATE_INDICATOR),
+    ("TUF", 0x04, 7, 1, MR_TUF),
     ("Read DQS Offset Timing", 0x28, 0, 3, MR_READ_DQS_OFFSET),
 )
 
@@ -7673,6 +7910,19 @@ DDR5_ONLY_MISC_ROWS = (
     "ECS Reset Counter",
     "ECS Counts",
     "ECS Error Register Index",
+    # DDR4's MR2 and MR3 hold other things at these bits, and its MR4 has no
+    # refresh-rate field; see MISC_MODE_REGISTER_STATE.
+    "Write Leveling",
+    "N-Mode",
+    "MPSM",
+    "CS Assertion Duration",
+    "Device 15 MPSM",
+    "Internal Write Timing",
+    "Write Leveling LB",
+    "Write Leveling UB",
+    "Minimum Refresh Rate",
+    "Refresh Interval Rate Indicator",
+    "TUF",
 )
 
 # Rows DDR4 does have and this cannot reach. Kept apart from the list above
@@ -7992,7 +8242,7 @@ def _install_misc_tab():
     # Rows start with a channel-A-compatible getter so older consumers remain
     # valid. The source split below promotes type-5 mode-register rows to
     # independent A1/B1 getters and moves fixed type-6 controller registers
-    # into Settings.
+    # into Settings; the ones in the per-channel block go on to Training.
     def cke(bit_start, bit_length):
         return lambda base: _misc_number(
             MISC_CKE_CONFIG_OFFSET, bit_start, bit_length, base)
@@ -8018,6 +8268,17 @@ def _install_misc_tab():
         row["base_reader"] = read
         return row
 
+    def register_row(name, category, column, offset, read):
+        """Build one fixed-offset row, keeping what a channel-B read needs.
+
+        Shown from channel A until _move_channel_registers_to_training looks
+        at the offset: only the per-channel block has a channel-B copy.
+        """
+        row = _misc_row(name, category, column, _channel_a(read))
+        row["base_reader"] = read
+        row["register_offset"] = offset
+        return row
+
     def mode_register(number, bit_start, bit_length, decode):
         return lambda base: _misc_mode_register_value(
             number, bit_start, bit_length, decode, base)
@@ -8032,14 +8293,14 @@ def _install_misc_tab():
     # the registers are read, and whatever they answer is what shows.
     rows = []
     rows.extend(
-        _misc_row(name, "Power Down", "Right",
-                  _channel_a(cke(bit_start, bit_length)))
+        register_row(name, "Power Down", "Right", MISC_CKE_CONFIG_OFFSET,
+                     cke(bit_start, bit_length))
         for name, bit_start, bit_length in MISC_CKE_CONFIG_FIELDS
     )
 
     rows.extend(
-        _misc_row(name, "Command", "Right",
-                  _channel_a(gs(bit_start, bit_length)))
+        register_row(name, "Command", "Right", MISC_GS_CONFIG_OFFSET,
+                     gs(bit_start, bit_length))
         for name, bit_start, bit_length in MISC_GS_CONFIG_FIELDS
     )
     # Burst Length sits with the command configuration, where the reference
@@ -8078,9 +8339,8 @@ def _install_misc_tab():
 
 
     rows.extend(
-        _misc_row(name, "Features", "Right",
-                  _channel_a(switch(offset, bit_start, bit_length,
-                                    inverted)))
+        register_row(name, "Features", "Right", offset,
+                     switch(offset, bit_start, bit_length, inverted))
         for name, offset, bit_start, bit_length, inverted
         in MISC_FEATURE_FIELDS
     )
@@ -8641,14 +8901,18 @@ SKEW_MISC_COLUMNS = {
     "RTT": "Left",
     "ODT": "Left",
     "RON": "Left",
-    "DLL / LATENCY": "Left",
+    # Above Command: the first column ends with Power Down, and the middle
+    # one with Features and Refresh.
+    "DLL / LATENCY": "Right",
     "DATA CONTROL": "Left",
     "MR0 / MR1": "Left",
     "MR5 / MR6": "Left",
-    "ODT DELAY": "Middle",
+    # The ODT timing groups read straight on from RTT, ODT and RON; VREF
+    # heads the middle column, above the DFE taps it is trained with.
+    "ODT DELAY": "Left",
     "DFE": "Middle",
     "VREF": "Middle",
-    "ODTL": "Middle",
+    "ODTL": "Left",
     "MPR / ACCESS": "Right",
     "MR2 / MR3": "Middle",
     "Command": "Right",
@@ -8695,9 +8959,10 @@ def _combine_intel_detail_tabs():
         name = str(timing.get("name", ""))
 
         if tab == "Timings" and name == "Allow 2cyc B2B LPDDR":
-            # This is one shared command-scheduler policy bit. It is not a
-            # trained, per-DIMM result, despite the LPDDR name, so the IMC
-            # Command section is the truthful place for it.
+            # A command-scheduler policy bit, not a trained result, despite
+            # the LPDDR name. Filed under IMC's Command section here; its
+            # register is per channel, so _move_channel_registers_to_training
+            # takes it on to Training with both channels' reads.
             timing.update({
                 "Tab": IMC_TAB,
                 "Category": "Command",
@@ -8764,8 +9029,8 @@ _combine_intel_detail_tabs()
 # These descriptors were recovered from the supplied reference executable
 # and checked against the matching live dump on the ASUS Z790-A D4. A direct
 # read on the same boot reproduced every value, including the 64-bit fields
-# above bit 31. They stay DDR4-specific because the reference's DDR5 table
-# changes several bit positions in DDR_REFRESH_CTL2.
+# above bit 31. Raptor Lake DDR5 carries them at the same places; see
+# DDR5_CONFIRMED_ADDITIONAL_GROUPS for how that was established.
 DDR4_REFRESH_STAGGER_MODE = {0: "Per DIMM", 1: "Per Channel"}
 DDR4_ENABLED = {0: "Disabled", 1: "Enabled"}
 DDR4_INVERTED_DISABLE = {0: "Enabled", 1: "Disabled"}
@@ -8789,11 +9054,23 @@ DDR4_ADDITIONAL_COMMAND_FIELDS = (
     ("Multi-Cycle Command", 0xE088, 51, 1, "wide"),
 )
 
+# DDR5 names Multi-Cycle the way the reference tool does; Write 0 stays a
+# count.
+DDR5_ADDITIONAL_COMMAND_FORMULAS = {"Multi-Cycle Command": DDR4_ENABLED}
+
 DDR4_ADDITIONAL_POWER_DOWN_FIELDS = (
     # MC_INIT_STATE_G: the reference executable descriptor is 0x4278[12].
     # On Raptor Lake DDR4 that maps to MCHBAR 0xE278 bit 12 and reads 0 on
     # both live controllers, matching the supplied DDR4 reference dump.
     ("Add 1 QCLK Delay", 0xE278, 12, 1),
+)
+
+# DDR5 takes Add 1 QCLK Delay from the reference executable's Raptor Lake
+# table, which puts it at 0xE478[12] -- the register Dec tCWL is confirmed in,
+# by the same 0x4278 -> 0xE478 step. Whether DDR4's 0xE278 above should follow
+# is for a DDR4 bench to settle; both read 0 there.
+DDR5_ADDITIONAL_POWER_DOWN_FIELDS = (
+    ("Add 1 QCLK Delay", 0xE478, 12, 1),
 )
 
 DDR4_ADDITIONAL_CWL_FIELDS = (
@@ -8808,13 +9085,41 @@ DDR4_ADDITIONAL_PHY_FIELDS = (
 )
 
 
+# Raptor Lake DDR5 carries all of them at the same places. The reference
+# executable's own Raptor Lake field table -- read out of the binary, whose
+# 0xE4xx records match every field this project already had confirmed, tREFIx9
+# at 0xE438[31:24] and tRFCpb at 0xE488[20:10] among them -- names
+# 0xE444[12:0], [15], [16], [13], [14], [17] and [31:19] for the seven refresh
+# rows, 0xE088[49] and [51] for Write 0 and Multi-Cycle, and 0xE478[5:0],
+# [11:6] and [12] for Dec tCWL, Add tCWL and Add 1 QCLK Delay. The "DDR5 table"
+# that moves refresh bits is its other one, with 0x42xx offsets, for another
+# platform.
+#
+# Read on the Z790 MPOWER on the reference dump's boot, every one decodes to
+# what that tool shows: Dec tCWL 3, the PHY fields 2, 200 and 1200, and the
+# refresh, command and power-down fields their zeroes and Enabled/Per DIMM.
+DDR5_CONFIRMED_ADDITIONAL_GROUPS = (
+    "refresh", "command", "power_down", "cwl", "phy",
+)
+
+
 def _install_additional_ddr4_controller_fields():
-    """Expose the remaining verified fixed-register fields on IMC."""
-    if active_platform() != LGA1700_DDR4:
+    """Expose the remaining verified fixed-register fields.
+
+    Every group on LGA1700 DDR4; on LGA1700 DDR5 only the groups in
+    DDR5_CONFIRMED_ADDITIONAL_GROUPS. The per-channel ones reach Training
+    through _move_channel_registers_to_training.
+    """
+    platform = active_platform()
+    if platform == LGA1700_DDR4:
+        groups = ("refresh", "command", "power_down", "cwl", "phy")
+    elif platform == LGA1700_DDR5:
+        groups = DDR5_CONFIRMED_ADDITIONAL_GROUPS
+    else:
         return
 
     for name, offset, start, length, formula in (
-            DDR4_ADDITIONAL_REFRESH_FIELDS):
+            DDR4_ADDITIONAL_REFRESH_FIELDS if "refresh" in groups else ()):
         row = {
             "name": name,
             "address": MCHBAR + offset,
@@ -8829,9 +9134,11 @@ def _install_additional_ddr4_controller_fields():
             row["Formula"] = formula
         TIMINGS.append(row)
 
+    ddr5 = platform == LGA1700_DDR5
     for name, offset, start, length, read_type in (
-            DDR4_ADDITIONAL_COMMAND_FIELDS):
-        TIMINGS.append({
+            DDR4_ADDITIONAL_COMMAND_FIELDS if "command" in groups else ()):
+        formula = DDR5_ADDITIONAL_COMMAND_FORMULAS.get(name) if ddr5 else None
+        row = {
             "name": name,
             "address": MCHBAR + offset,
             "parameters": {"bit_start": start, "bit_length": length},
@@ -8840,9 +9147,17 @@ def _install_additional_ddr4_controller_fields():
             "Column": "Left",
             "read_type": read_type,
             "source_scope": "controller",
-        })
+        }
+        if formula is not None:
+            row["Formula"] = formula
+        TIMINGS.append(row)
 
-    for name, offset, start, length in DDR4_ADDITIONAL_POWER_DOWN_FIELDS:
+    power_down_fields = (
+        DDR5_ADDITIONAL_POWER_DOWN_FIELDS if ddr5
+        else DDR4_ADDITIONAL_POWER_DOWN_FIELDS
+    )
+    for name, offset, start, length in (
+            power_down_fields if "power_down" in groups else ()):
         TIMINGS.append({
             "name": name,
             "address": MCHBAR + offset,
@@ -8854,28 +9169,30 @@ def _install_additional_ddr4_controller_fields():
             "source_scope": "controller",
         })
 
-    for name, offset, start, length in DDR4_ADDITIONAL_CWL_FIELDS:
+    for name, offset, start, length in (
+            DDR4_ADDITIONAL_CWL_FIELDS if "cwl" in groups else ()):
         row = {
             "name": name,
             "address": MCHBAR + offset,
             "parameters": {"bit_start": start, "bit_length": length},
             "Category": "DLL / LATENCY",
             "Tab": "Training",
-            "Column": "Left",
+            "Column": SKEW_MISC_COLUMNS["DLL / LATENCY"],
             "read_type": "standard",
             "source_scope": "module",
         }
         _promote_standard_row(row)
         TIMINGS.append(row)
 
-    for name, offset, start, length in DDR4_ADDITIONAL_PHY_FIELDS:
+    for name, offset, start, length in (
+            DDR4_ADDITIONAL_PHY_FIELDS if "phy" in groups else ()):
         TIMINGS.append({
             "name": name,
             "address": MCHBAR + offset,
             "parameters": {"bit_start": start, "bit_length": length},
             "Category": "PHY Control",
             "Tab": IMC_TAB,
-            "Column": "Right",
+            "Column": PHY_SETTINGS_COLUMNS["PHY Control"],
             "read_type": "standard",
             "source_scope": "controller",
         })
@@ -8908,6 +9225,143 @@ def _move_module_refresh_mode_to_timings():
 
 
 _move_module_refresh_mode_to_timings()
+
+
+# --- A register each module has its own copy of belongs on Training.
+#
+# The 0xE000 scheduler block has a copy in each module's controller. The
+# Timings tab already reads it at CHANNEL_B -- tRDRD from 0xE00C, tREFIx9 and
+# Rank Idle from 0xE438, tRFCpb from 0xE488 -- and every IMC field in the block
+# reads back from B1's controller as well. Showing those fields as one value
+# from A1 hid the second module's reading, so they get both reads and join
+# Training, where every row is dual-source.
+#
+# So does the 0xD800 block where B1 is a whole controller away: Error
+# Correction (0xD804) and Self Refresh (0xD860) read 0x100 and 0x10200 in both
+# controllers on the Z790 MPOWER. A sub-channel step from there lands on the
+# scheduler block instead -- 0xD804 + 0x800 is tRCD's 0xE004 -- so on such a
+# platform they stay single.
+#
+# Nothing else. The DDRIO/PHY block below 0x4000, 0x3E00 and 0x5E00 read 0 or
+# 0xFFFFFFFF in MC1's window: one PHY and one global block for both modules,
+# which stay on IMC as the one value they are.
+CHANNEL_REGISTER_BLOCK = range(0xE000, 0xE800)
+CONTROLLER_REGISTER_BLOCK = range(0xD800, 0xD900)
+
+
+def _has_channel_b_copy(offset):
+    """Whether a register at this MCHBAR offset has B1's own copy."""
+    if offset in CHANNEL_REGISTER_BLOCK:
+        return True
+    return (CHANNEL_B_OFFSET == CHANNEL_B_CONTROLLER_OFFSET
+            and offset in CONTROLLER_REGISTER_BLOCK)
+
+# Kept apart from the mode-register groups, which stay where they were. Power
+# Down closes the first column under the ODT groups; Features and Refresh
+# follow the DFE taps in the middle. That leaves 43 lines in each of the
+# three, the third being full of mode registers since MR2, MR3 and MR4.
+TRAINING_CHANNEL_REGISTER_COLUMNS = {
+    "Command": "Right",
+    "Refresh": "Middle",
+    "Features": "Middle",
+    "Power Down": "Left",
+}
+
+
+def _channel_register_offset(timing):
+    """The MCHBAR offset a single-source row reads, if it names one."""
+    address = timing.get("address")
+    if isinstance(address, int) and not isinstance(address, bool):
+        return address - MCHBAR
+    return timing.get("register_offset")
+
+
+# DDR5's IMC, once those rows have left it: VREF alone would be a third the
+# height of the signal groups beside it, so PHY Control and Features join it.
+DDR5_PHY_SETTINGS_COLUMNS = {"PHY Control": "Left", "Features": "Left"}
+
+
+def _group_imc_sections():
+    """Keep each IMC section one block, in the order the sections first appear.
+
+    The three PHY fields added for DDR5 arrive after Features, so PHY Control
+    was drawn twice -- once with the DLL codes, once again at the foot of the
+    column. DDR4 has its own ordering pass for this; see
+    _organize_ddr4_imc_sections.
+    """
+    positions = [index for index, timing in enumerate(TIMINGS)
+                 if timing.get("Tab") == IMC_TAB]
+    rows = [TIMINGS[index] for index in positions]
+    first = {}
+    for row in rows:
+        first.setdefault(row.get("Category"), len(first))
+    rows.sort(key=lambda row: first[row.get("Category")])
+    for index, row in zip(positions, rows):
+        TIMINGS[index] = row
+
+
+def _move_channel_registers_to_training():
+    """LGA1700 DDR5 only, the platform these copies were read on.
+
+    DDR4's IMC and Training keep the layout they were built with. Core Ultra
+    200S keeps its as well: its second module still reads a sub-channel step
+    away, which on Raptor Lake is the first module's other half, so a moved
+    row there could show A1 twice under two names.
+    """
+    platform = active_platform()
+    if platform != LGA1700_DDR4:
+        # Display order only, and wanted wherever IMC is built this way: Core
+        # Ultra 200S drew its Command section in two pieces as well. DDR4
+        # orders its IMC in _organize_ddr4_imc_sections.
+        _group_imc_sections()
+    if platform != LGA1700_DDR5:
+        return
+    for timing in TIMINGS:
+        if timing.get("Tab") == IMC_TAB:
+            timing["Column"] = DDR5_PHY_SETTINGS_COLUMNS.get(
+                timing.get("Category"), timing.get("Column"))
+    moved = []
+    for timing in TIMINGS:
+        if timing.get("Tab") != IMC_TAB or is_dual_timing(timing):
+            continue
+        offset = _channel_register_offset(timing)
+        if offset is None or not _has_channel_b_copy(offset):
+            continue
+        reader = timing.get("base_reader")
+        if reader is not None:
+            _promote_computed_row(timing, reader)
+        elif not _promote_standard_row(timing):
+            continue
+        category = timing.get("Category")
+        timing.update({
+            "Tab": "Training",
+            "Column": TRAINING_CHANNEL_REGISTER_COLUMNS.get(
+                category, timing.get("Column", "Right")),
+            "source_scope": "module",
+        })
+        moved.append(timing)
+
+    # Re-filed as whole sections. The rows were built by separate passes --
+    # DDR4's extra refresh fields arrive long after the refresh policy rows --
+    # and a section drawn from rows scattered through the table is split in
+    # two. Command joins the Command section Training already has.
+    for timing in moved:
+        TIMINGS.remove(timing)
+    for category in dict.fromkeys(t.get("Category") for t in moved):
+        group = [t for t in moved if t.get("Category") == category]
+        last = max(
+            (index for index, timing in enumerate(TIMINGS)
+             if timing.get("Tab") == "Training"
+             and timing.get("Category") == category),
+            default=None,
+        )
+        if last is None:
+            TIMINGS.extend(group)
+        else:
+            TIMINGS[last + 1:last + 1] = group
+
+
+_move_channel_registers_to_training()
 
 
 # --- Intel signal presentation.
@@ -9203,3 +9657,134 @@ def _organize_ddr4_imc_sections():
 
 
 _organize_ddr4_imc_sections()
+
+
+# --- LGA1700 DDR5, read at a glance.
+#
+# Everything below is display only and LGA1700 DDR5 only: rows dropped, values
+# reworded and rows relabelled, per row rather than in the shared decode
+# tables, which DDR4 and the other platforms read too. It runs once, last,
+# after every pass that installs, moves or regroups a row, so no row it names
+# can be rebuilt behind it.
+
+# Training rows that only say what the DRAM is able to do: none can be tuned,
+# none changes, and on the bench they read Not Supported, Not implemented and
+# Not supported. Their names were also the widest on the tab, which is what
+# held Training at 1087px.
+DDR5_TRAINING_REMOVED = (
+    "Wide Range",
+    "Package Output Driver Test Mode",
+    "Refresh Interval Rate Indicator",
+    "SRX/NOP Clock-Sync Support",
+)
+
+# Labels, the rows keeping their own names for everything keyed on them:
+#
+# QCLK Ratio reads 100.00 or 133.33 MHz, the memory PLL reference the ratio
+#   counts in, not the ratio, which is DRAM Ratio.
+# DDR5 calls the short column-to-column delay tCCD_S, beside the tCCD_L,
+#   tCCD_L_WR and tCCD_L_WR2 rows under it.
+# MR14 bit 7 switches manual ECS, so "ECS Mode: Disabled" read as ECS off.
+# The slew row carried the register field's squeezed name, CmdSlewStatLegEn.
+# Realtime Memory is Intel's Realtime Memory Timing, as the BIOS names it.
+DDR5_DISPLAY_NAMES = {
+    "QCLK Ratio": "QCLK Reference",
+    "tCCD": "tCCD_S",
+    "ECS Mode": "Manual ECS",
+    "CMD SlewStatlegen": "CMD Slew Static Leg",
+    "Realtime Memory": "Realtime Memory Timing",
+}
+
+# The same readings in fewer words, on Training. "0 RZQ OFF" puts a
+# resistance on a termination that is off. The preambles keep their bit
+# pattern only where two share a length -- the read preamble's two 2 tCK
+# settings.
+DDR5_BRIEF_VALUES = {
+    "0 RZQ OFF": "Off",
+    "1 tCK - 10 Pattern": "1 tCK",
+    "2 tCK - 0010 Pattern": "2 tCK (0010)",
+    "2 tCK - 1110 Pattern": "2 tCK (1110)",
+    "3 tCK - 000010 Pattern": "3 tCK",
+    "4 tCK - 00001010 Pattern": "4 tCK",
+    "0.5 tCK - 0 Pattern": "0.5 tCK",
+    "1.5 tCK - 010 Pattern": "1.5 tCK",
+    "Manual ECS Mode Disabled": "Disabled",
+    "Manual ECS Mode Enabled": "Enabled",
+    "ECS counts Rows with errors": "Rows",
+    "ECS counts Code words with errors": "Code Words",
+    "Timer Stops via MPC Command": "MPC Command",
+}
+# Row by row, where a value reads differently on one row. The write preamble
+# has one setting per length, so no pattern is needed to tell its 2 tCK from
+# another. The slew row is a one-bit switch that read as a bare 1.
+IMC_SWITCH_WORDS = {"0": "Disabled", "1": "Enabled"}
+DDR5_BRIEF_VALUES_BY_ROW = {
+    "Write Preamble": {"2 tCK - 0010 Pattern": "2 tCK"},
+    "CMD SlewStatlegen": IMC_SWITCH_WORDS,
+}
+_DQS_TIMER_STOP = re.compile(r"Timer Stops at (\d+)(?:st|nd|rd|th) clocks")
+
+
+def imc_switch_text(value):
+    """A one-bit reading as Enabled or Disabled; anything else as it came."""
+    return IMC_SWITCH_WORDS.get(str(value).strip(), value)
+
+
+def brief_ddr5_value(value, row=None):
+    """``value`` as LGA1700 DDR5 words it, on row ``row``."""
+    # A row's own words first, matched on the text a number shows as too:
+    # the slew bit reads back as 1, not "1".
+    own = DDR5_BRIEF_VALUES_BY_ROW.get(row, {})
+    if str(value).strip() in own:
+        return own[str(value).strip()]
+    if not isinstance(value, str):
+        return value
+    match = _DQS_TIMER_STOP.fullmatch(value)
+    if match:
+        return "%s clocks" % match.group(1)
+    return DDR5_BRIEF_VALUES.get(value, value)
+
+
+def _reworded(read, row):
+    """A reader whose answer comes back as brief_ddr5_value words it."""
+    @wraps(read)
+    def reword(*args, **kwargs):
+        return brief_ddr5_value(read(*args, **kwargs), row)
+    return reword
+
+
+def _present_ddr5_rows():
+    """Drop, reword and relabel LGA1700 DDR5's rows, once and last.
+
+    Values are reworded on Training, where the long mode-register and
+    termination text lives, and on the rows DDR5_BRIEF_VALUES_BY_ROW names
+    wherever they are; Summary shows the same Training rows, so its RTT and
+    ODT readings say Off as well. Each row gets its own shortened copy of its
+    table and its readers are wrapped.
+    """
+    if not _is_lga1700_ddr5():
+        return
+    TIMINGS[:] = [
+        timing for timing in TIMINGS
+        if not (timing.get("Tab") == "Training"
+                and timing.get("name") in DDR5_TRAINING_REMOVED)
+    ]
+    for timing in TIMINGS:
+        name = timing.get("name")
+        label = DDR5_DISPLAY_NAMES.get(name)
+        if label:
+            timing["display_name"] = label
+        if timing.get("Tab") != "Training" and name not in DDR5_BRIEF_VALUES_BY_ROW:
+            continue
+        formula = timing.get("Formula")
+        if isinstance(formula, dict) and any(
+                brief_ddr5_value(text, name) != text
+                for text in formula.values()):
+            timing["Formula"] = {code: brief_ddr5_value(text, name)
+                                 for code, text in formula.items()}
+        for key in ("value", "value_a", "value_b", "base_reader"):
+            if callable(timing.get(key)):
+                timing[key] = _reworded(timing[key], name)
+
+
+_present_ddr5_rows()

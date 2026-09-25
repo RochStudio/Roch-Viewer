@@ -33,8 +33,8 @@ NVML; bus width, via GetRamBusWidth) agreed with themselves as well.
 
 Two values on that tab cannot be read at all: ROP and TM unit counts, which
 have no entry point on this driver, and a chip's SKU, which has none anywhere.
-Both come from GPU_DEVICE_TABLE, and are the only claims here rather than
-readings.
+Neither is shown. The code name is the one the driver reports -- the core
+family, "AD104" -- rather than a SKU a table would have to claim.
 """
 
 import ctypes
@@ -60,39 +60,6 @@ BOARD_VENDORS = {
     0x10DE: "NVIDIA",
 }
 
-# Per PCI device ID: the marketed chip name, and the ROP and TM unit counts.
-# Nothing on the card reports any of the three, so these are claims rather
-# than readings. An unlisted device gets no row: guessing from a neighbouring
-# part is how a table like this starts being wrong quietly.
-#
-# The driver does report a chip name -- "AD104-A", the core family -- and it
-# is used when this table has no entry. CPU-Z shows the SKU, "AD104-250".
-#
-# 184 TM units, not 368: CPU-Z's window says 184 while its own text report
-# says 368 for the same card. The window agrees with every other source.
-# TM units follow the shader count on every Ada part: four per SM, and an SM
-# is 128 shaders. The 4070's listed 5888 / 128 = 46 SMs gives 184, which is
-# the number CPU-Z's window shows, so the rule reproduces the entry that was
-# checked against hardware. ROP counts do not follow from anything readable --
-# they belong to the raster partitions the SKU was cut with -- so each is the
-# vendor's figure for that part, cross-checked against GPU-Z's database.
-#
-# 0x2782 is measured on this bench: the card reports 7680 shaders, which is 60
-# SMs and so 240 TM units, and GPU-Z reads 80 ROPs against the same card.
-GPU_DEVICE_TABLE = {
-    0x2684: ("AD102-300", 176, 512),       # GeForce RTX 4090
-    0x2704: ("AD103-300", 112, 304),       # GeForce RTX 4080
-    0x2782: ("AD104-400", 80, 240),        # GeForce RTX 4070 Ti
-    0x2786: ("AD104-250", 64, 184),        # GeForce RTX 4070
-    # Blackwell. The TM count follows the same rule as the Ada entries above
-    # and is derived rather than looked up: this card reports 8960 shaders,
-    # which is 70 SMs at 128 shaders each, and four TM units per SM gives 280.
-    # The ROP count does not follow from anything readable and is the vendor's
-    # figure for the part. Unlike 0x2782 it has not been cross-checked against
-    # a second tool on this bench, so it is the weaker half of the entry.
-    0x2C05: ("GB203-300", 96, 280),        # GeForce RTX 5070 Ti
-}
-
 # NVML architecture -> process node, keyed on the architecture because that is
 # what the node is a property of. 8 is Ada, measured here against CPU-Z's 4 nm;
 # the others are the neighbouring client architectures. A datacentre part of
@@ -106,12 +73,14 @@ NVML_ARCHITECTURE_NODES = {
 }
 
 # NVAPI's memory type and maker enumerations, neither of which is published.
-# Only the values this bench returned are named: 15 alongside CPU-Z reporting
-# GDDR6X, and 10 alongside Micron. That measurement contradicted the ordering
-# these enumerations are usually quoted with, which is why nothing here is
-# filled in from memory -- an unmeasured code prints as itself.
-NVAPI_RAM_TYPES = {15: "GDDR6X"}
-NVAPI_RAM_MAKERS = {10: "Micron"}
+# Only values a bench has returned are named, each beside what CPU-Z or GPU-Z
+# read from the same card: 15 and 10 with GDDR6X by Micron, and 16 and 6 on
+# an RTX 5070 Ti (GB203) whose GPU-Z line reads "GDDR7 (Hynix)". The first
+# measurement contradicted the ordering these enumerations are usually quoted
+# with, which is why nothing here is filled in from memory -- an unmeasured
+# code prints as itself.
+NVAPI_RAM_TYPES = {15: "GDDR6X", 16: "GDDR7"}
+NVAPI_RAM_MAKERS = {6: "SK hynix", 10: "Micron"}
 
 NVAPI_QUERIES = {
     "initialize": 0x0150E828,
@@ -326,6 +295,28 @@ def _nvml_query():
         ) == 0:
             found["architecture"] = architecture.value
 
+        vbios = ctypes.create_string_buffer(NVML_VBIOS_LENGTH)
+        if nvml.nvmlDeviceGetVbiosVersion(
+            handle, vbios, NVML_VBIOS_LENGTH
+        ) == 0:
+            text = vbios.value.decode("ascii", "ignore").strip()
+            if text:
+                found["vbios_version"] = text
+
+        # The fastest link this card and this slot can make between them -- a
+        # Gen 5 card in a Gen 4 slot reports 4 -- rather than the current one,
+        # which drops to Gen 1 whenever the card idles.
+        generation, width = ctypes.c_uint(0), ctypes.c_uint(0)
+        if (
+            nvml.nvmlDeviceGetMaxPcieLinkGeneration(
+                handle, ctypes.byref(generation)) == 0
+            and nvml.nvmlDeviceGetMaxPcieLinkWidth(
+                handle, ctypes.byref(width)) == 0
+            and generation.value and width.value
+        ):
+            found["pcie_generation"] = generation.value
+            found["pcie_width"] = width.value
+
         # Resizable BAR, without touching a BAR register. Sizing one the usual
         # way means writing all-ones to it, which is not something to do to a
         # live display; the aperture NVML reports says the same thing. Off, it
@@ -349,6 +340,14 @@ def _nvml_query():
             nvml.nvmlShutdown()
         except Exception:
             pass
+
+
+NVML_VBIOS_LENGTH = 32
+
+
+def pcie_link_text(generation, width):
+    """"PCIe 5.0 x16", the way GPU-Z's bus interface line writes it."""
+    return "PCIe %d.0 x%d" % (generation, width)
 
 
 def _named(table, code, prefix):
@@ -394,11 +393,6 @@ def _read_gpu(pnp_device_ids=None):
         found["board_manufacturer"] = BOARD_VENDORS.get(
             vendor, "0x%04X" % vendor
         )
-        listed = GPU_DEVICE_TABLE.get(pci["device_id"])
-        if listed:
-            code_name, rops, tmus = listed
-            found["code_name"] = code_name
-            found["rops_tmus"] = "%d / %d" % (rops, tmus)
 
     nvml = _nvml_query()
     if nvml.get("driver_version"):
@@ -406,6 +400,11 @@ def _read_gpu(pnp_device_ids=None):
     node = NVML_ARCHITECTURE_NODES.get(nvml.get("architecture"))
     if node:
         found["technology"] = node
+    if nvml.get("vbios_version"):
+        found["vbios_version"] = nvml["vbios_version"]
+    if nvml.get("pcie_generation"):
+        found["pcie_link"] = pcie_link_text(
+            nvml["pcie_generation"], nvml["pcie_width"])
     bar1, frame_buffer = nvml.get("bar1_total"), nvml.get("frame_buffer_total")
     if bar1 and frame_buffer:
         # Enabled means the aperture reaches the frame buffer. Compared with
@@ -421,20 +420,21 @@ def _read_gpu(pnp_device_ids=None):
     except Exception:
         return found
 
-    # The core family, kept only where the table above has no SKU for this
-    # device -- a reading is better than nothing, but the SKU is finer.
+    # The core family, as the driver reports it. The SKU suffix CPU-Z adds
+    # ("-250") is not readable anywhere, so it is not shown.
     code_name = nvapi.text("short_name")
-    if code_name and "code_name" not in found:
+    if code_name:
         found["code_name"] = code_name
     cores = nvapi.unsigned("core_count")
     if cores:
         found["cores"] = str(cores)
-    # Reported in kilobytes. Shown in gigabytes, the same figure CPU-Z prints:
-    # this card's 12576256 KB is 11.99 GB, not the 12 GB it is sold as,
-    # because part of the frame buffer is not reported here.
+    # Reported in kilobytes, less the part of the frame buffer the driver
+    # keeps for itself: 12576256 KB on a 12 GB card, 15.89 GB on a 16 GB one.
+    # Shown as the memory the card carries, the whole gigabytes GPU-Z gives
+    # (16384 MB); what is held back is well under half a gigabyte.
     frame_buffer_kb = nvapi.unsigned("frame_buffer_kb")
     if frame_buffer_kb:
-        found["memory_size"] = "%.2f GB" % (frame_buffer_kb / 1048576.0)
+        found["memory_size"] = "%d GB" % round(frame_buffer_kb / 1048576.0)
     width = nvapi.unsigned("ram_bus_width")
     if width:
         found["bus_width"] = "%d bits" % width

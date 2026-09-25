@@ -118,7 +118,8 @@ class VendorTest(unittest.TestCase):
     def test_the_bench_pmic_identifies_itself(self):
         # R3Ch/R3Dh 0x8A/0x8C, R3Bh 0x12 -> Richtek Power rev 2.1, which is
         # what ZenTimings shows for the same part.
-        self.assertEqual(t.decode_pmic_vendor(0x8A, 0x8C), "Richtek Power")
+        # JEP106's "Richtek Power", named as the SPD tab names it.
+        self.assertEqual(t.decode_pmic_vendor(0x8A, 0x8C), "Richtek")
         self.assertEqual(t.decode_pmic_revision(0x12), "2.1")
 
     def test_an_unlisted_vendor_reports_its_raw_id(self):

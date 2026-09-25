@@ -168,7 +168,7 @@ class ReferenceSignalLabelTest(unittest.TestCase):
             for row in rows:
                 with self.subTest(name=row.get("name")):
                     self.assertEqual(row.get("Tab"), SKEW_TAB)
-                    self.assertEqual(row.get("Column"), "Middle")
+                    self.assertEqual(row.get("Column"), "Left")
                     self.assertTrue(module.is_dual_timing(row))
                     self.assertEqual(
                         row["dynamic_params_a"]["mchbar"], module.MCHBAR

@@ -173,20 +173,58 @@ class UnscrolledTabFitTest(unittest.TestCase):
                 "Training values do not share one x-position in a column",
             )
 
-    def test_imc_columns_have_equal_widths(self):
+    def test_every_unscrolled_tab_fits_the_window_width(self):
+        # IMC, RTL and Voltages are narrower than the rest; nothing may run
+        # past the right-hand edge of the content area there.
+        for name in self.app.UNSCROLLED_TABS:
+            if name not in self.app.tabview._name_list:
+                continue
+            with self.subTest(tab=name):
+                self.show_tab_at_its_requested_size(name)
+                holder = self.app.tab_frames[name]
+                self.assertLessEqual(
+                    holder.winfo_reqwidth(), holder.winfo_width(),
+                    "%s needs %dpx across and has %dpx" % (
+                        name, holder.winfo_reqwidth(), holder.winfo_width()))
+
+    def test_imc_columns_keep_the_25px_gutter(self):
+        # Like every other tab: the leading column is as wide as its content,
+        # and the next column's text starts 25px after it -- the two panels'
+        # insets and the spacing between them.
         if "IMC" not in self.app.tabview._name_list:
             self.skipTest("IMC is not available for this profile")
         self.show_tab_at_its_requested_size("IMC")
-        widths = [
-            frame.winfo_width()
-            for frame in self.app.grid_frames["IMC"].values()
-            if frame.winfo_manager()
-        ]
-        self.assertEqual(len(widths), 2)
-        self.assertLessEqual(
-            max(widths) - min(widths), 1,
-            "IMC columns do not divide the viewport evenly",
-        )
+        columns = self.app.grid_frames["IMC"]
+        leading, following = columns["Left"], columns["Right"]
+        natural = leading.winfo_reqwidth()
+        self.assertIn(leading.winfo_width(), (natural, natural + 1))
+        self.assertEqual(
+            following.winfo_rootx()
+            - (leading.winfo_rootx() + leading.winfo_width()),
+            self.app.DETAIL_COLUMN_GAP)
+
+    def test_each_column_sits_inside_its_own_panel(self):
+        for name in ("System Info", "Timings", "Training", "IMC", "RTL",
+                     "Voltages"):
+            if name not in self.app.tabview._name_list:
+                continue
+            self.show_tab_at_its_requested_size(name)
+            self.app._finish_tab_shading(name)
+            self.root.update_idletasks()
+            holder = self.app.tab_frames[name]
+            bottom = holder.winfo_rooty() + holder.winfo_height()
+            for key, column in self.app.grid_frames[name].items():
+                if not column.winfo_ismapped():
+                    continue
+                with self.subTest(tab=name, column=key):
+                    panel = column._panel
+                    self.assertTrue(panel.winfo_ismapped())
+                    self.assertEqual(
+                        column.winfo_rootx() - panel.winfo_rootx(),
+                        self.app.PANEL_PADX)
+                    self.assertLessEqual(
+                        panel.winfo_rooty() + panel.winfo_height(), bottom,
+                        "the panel's bottom border is cut off")
 
     def test_tab_height_changes_only_at_the_bottom_edge(self):
         self.root.geometry("750x750+100+20")

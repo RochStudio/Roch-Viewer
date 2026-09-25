@@ -47,9 +47,10 @@ PARAMETERS = (
     ("vdd", "VDD (SWA)", "V", 3),
     ("vddq", "VDDQ (SWB)", "V", 3),
     ("vpp", "VPP (SWC)", "V", 3),
-    ("vin_bulk", "VIN Bulk", "V", 3),
-    ("vout_1v8", "VOUT 1.8V", "V", 3),
-    ("vout_1v0", "VOUT 1.0V", "V", 3),
+    # Named as the Voltages tab names the same PMIC readings.
+    ("vin_bulk", "VIN", "V", 3),
+    ("vout_1v8", "1.8V output", "V", 3),
+    ("vout_1v0", "1.0V output", "V", 3),
     # The sum only. The three per-rail figures it is made of were shown
     # above it and said nothing the total does not: VDD carries almost all
     # of a DDR5 module's draw, so the split read as the total, a small
@@ -63,6 +64,11 @@ MILLIVOLT_KEYS = frozenset(
 )
 
 COLUMNS = ("Parameter", "Current", "Min", "Max", "Average")
+
+# Counts rather than readings. A count since boot only climbs, so its maximum
+# is its current value and its minimum and average say nothing: these show
+# the count alone, and the other three cells stay empty.
+COUNTER_ROWS = frozenset({"WHEA Errors"})
 
 # Groups that belong below the per-DIMM panels rather than above them. The
 # sensor tables are built before any DIMM has answered, so a group meant for
@@ -206,17 +212,18 @@ def panel_identity(entry, module):
 
     # Left reads down the chips themselves; right reads down the stick they
     # are on and what powers it. Both makers are named for what they made --
-    # the ICs and the module -- because "manufacturer" alone fits either.
+    # the DRAM and the module -- because "manufacturer" alone fits either.
+    # Worded as the SPD tab words the same facts.
     left = [
-        ("IC Manufacturer", maker),
+        ("DRAM Manuf.", maker),
         ("DRAM Die", die),
-        ("Rank", module.get("rank_numeric") or "—"),
+        ("Ranks", module.get("rank_numeric") or "—"),
     ]
     right = [
-        ("DRAM Part Number", module.get("part_number") or "—"),
-        ("Module Manufacturer", module.get("spd_vendor")
+        ("Part Number", module.get("part_number") or "—"),
+        ("Module Manuf.", module.get("spd_vendor")
          or module.get("module_manufacturer") or "—"),
-        ("Capacity", "%d MB" % (capacity * 1024) if capacity else "—"),
+        ("Module Size", "%d GB" % capacity if capacity else "—"),
         ("PMIC", pmic),
     ]
     # The two sides are drawn in pairs, so the shorter one is padded rather
@@ -589,6 +596,12 @@ class DimmTelemetryWindow(ctk.CTkToplevel):
             current = self._sensor_cells.get((key, 1))
             if current is not None:
                 current.configure(text=str(text))
+            if key[-1] in COUNTER_ROWS:
+                for column in (2, 3, 4):
+                    cell = self._sensor_cells.get((key, column))
+                    if cell is not None:
+                        cell.configure(text="")
+                continue
             for column, tracked in (
                 (2, statistic.minimum), (3, statistic.maximum),
                 (4, statistic.average),

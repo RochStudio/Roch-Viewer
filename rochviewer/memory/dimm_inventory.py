@@ -379,6 +379,69 @@ def slots_used(connection=None):
         return None
 
 
+def _identity_for(module, identities):
+    """The SPD identity read from this module: by serial, then part number."""
+    serial = str(module.get("serial_number") or "").strip().upper()
+    if serial:
+        for identity in identities:
+            found = str(identity.get("serial_number") or "").strip().upper()
+            if found == serial:
+                return identity
+    part = str(module.get("part_number") or "").strip().upper()
+    for identity in identities:
+        if str(identity.get("part_number") or "").strip().upper() == part:
+            return identity
+    return None
+
+
+def apply_spd_ic(modules, identities):
+    """Put the DRAM maker and die each module's own SPD reports on its label.
+
+    ``ic`` starts as identify_dram_ic's answer, which is keyed on the part
+    number: right for a kit the table lists, "Unknown IC" for one it does not,
+    and wrong for one it lists wrongly -- the module is never asked. On DDR5
+    the SPD carries the DRAM maker and a stepping byte, so where it names the
+    maker that reading replaces the lookup. The die is the SPD's too when the
+    stepping decodes to one; a stepping no rule names keeps the table's die
+    only if the table agrees about the maker.
+
+    Returns copies, so the cached inventory keeps its own decode.
+    """
+    remaining = list(identities or [])
+    labelled = []
+    for module in modules:
+        module = dict(module)
+        identity = _identity_for(module, remaining)
+        if identity is not None:
+            remaining.remove(identity)
+            maker = str(identity.get("dram_manufacturer") or "").strip()
+            named = maker and maker != EM_DASH
+            if named and not maker.lower().startswith("0x"):
+                die = str(identity.get("dram_die") or "").strip()
+                if not die.endswith("-die"):
+                    table_maker, table_die = split_ic(module.get("ic"))
+                    die = table_die if table_maker == maker else EM_DASH
+                module["ic"] = (
+                    "%s %s" % (maker, die) if die != EM_DASH
+                    else "%s (die unknown)" % maker
+                )
+        labelled.append(module)
+    return labelled
+
+
+def read_modules_with_spd_ic(refresh=False):
+    """read_modules, with each module's IC label read from its SPD where
+    the SPD answers."""
+    modules = read_modules(refresh=refresh)
+    try:
+        from rochviewer.memory.ddr5_spd import read_identity
+
+        identities = read_identity()
+    except Exception:
+        identities = []
+    return apply_spd_ic(modules, identities)
+
+
 def shared_value(modules, reader):
     """Report one value for the whole set, or every distinct value.
 

@@ -46,9 +46,12 @@ def matches(filter_text, haystack):
 
 
 class EntryListTest(unittest.TestCase):
-    def test_it_covers_the_five_reading_tabs(self):
+    def test_it_covers_the_reading_tabs(self):
+        # Voltages included, so the search and the dump cover the rails too.
+        # SPD is added on its own, from the modules the SPD tab reads.
         self.assertEqual(TimingGUI.ADVANCED_TABS,
-                         ("System Info", "Timings", "Training", "IMC", "RTL"))
+                         ("System Info", "Timings", "Training", "IMC", "RTL",
+                          "Voltages"))
 
     def test_rows_are_grouped_by_tab_in_tab_order(self):
         # Built tab by tab rather than by walking TIMINGS once, so the window
@@ -61,7 +64,7 @@ class EntryListTest(unittest.TestCase):
             {"name": "CMD SComp", "Tab": "Training", "Category": "CMD"},
             {"name": "DLL BWSEL", "Tab": "IMC", "Category": "Misc Additional"},
         ])
-        self.assertEqual([tab for tab, _, _, _ in entries],
+        self.assertEqual([tab for tab, *_ in entries],
                          ["System Info", "Timings", "Training", "IMC", "RTL"])
 
     def test_spacer_rows_are_left_out(self):
@@ -73,7 +76,7 @@ class EntryListTest(unittest.TestCase):
             {"name": "   ", "Tab": "Timings", "Category": "Primary"},
             {"Tab": "Timings", "Category": "Primary"},
         ])
-        self.assertEqual([name for _, _, name, _ in entries], ["tCL"])
+        self.assertEqual([name for _, _, name, *_ in entries], ["tCL"])
 
     def test_rows_hidden_from_the_tabs_stay_hidden_here(self):
         entries = build_entries([
@@ -81,7 +84,7 @@ class EntryListTest(unittest.TestCase):
             {"name": "Secret", "Tab": "Timings", "Category": "Primary",
              "diagnostic": True},
         ])
-        self.assertEqual([name for _, _, name, _ in entries], ["tCL"])
+        self.assertEqual([name for _, _, name, *_ in entries], ["tCL"])
 
     def test_rows_from_other_tabs_are_left_out(self):
         entries = build_entries([
@@ -89,7 +92,7 @@ class EntryListTest(unittest.TestCase):
             {"name": "RTL", "Tab": "Summary", "Category": "General"},
             {"name": "VDD", "Tab": "Sensors", "Category": "Rails"},
         ])
-        self.assertEqual([name for _, _, name, _ in entries], ["tCL"])
+        self.assertEqual([name for _, _, name, *_ in entries], ["tCL"])
 
     def test_opted_in_diagnostics_are_available_for_dump(self):
         entries = build_entries([
@@ -97,7 +100,7 @@ class EntryListTest(unittest.TestCase):
              "diagnostic": True, "advanced_only": True},
             {"name": "Hidden", "Tab": "Training", "diagnostic": True},
         ])
-        self.assertEqual([name for _, _, name, _ in entries], ["MR1 raw"])
+        self.assertEqual([name for _, _, name, *_ in entries], ["MR1 raw"])
         self.assertEqual(entries[0][3](), "<MR1 raw>")
 
     def test_each_row_reads_its_own_timing(self):
@@ -107,14 +110,87 @@ class EntryListTest(unittest.TestCase):
             {"name": "tCL", "Tab": "Timings", "Category": "Primary"},
             {"name": "tRCD", "Tab": "Timings", "Category": "Primary"},
         ])
-        self.assertEqual([read() for _, _, _, read in entries],
+        self.assertEqual([read() for _, _, _, read, *_ in entries],
                          ["<tCL>", "<tRCD>"])
 
     def test_the_real_table_produces_rows(self):
         from rochviewer.ui import main
         entries = build_entries(main.TIMINGS)
         self.assertTrue(entries)
-        self.assertTrue(all(name.strip() for _, _, name, _ in entries))
+        self.assertTrue(all(name.strip() for _, _, name, *_ in entries))
+
+
+class LabelTest(unittest.TestCase):
+    """The window names a row as its tab does; the dump keeps its own name."""
+
+    def test_the_tab_label_rides_with_the_entry(self):
+        entries = build_entries([
+            {"name": "QCLK Ratio", "display_name": "QCLK Reference",
+             "Tab": "System Info", "Category": "Clocks"},
+            {"name": "tCL", "Tab": "Timings", "Category": "Primary"},
+        ])
+        self.assertEqual([entry[4] for entry in entries],
+                         ["QCLK Reference", "tCL"])
+
+    def test_the_dump_keeps_the_rows_own_name(self):
+        from rochviewer.ui.advanced_window import format_dump
+
+        text = format_dump([("System Info", "Clocks", "QCLK Ratio",
+                             lambda: "100.00 MHz", "QCLK Reference")])
+        self.assertIn("QCLK Ratio", text)
+        self.assertNotIn("QCLK Reference", text)
+
+
+class SpdEntryTest(unittest.TestCase):
+    def entries(self, modules, channels=("A1", "B1")):
+        stand_in = types.SimpleNamespace(
+            _spd_modules=modules,
+            _spd_system_values={"system_capacity": "32 GB"},
+            _channel_headers=lambda _channel, a, b: channels,
+        )
+        stand_in._spd_field_text = (
+            lambda module, key: TimingGUI._spd_field_text(stand_in, module, key))
+        return TimingGUI._advanced_spd_entries(stand_in)
+
+    def test_a_module_the_headings_do_not_name_keeps_a_column(self):
+        # One slot matches and the other is named differently: the second
+        # module takes the free column rather than being left out.
+        modules = [{"slot": "A1", "part_number": "KIT-A"},
+                   {"slot": "B1", "part_number": "KIT-B"}]
+        part = next(read for _t, category, _n, read, label
+                    in self.entries(modules, ("A1", "B2"))
+                    if label == "Part Number")
+        self.assertEqual(part(), ("KIT-A", "KIT-B"))
+
+    def test_each_module_takes_its_slots_column(self):
+        modules = [
+            {"slot": "B1", "part_number": "KIT-B", "address": 0x52,
+             "profiles": [{"name": "XMP-8000", "cl": 38}]},
+            {"slot": "A1", "part_number": "KIT-A", "address": 0x50,
+             "profiles": [{"name": "XMP-8000", "cl": 40}]},
+        ]
+        by_label = {}
+        for tab, category, _name, read, label in self.entries(modules):
+            self.assertEqual(tab, "SPD")
+            by_label.setdefault((category, label), read)
+        self.assertEqual(by_label[("Identity", "Part Number")](),
+                         ("KIT-A", "KIT-B"))
+        self.assertEqual(by_label[("Identity", "SPD Address")](),
+                         ("0x50", "0x52"))
+        self.assertEqual(by_label[("Module", "Capacity")](),
+                         ("32 GB", "32 GB"))
+        self.assertEqual(by_label[("Profile 1", "Profile")](),
+                         ("XMP-8000", "XMP-8000"))
+        self.assertEqual(by_label[("Profile 1", "CAS Latency")](), ("40", "38"))
+        self.assertEqual(by_label[("Profile 2", "Profile")](), ("—", "—"))
+
+    def test_before_the_read_every_value_is_a_dash(self):
+        for _tab, _category, _name, read, _label in self.entries([]):
+            self.assertEqual(read(), ("—", "—"))
+
+    def test_every_dump_name_is_its_own(self):
+        names = [entry[2] for entry in self.entries([])]
+        self.assertEqual(len(names), len(set(names)))
 
 
 class SearchTest(unittest.TestCase):

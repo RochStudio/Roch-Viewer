@@ -176,7 +176,8 @@ REVISION_REGISTER = 0x3B
 
 # (JEP106 bank, code) -> name, entered when confirmed against a reference.
 PMIC_VENDOR_NAMES = {
-    (11, 0x8C): "Richtek Power",
+    # JEP106's "Richtek Power", shortened as the SPD tab shows the same ID.
+    (11, 0x8C): "Richtek",
 }
 
 

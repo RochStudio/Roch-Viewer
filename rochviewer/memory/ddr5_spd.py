@@ -64,6 +64,13 @@ JEP106_VENDORS = {
     # same module "V-Color Technology Inc"; this is the name the module itself
     # carries, and what CPU-Z shows against it.
     (7, 0x6D): "V-Color Technology",
+    # The devices on a DDR5 module besides its DRAM: its SPD hub and its PMIC.
+    # Named from the JEP106 list (OpenOCD's jep106.inc carries it): bank 1
+    # code 0x33 is IDT and bank 11 code 0x0C Richtek Power, read here as
+    # 0x80B3 and 0x8A8C on the bench kit's hub and PMIC. IDT is Renesas now,
+    # and it is Renesas that sells the SPD5118 hubs under that ID.
+    (1, 0xB3): "Renesas (IDT)",
+    (11, 0x8C): "Richtek",
 }
 
 # Which SPD hubs answered last, so repeat reads skip the bus scan.

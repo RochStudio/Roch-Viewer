@@ -189,14 +189,17 @@ class ModeRegisterTest(unittest.TestCase):
         # MR13 holds 0x08 on the Z790 bench, identically on both controllers.
         self._table(mr_table(0x0D, 0x08))
         self.assertEqual(intel_timings.get_ccd_timing("tCCD_L"), 16)
-        self.assertEqual(intel_timings.get_ccd_timing("tCCD_L_WR"), 32)
-        self.assertEqual(intel_timings.get_ccd_timing("tCCD_L_WR2"), 64)
+        self.assertEqual(intel_timings.get_ccd_timing("tCCD_L_WR"), 64)
+        self.assertEqual(intel_timings.get_ccd_timing("tCCD_L_WR2"), 32)
 
     def test_the_encoding_holds_across_the_range(self):
-        # JESD79-5: 8 + code, 16 + 2*code, 32 + 4*code.
-        for code, expected in ((0, (8, 16, 32)),
-                               (6, (14, 28, 56)),
-                               (14, (22, 44, 88))):
+        # JESD79-5: 8 + code, then four and two times that: 32 + 4*code for
+        # tCCD_L_WR and 16 + 2*code for tCCD_L_WR2. Code 12 is the MPOWER's
+        # 20 / 80 / 40, as the reference tool reads it.
+        for code, expected in ((0, (8, 32, 16)),
+                               (6, (14, 56, 28)),
+                               (12, (20, 80, 40)),
+                               (14, (22, 88, 44))):
             with self.subTest(code=code):
                 self._table(mr_table(0x0D, code))
                 self.assertEqual(

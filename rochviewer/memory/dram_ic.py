@@ -50,7 +50,8 @@ _EXACT_PART_NUMBERS = {
     # The user verified the installed HMCG78AGBUA081N modules are A-die.
     "HMCG78AGBUA081N": "SK hynix A-die",
 
-    # TeamGroup 16 GB DDR5 module verified on the Z790 Apex test system.
+    # V-Color 16 GB DDR5 module (its SPD and SMBIOS both name V-Color).
+    # Its SPD stepping reads 0x41, A-die, on the Z790 MPOWER.
     "TMXFL1680838KWK": "SK hynix A-die",
 
     # G.Skill 16 GB DDR5 modules confirmed SK hynix A-die on user kits.

@@ -77,11 +77,15 @@ class ChannelBAddressTest(unittest.TestCase):
     """The mirror only claims an address it can derive from a channel-A one."""
 
     def test_the_offset_follows_the_memory_generation(self):
-        # DDR5 puts the second module on a sub-channel of the same controller,
-        # 0x800 across. DDR4 has no sub-channels and puts it on the second
-        # controller. Each was established from per-DIMM trained results on its
-        # own bench: DFE taps on DDR5, RTL latencies on DDR4.
-        self.assertEqual(intel_timings.channel_b_offset(LGA1700_DDR5), 0x800)
+        # Raptor Lake puts the second module on the second controller on both
+        # generations: RTL latencies on the DDR4 bench, and on the DDR5 bench
+        # SMBIOS's Controller1-DIMMB1 with the MC1 DFE taps and DQ VREF that
+        # the reference tool shows for DIMM1. 0x800 is the same module's other
+        # sub-channel there. Core Ultra 200S keeps the sub-channel step until
+        # a bench reading places its second module.
+        self.assertEqual(
+            intel_timings.channel_b_offset(LGA1700_DDR5), MCHBAR2 - MCHBAR
+        )
         self.assertEqual(intel_timings.channel_b_offset(LGA1851), 0x800)
         self.assertEqual(
             intel_timings.channel_b_offset(LGA1700_DDR4), MCHBAR2 - MCHBAR

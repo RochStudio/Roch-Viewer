@@ -166,11 +166,17 @@ class FollowsTheHardwareTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertNotIn(name, names)
 
-    def test_the_table_backed_gpu_rows_fail_closed_on_another_card(self):
-        # ROPs/TMUs and the code-name SKU are the two values on this tab that
-        # nothing reports, so they come from a table keyed on the device ID.
-        # The property that keeps that honest is that an unlisted card gets
-        # nothing rather than the listed card's numbers.
+    def test_no_gpu_row_is_answered_from_the_device_id(self):
+        # ROP/TMU counts and a chip's SKU have no entry point to read them
+        # from, so neither is shown: there is no ROPs / TMUs row, and the code
+        # name is the core family the driver reports, or nothing at all --
+        # never a SKU looked up for a card the table happens to know.
+        names = {
+            row.get("name") for row in intel_timings.TIMINGS
+            if row.get("Tab") == "System Info"
+        }
+        self.assertNotIn("ROPs / TMUs", names)
+
         def card(device):
             return mock.patch.object(
                 nvidia_gpu, "_adapter_identity",
@@ -178,24 +184,24 @@ class FollowsTheHardwareTest(unittest.TestCase):
                               "revision": 0xA1, "subsystem_vendor_id": 0x1458},
             )
 
+        class Nvapi:
+            def text(self, name):
+                return "AD104" if name == "short_name" else None
+
+            def unsigned(self, name):
+                return None
+
         with card(0x2786), mock.patch.object(nvidia_gpu, "_Nvapi",
                                              side_effect=OSError), \
-                mock.patch.object(nvidia_gpu, "_nvml_query",
-                                  return_value={"architecture": 8}):
-            self.assertEqual(_require(self, "ROPs / TMUs"), "64 / 184")
-            self.assertEqual(_require(self, "GPU Code Name"), "AD104-250")
-
-        nvidia_gpu._CACHE[:] = []
-        # Pascal, a GTX 1080. This was 0x2C05 until that card was added to the
-        # table, which made the unlisted half of this test assert about a
-        # listed one. A family the table has no entries for cannot go stale
-        # the same way.
-        with card(0x1B80), mock.patch.object(nvidia_gpu, "_Nvapi",
-                                             side_effect=OSError), \
-                mock.patch.object(nvidia_gpu, "_nvml_query",
-                                  return_value={}):
-            self.assertIsNone(_require(self, "ROPs / TMUs"))
+                mock.patch.object(nvidia_gpu, "_nvml_query", return_value={}):
+            nvidia_gpu._CACHE[:] = []
             self.assertIsNone(_require(self, "GPU Code Name"))
+        with card(0x2786), mock.patch.object(nvidia_gpu, "_Nvapi",
+                                             return_value=Nvapi()), \
+                mock.patch.object(nvidia_gpu, "_nvml_query", return_value={}):
+            nvidia_gpu._CACHE[:] = []
+            self.assertEqual(_require(self, "GPU Code Name"), "AD104")
+        nvidia_gpu._CACHE[:] = []
 
 
 if __name__ == "__main__":

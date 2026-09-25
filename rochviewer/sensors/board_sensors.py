@@ -292,11 +292,12 @@ CONFIRMED_TEMPERATURES = {
 }
 
 # On the MSI Z790MPOWER both headers read what HWiNFO reads for them -- T0
-# 16.5 C and T1 32.0 C on the same boot, exact -- so this board shows them.
-# The MS-7E06 note above still stands for that board: its T0 read 11 C with
-# nothing attached, and it keeps the five.
+# 16.5 C and T1 32.0 C on the same boot, exact -- and HWiNFO names them no
+# further than T0 and T1. T1 is shown. T0 is not: 16.5 C sits well under the
+# room it is in, the reading an empty header gives, as the MS-7E06's T0 did
+# at 11 C with nothing attached. That board keeps the five.
 NCT668X_BOARD_TEMPERATURES = {
-    "MS-7E01": dict(CONFIRMED_TEMPERATURES, t0=0x10A, t1=0x10C),
+    "MS-7E01": dict(CONFIRMED_TEMPERATURES, t1=0x10C),
 }
 
 
@@ -357,6 +358,78 @@ def fan_text(key):
     telemetry statistics read the first plain number in the text."""
     rpm = read_board_fans().get(key)
     return None if rpm is None else "%d RPM" % rpm
+
+
+# --- Board fan duty.
+#
+# The PWM the chip is driving each header with, one byte per header from
+# 0x160, in the same order as the speed words at 0x140: 0 is off and 255 is
+# full duty. Read on the MSI Z790MPOWER, three samples a second apart, all
+# steady:
+#
+#   0x160  0x66  40 %   CPU fan at 983-1001 RPM
+#   0x161  0xFF  100 %  PUMP1 at 2870 RPM -- a pump the board runs flat out
+#   0x162  0x99  60 %   System 1 at 1437-1444 RPM
+#
+# Each duty sits where its header's speed says it should, and the pump at a
+# full 255 with its speed pinned is the one reading a wrong decode could not
+# fake. Only the three connected headers are mapped: an empty header's duty
+# is a setting driving nothing.
+#
+# Read only, like the speeds: nothing in this project writes a duty.
+NCT668X_BOARD_FAN_DUTIES = {
+    "MS-7E01": {"cpu_fan": 0x160, "pump1": 0x161, "system1": 0x162},
+}
+
+FAN_DUTY_FULL_SCALE = 255
+
+
+def nct668x_fan_duties():
+    """The fan-duty map for this board; none where no header was confirmed."""
+    model = _board_model_tag()
+    for tag, duties in NCT668X_BOARD_FAN_DUTIES.items():
+        if tag in model:
+            return duties
+    return {}
+
+
+def decode_fan_duty(raw):
+    """A duty byte as a whole percentage of full scale."""
+    return round((int(raw) & 0xFF) * 100 / FAN_DUTY_FULL_SCALE)
+
+
+def read_board_fan_duties():
+    """Return ``{fan key: percent}`` for this board's confirmed headers."""
+    profile = board_sensor_profile()
+    if profile is None or not profile.get("fan_duties"):
+        return {}
+    values = {}
+    for key, address in profile["fan_duties"].items():
+        try:
+            raw = profile["reader"].read_bytes(address, 1)[0]
+        except Exception:
+            continue
+        values[key] = decode_fan_duty(raw)
+    return values
+
+
+# The last duties read, so one read serves every duty row of a tick: the rows
+# ask one at a time, and reading all the headers for each put three times the
+# reads on the chip. The first row of the tick refreshes the set.
+_FAN_DUTIES = {}
+
+
+def fan_duty_text(key, refresh=True):
+    """Format one fan's duty for a row, or None.
+
+    ``refresh`` rereads every header; without it the row takes what the last
+    read left, unless that read had nothing for it.
+    """
+    if refresh or key not in _FAN_DUTIES:
+        _FAN_DUTIES.clear()
+        _FAN_DUTIES.update(read_board_fan_duties())
+    duty = _FAN_DUTIES.get(key)
+    return None if duty is None else "%d %%" % duty
 
 
 def nct668x_temperatures():
@@ -557,6 +630,7 @@ def _nct668x_profile():
         "temperatures": nct668x_temperatures(),
         "rails": nct668x_rails(),
         "fans": nct668x_fans(),
+        "fan_duties": nct668x_fan_duties(),
         "read_temperature": _nct668x_temperature,
         "read_rail": _nct668x_rail,
     }

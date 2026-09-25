@@ -67,16 +67,26 @@ CHANNEL_WIDTH = 130
 # Sized to the widest row the tabs actually produce rather than to the widest
 # name plus the widest value, which never share a row: the longest names are
 # on Misc against Enabled/Disabled, and the longest values are on System Info
-# against names like OS and CPU. Every row still fits at 490, so this keeps
-# a little slack for a board whose strings run longer than this one's.
-WINDOW_WIDTH = 520
+# against names like OS and CPU. 520 fit every row but the OS string,
+# "Microsoft Windows 11 Professional (x64)", which wrapped to a second line;
+# the 40px added here all go to the value, where that string needed them.
+WINDOW_WIDTH = 560
 WINDOW_HEIGHT = 800
 WINDOW_SIZE = f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}"
 
+# What a row keeps for its name and the paddings either side of the value.
+# Every name fits in it: it is what the two channel columns left of the 520px
+# the window was before.
+NAME_RESERVE = 260
+
 # The width is fixed, so the space a value gets is known and a long one can be
 # wrapped instead of left to crowd its name. A single-channel row spans both
-# channel columns, so it wraps at their combined width.
-VALUE_WRAP = 2 * CHANNEL_WIDTH
+# channel columns and whatever else the name does not keep.
+VALUE_WRAP = WINDOW_WIDTH - NAME_RESERVE
+
+# A paired row's two values each get one channel column, less the 4px either
+# side of the cell.
+PAIRED_VALUE_WRAP = CHANNEL_WIDTH - 8
 
 
 def measuring_font_size(font):
@@ -125,7 +135,9 @@ def format_dump(entries, read=None):
     cannot trust to be complete.
     """
     lines = []
-    for tab, category, name, reader in entries:
+    # The dump keeps each row's own name, lined up with the reference tool's
+    # dump; the label a tab shows it under is the window's business.
+    for tab, category, name, reader, *_label in entries:
         try:
             value = (read or (lambda r=reader: r()))(reader) if read else reader()
         except Exception:
@@ -147,9 +159,11 @@ class AdvancedWindow(ctk.CTkToplevel):
                  refresh_ms=REFRESH_MS, channel_labels=("A1", "B1"),
                  position=None):
         super().__init__(master)
-        # entries: [(tab, category, name, read())], where read returns either
-        # one displayed value or an (A, B) pair for a row that reads both
-        # channels. A pair gets its own column under the channel headings.
+        # entries: [(tab, category, name, read()[, label])], where read returns
+        # either one displayed value or an (A, B) pair for a row that reads
+        # both channels. A pair gets its own column under the channel
+        # headings. The label is what the tab calls the row, shown in place
+        # of the name when it is given; a search matches either.
         self._entries = list(entries)
         self._channel_labels = tuple(channel_labels)
         self._theme = theme
@@ -238,13 +252,14 @@ class AdvancedWindow(ctk.CTkToplevel):
         # section of single-channel rows carrying A1/B1 labels names two
         # columns that nothing beneath it fills.
         paired_groups = set()
-        for tab, category, name, read in self._entries:
+        for tab, category, name, read, *_label in self._entries:
             try:
                 if isinstance(read(), tuple):
                     paired_groups.add((tab, category))
             except Exception:
                 continue
-        for tab, category, name, read in self._entries:
+        for tab, category, name, read, *label in self._entries:
+            label = label[0] if label and label[0] else name
             # Whether a row reads two channels is fixed by the row, so it is
             # settled once here rather than re-decided on every refresh.
             try:
@@ -295,7 +310,7 @@ class AdvancedWindow(ctk.CTkToplevel):
             frame.grid_columnconfigure(1, minsize=CHANNEL_WIDTH)
             frame.grid_columnconfigure(2, minsize=CHANNEL_WIDTH)
             ctk.CTkLabel(
-                frame, text=name, font=theme["font"],
+                frame, text=label, font=theme["font"],
                 text_color=theme["text"], anchor="nw", fg_color="transparent",
                 height=ROW_HEIGHT,
             ).grid(row=0, column=0, sticky="nw", padx=(6, 4))
@@ -312,12 +327,16 @@ class AdvancedWindow(ctk.CTkToplevel):
             # -- the motherboard string, the ECS and preamble text -- and they
             # need the width the second column would otherwise hold open.
             if paired:
+                # Each side wraps inside its own column. Left to grow, the
+                # two copies of "Timer Stops at 2048th clocks" took the name's
+                # width between them and cut "DQS Interval Timer RT" short.
+                value.configure(wraplength=PAIRED_VALUE_WRAP)
                 value.grid(row=0, column=1, sticky="e", padx=(4, 4))
                 value_b = ctk.CTkLabel(
                     frame, text="", font=theme["font"],
                     text_color=theme["value"], anchor="e",
                     fg_color="transparent", justify="right",
-                    height=ROW_HEIGHT,
+                    wraplength=PAIRED_VALUE_WRAP, height=ROW_HEIGHT,
                 )
                 value_b.grid(row=0, column=2, sticky="e", padx=(4, 8))
             else:
@@ -326,7 +345,7 @@ class AdvancedWindow(ctk.CTkToplevel):
                 value_b = None
             self._rows.append({
                 "group": group,
-                "haystack": f"{tab} {category} {name}".lower(),
+                "haystack": f"{tab} {category} {name} {label}".lower(),
                 "frame": frame,
                 "value": value,
                 "value_b": value_b,

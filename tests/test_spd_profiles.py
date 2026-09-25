@@ -98,6 +98,18 @@ class Ddr4SpdProfileTest(unittest.TestCase):
         self.assertEqual(joined["dram_manufacturer"], "—")
         self.assertEqual(joined["dram_die"], "—")
 
+    def test_a_ddr5_size_from_the_inventory_reads_like_the_rest(self):
+        def join(memory_type):
+            module = {"part_number": "KIT", "serial_number": "1",
+                      "memory_type": memory_type, "capacity": "—"}
+            inventory = [{"part_number": "KIT", "serial_number": "1",
+                          "slot": "A1", "capacity": "16GB",
+                          "capacity_gb": 16}]
+            return _join_slots([module], inventory)[0]["capacity"]
+
+        self.assertEqual(join("DDR5"), "16 GB")
+        self.assertEqual(join("DDR4"), "16GB")
+
     def test_reader_skips_reserved_spd_ranges(self):
         class Reader:
             def __init__(self):

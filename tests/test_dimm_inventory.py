@@ -18,6 +18,7 @@ import unittest
 
 from rochviewer.memory.dimm_inventory import (
     EM_DASH,
+    apply_spd_ic,
     board_slot_count,
     channel_of,
     parse_slot,
@@ -328,6 +329,55 @@ class SerialNumberTest(unittest.TestCase):
     def test_a_missing_serial_is_empty_rather_than_an_error(self):
         modules = read_modules(FakeConnection([FakeModule(SerialNumber=None)]))
         self.assertEqual(modules[0]["serial_number"], "")
+
+
+
+class SpdIcTest(unittest.TestCase):
+    """The module label names the DRAM its own SPD reports, not a table's."""
+
+    def module(self, ic, part="TMXFL1680838KWK", serial="0B354996"):
+        return {"part_number": part, "serial_number": serial, "ic": ic}
+
+    def identity(self, maker="SK hynix", die="A-die", part="TMXFL1680838KWK",
+                 serial="0B354996"):
+        return {"part_number": part, "serial_number": serial,
+                "dram_manufacturer": maker, "dram_die": die}
+
+    def test_the_spd_reading_replaces_the_part_number_lookup(self):
+        # A kit the table does not list, or lists wrongly, still reads right.
+        [labelled] = apply_spd_ic([self.module("Unknown IC")],
+                                  [self.identity(die="M-die")])
+        self.assertEqual(labelled["ic"], "SK hynix M-die")
+        self.assertEqual(split_ic(labelled["ic"]), ("SK hynix", "M-die"))
+
+    def test_each_module_is_matched_to_its_own_spd_by_serial(self):
+        modules = [self.module("Unknown IC", serial="0B354996"),
+                   self.module("Unknown IC", serial="0B354997")]
+        identities = [self.identity(die="M-die", serial="0B354997"),
+                      self.identity(die="A-die", serial="0B354996")]
+        labelled = apply_spd_ic(modules, identities)
+        self.assertEqual([m["ic"] for m in labelled],
+                         ["SK hynix A-die", "SK hynix M-die"])
+
+    def test_an_undecoded_stepping_keeps_only_an_agreeing_tables_die(self):
+        [kept] = apply_spd_ic([self.module("Samsung B-die")],
+                              [self.identity(maker="Samsung", die="0x00")])
+        self.assertEqual(kept["ic"], "Samsung B-die")
+        [dropped] = apply_spd_ic([self.module("Samsung B-die")],
+                                 [self.identity(maker="Micron", die="0x00")])
+        self.assertEqual(split_ic(dropped["ic"]), ("Micron", EM_DASH))
+
+    def test_no_spd_answer_leaves_the_lookup_in_place(self):
+        [unread] = apply_spd_ic([self.module("SK hynix A-die")], [])
+        self.assertEqual(unread["ic"], "SK hynix A-die")
+        [raw] = apply_spd_ic([self.module("SK hynix A-die")],
+                             [self.identity(maker="0x80AD")])
+        self.assertEqual(raw["ic"], "SK hynix A-die")
+
+    def test_the_cached_inventory_is_not_rewritten(self):
+        original = self.module("Unknown IC")
+        apply_spd_ic([original], [self.identity()])
+        self.assertEqual(original["ic"], "Unknown IC")
 
 
 if __name__ == "__main__":

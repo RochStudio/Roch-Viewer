@@ -54,10 +54,11 @@ class Ms7e01RailsTest(unittest.TestCase):
                 self.assertAlmostEqual(volts, expected, places=3)
                 self.assertIsNotNone(validate_rail(key, volts))
 
-    def test_both_headers_are_shown_on_this_board(self):
+    def test_t1_is_shown_and_the_empty_t0_is_not(self):
+        # T0 reads 16.5 C, under the room it is in: an empty header.
         with on_board("Z790MPOWER (MS-7E01)"):
             sensors = board_sensors.nct668x_temperatures()
-        self.assertEqual(sensors["t0"], 0x10A)
+        self.assertNotIn("t0", sensors)
         self.assertEqual(sensors["t1"], 0x10C)
         for key, (raw, expected) in MS_7E01_TEMPERATURES.items():
             with self.subTest(sensor=key):
@@ -90,6 +91,59 @@ class Ms7e01FansTest(unittest.TestCase):
         self.assertEqual(parse_reading("1010 RPM"), (1010.0, "RPM", 0))
 
 
+class Ms7e01FanDutyTest(unittest.TestCase):
+    def test_the_three_connected_headers(self):
+        with on_board("Z790MPOWER (MS-7E01)"):
+            duties = board_sensors.nct668x_fan_duties()
+        self.assertEqual(duties, {"cpu_fan": 0x160, "pump1": 0x161,
+                                  "system1": 0x162})
+
+    def test_the_bench_bytes_decode_to_whole_percentages(self):
+        from rochviewer.ui.dimm_telemetry_window import parse_reading
+
+        reader = mock.Mock()
+        reader.read_bytes.side_effect = lambda address, count: [
+            {0x160: 0x66, 0x161: 0xFF, 0x162: 0x99}[address]]
+        profile = {"reader": reader, "fan_duties": {"cpu_fan": 0x160,
+                                                    "pump1": 0x161,
+                                                    "system1": 0x162}}
+        with mock.patch.object(board_sensors, "board_sensor_profile",
+                               return_value=profile):
+            self.assertEqual(board_sensors.read_board_fan_duties(),
+                             {"cpu_fan": 40, "pump1": 100, "system1": 60})
+            self.assertEqual(board_sensors.fan_duty_text("pump1"), "100 %")
+        self.assertEqual(parse_reading("40 %"), (40.0, "%", 0))
+
+    def test_one_read_serves_the_rows_of_a_tick(self):
+        # The first duty row refreshes every header; the rest take that read.
+        reader = mock.Mock()
+        reader.read_bytes.side_effect = lambda address, count: [
+            {0x160: 0x66, 0x161: 0xFF, 0x162: 0x99}[address]]
+        profile = {"reader": reader, "fan_duties": {"cpu_fan": 0x160,
+                                                    "pump1": 0x161,
+                                                    "system1": 0x162}}
+        with mock.patch.object(board_sensors, "board_sensor_profile",
+                               return_value=profile):
+            shown = [board_sensors.fan_duty_text("cpu_fan", True),
+                     board_sensors.fan_duty_text("pump1", False),
+                     board_sensors.fan_duty_text("system1", False)]
+        self.assertEqual(shown, ["40 %", "100 %", "60 %"])
+        self.assertEqual(reader.read_bytes.call_count, 3)
+
+    def test_off_and_full_scale(self):
+        self.assertEqual(board_sensors.decode_fan_duty(0x00), 0)
+        self.assertEqual(board_sensors.decode_fan_duty(0xFF), 100)
+
+    def test_each_duty_row_follows_its_fan(self):
+        from rochviewer.intel import intel_timings
+
+        with on_board("Z790MPOWER (MS-7E01)"):
+            rows = [row[0] for row in intel_timings._nct6687d_rows()
+                    if row[1] == "Fans"]
+        self.assertEqual(rows, ["CPU Fan", "CPU Fan Duty", "PUMP1",
+                                "PUMP1 Duty", "System 1", "System 1 Duty"])
+
+
 class OtherBoardTest(unittest.TestCase):
     def test_ms_7e06_keeps_its_own_map(self):
         # Same chip, different wiring: T0 there is an unconnected header.
@@ -97,14 +151,16 @@ class OtherBoardTest(unittest.TestCase):
             self.assertNotIn("t0", board_sensors.nct668x_temperatures())
             self.assertNotIn("plus12v", board_sensors.nct668x_rails())
             self.assertEqual(board_sensors.nct668x_fans(), {})
+            self.assertEqual(board_sensors.nct668x_fan_duties(), {})
 
     def test_rows_follow_the_board_map(self):
         from rochviewer.intel import intel_timings
 
         with on_board("Z790MPOWER (MS-7E01)"):
             names = [row[0] for row in intel_timings._nct6687d_rows()]
-        self.assertEqual(names, ["T0", "T1", "+12V", "+5V", "VIN3", "VIN7",
-                                 "+3.3V", "CPU Fan", "PUMP1", "System 1"])
+        self.assertEqual(names, ["T1", "+12V", "+5V", "VIN3", "VIN7",
+                                 "+3.3V", "CPU Fan", "CPU Fan Duty", "PUMP1",
+                                 "PUMP1 Duty", "System 1", "System 1 Duty"])
         with on_board("PRO Z790-P WIFI DDR4 (MS-7E06)"):
             self.assertEqual(intel_timings._nct6687d_rows(), ())
 

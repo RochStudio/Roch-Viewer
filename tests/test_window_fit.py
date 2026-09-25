@@ -46,30 +46,63 @@ class ChromeTest(unittest.TestCase):
     """The app's own title bar and footer, and what they cost the tabs."""
 
     def test_summary_owns_the_startup_size(self):
-        self.assertEqual(TimingGUI.WINDOW_WIDTH, 775)
-        self.assertEqual(TimingGUI.WINDOW_HEIGHT, 775)
-        self.assertEqual(
-            TimingGUI.window_size_for_tab("Summary"), (775, 775)
-        )
+        summary = TimingGUI.TAB_WINDOW_SIZES["Summary"]
+        self.assertEqual((TimingGUI.WINDOW_WIDTH, TimingGUI.WINDOW_HEIGHT),
+                         summary)
+        self.assertEqual(TimingGUI.window_size_for_tab("Summary"), summary)
         self.assertIn("Summary", TimingGUI.UNSCROLLED_TABS)
         self.assertIn("System Info", TimingGUI.UNSCROLLED_TABS)
         chrome = TimingGUI.TITLE_BAR_HEIGHT + TimingGUI.FOOTER_HEIGHT
         self.assertEqual(chrome, 54)
 
+    BASE_SIZES = {
+        "Summary": (775, 775),
+        "System Info": (780, 750),
+        "SPD": (750, 750),
+        "Timings": (750, 750),
+        "Training": (1010, 800),
+        "IMC": (750, 1100),
+        "RTL": (750, 654),
+        "Voltages": (750, 654),
+    }
+
     def test_each_main_tab_has_its_own_size(self):
-        self.assertEqual(TimingGUI.TAB_WINDOW_SIZES, {
-            "Summary": (775, 775),
-            "System Info": (750, 750),
-            "SPD": (750, 750),
-            "Timings": (750, 750),
-            "Training": (1010, 800),
-            "IMC": (750, 1100),
-            "RTL": (750, 654),
-            "Voltages": (750, 654),
+        # The sizes follow the machine's own platform, so the expectation is
+        # built the same way rather than written for one bench.
+        from rochviewer.platform_profiles import LGA1700_DDR5
+
+        self.assertEqual(TimingGUI.LGA1700_DDR5_TAB_WINDOW_SIZES, {
+            "Summary": (700, 750),
+            "System Info": (775, 750),
+            "SPD": (700, 750),
+            "Timings": (700, 750),
+            "Training": (975, 950),
+            "IMC": (700, 750),
+            "RTL": (700, 750),
+            "Voltages": (700, 750),
         })
+        expected = dict(self.BASE_SIZES)
+        if main_ui.ACTIVE_PLATFORM == LGA1700_DDR5:
+            expected.update(TimingGUI.LGA1700_DDR5_TAB_WINDOW_SIZES)
+        self.assertEqual(TimingGUI.TAB_WINDOW_SIZES, expected)
         self.assertEqual(
-            TimingGUI.window_size_for_tab("unknown"), (775, 775)
+            TimingGUI.window_size_for_tab("unknown"), expected["Summary"]
         )
+
+    def test_every_size_is_within_the_window_minimum(self):
+        # window_size_for_tab raises anything under the minimum back up to it,
+        # so a size below it would silently not be the size asked for.
+        for sizes in (self.BASE_SIZES, TimingGUI.LGA1700_DDR5_TAB_WINDOW_SIZES):
+            for name, (width, height) in sizes.items():
+                with self.subTest(tab=name):
+                    self.assertGreaterEqual(width, TimingGUI.MIN_WINDOW_WIDTH)
+                    self.assertGreaterEqual(height, TimingGUI.MIN_WINDOW_HEIGHT)
+
+    def test_ddr5_training_fits_a_1080p_screen_uncapped(self):
+        # window_size_for_tab takes 120px off the screen height; a 1080p
+        # screen leaves 960, and Training has no scrollbar to fall back on.
+        width, height = TimingGUI.LGA1700_DDR5_TAB_WINDOW_SIZES["Training"]
+        self.assertLessEqual(height, 1080 - 120)
 
     def test_spd_resolves_the_moved_system_memory_values(self):
         gui = TimingGUI.__new__(TimingGUI)
@@ -84,13 +117,18 @@ class ChromeTest(unittest.TestCase):
             })
 
     def test_spd_shows_the_source_backed_module_type(self):
+        from rochviewer.ui.main import SPD_DDR5_FIELDS, SPD_FIELDS
+
+        for fields in (SPD_FIELDS, SPD_DDR5_FIELDS):
+            self.assertIn(("Module Type", "module_type"), fields)
         source = inspect.getsource(TimingGUI._build_spd_tab)
-        self.assertIn('(\"Module Type\", \"module_type\")', source)
+        self.assertIn("fields = SPD_TAB_FIELDS", source)
 
     def test_a_short_screen_caps_each_tab_height(self):
+        width = TimingGUI.TAB_WINDOW_SIZES["IMC"][0]
         self.assertEqual(
             TimingGUI.window_size_for_tab("IMC", screen_height=800),
-            (750, 680),
+            (width, 680),
         )
 
     def test_summary_top_pairs_have_readable_spacing(self):
@@ -142,7 +180,7 @@ class ChromeTest(unittest.TestCase):
         changed = inspect.getsource(TimingGUI._on_tab_changed)
         self.assertIn("after_cancel", changed)
         self.assertIn("_finish_tab_shading", changed)
-        shading = inspect.getsource(TimingGUI._extend_tab_shading_to_viewport)
+        shading = inspect.getsource(TimingGUI._fill_viewport_rows)
         self.assertIn("self._shading_viewports.get(tab_name)", shading)
 
     def test_the_logo_picks_a_size_it_can_actually_draw(self):
@@ -254,9 +292,11 @@ class ChromeTest(unittest.TestCase):
         self.assertIn("unused.grid_remove()", source)
         self.assertIn("grid_column, minsize=0, weight=0", source)
 
-    def test_imc_uses_equal_width_columns(self):
+    def test_imc_and_rtl_are_not_split_into_equal_halves(self):
+        # They keep the 25px gutter every tab keeps: content plus the gap,
+        # the last column taking the rest. Equal halves left 139px and 223px.
         source = inspect.getsource(TimingGUI._stretch_tab_halves)
-        self.assertIn('name in ("IMC", "RTL") and len(used) == 2', source)
+        self.assertNotIn('name in ("IMC", "RTL") and len(used) == 2', source)
 
     def test_only_tabs_that_fit_are_drawn_without_scrollbars(self):
         # They give up no width to gutters they do not use. Whether they fit is
@@ -308,7 +348,8 @@ class ChromeTest(unittest.TestCase):
              "DLL / LATENCY", "DATA CONTROL", "DFE", "ODTL", "Command",
              "MPR / ACCESS", "PARITY / CRC", "REFRESH / POWER",
              "PREAMBLE / PPR", "MR0 / MR1", "MR2 / MR3", "MR4",
-             "MR5 / MR6", "Mode Registers", "DQS", "Preamble", "ECS"),
+             "MR5 / MR6", "Mode Registers", "DQS", "Preamble", "ECS",
+             "Features", "Power Down", "Refresh"),
         )
 
     def test_training_keeps_its_right_column(self):
@@ -376,9 +417,10 @@ class ChromeTest(unittest.TestCase):
         self.assertIn("after_idle", source)
         finish = inspect.getsource(TimingGUI._finish_tab_shading)
         self.assertIn("_extend_tab_shading_to_viewport", finish)
-        extension = inspect.getsource(TimingGUI._extend_tab_shading_to_viewport)
+        extension = inspect.getsource(TimingGUI._fill_viewport_rows)
         self.assertIn("_shading_viewports", extension)
-        self.assertIn("self.tabview.tab(tab_name)", extension)
+        # The table's own area, which stops above the module selector.
+        self.assertIn("self.tab_frames[tab_name]", extension)
         self.assertIn("table_top", extension)
         self.assertIn("(bottom - table_top) / float(pitch)", extension)
 
@@ -393,7 +435,9 @@ class ChromeTest(unittest.TestCase):
         self.assertNotIn("left_info_frame", source)
         self.assertIn('column_keys = ("Left", "Right")', source)
         self.assertEqual(TimingGUI.SYSTEM_INFO_TEXT_INSET, 0)
-        self.assertIn("padx=0", source)
+        # Each column is inset on its own panel, as Summary's blocks are.
+        self.assertIn("panel = self._column_panel(frame)", source)
+        self.assertIn("padx=(self.PANEL_PADX, self.PANEL_PADX + (", source)
 
     def test_system_info_spacing_preserves_continuous_row_shading(self):
         source = inspect.getsource(TimingGUI.create_section)
@@ -489,3 +533,47 @@ class RowBandTest(unittest.TestCase):
                 dual = TimingGUI.row_band(1, True, data_row)
                 single = TimingGUI.row_band(1, True, data_row)
                 self.assertEqual(dual % 2, single % 2)
+
+
+class ViewportShadingGuardTest(unittest.TestCase):
+    """The band pass cannot run inside itself, and redoes a stale fill.
+
+    Its update_idletasks can run the pass a resize queued. Entered like that,
+    the outer pass wrote over the inner one's record of its rows, which then
+    stayed for good -- 199px of them on IMC straight after Training, running
+    the panels' bottom border off the tab.
+    """
+
+    def stand_in(self, filling):
+        return mock.Mock(tabview=mock.Mock(get=lambda: "IMC"),
+                         _filling_viewport=filling)
+
+    def test_a_pass_already_running_is_not_entered_again(self):
+        app = self.stand_in(True)
+        TimingGUI._extend_tab_shading_to_viewport(app, "IMC")
+        app._fill_viewport_rows.assert_not_called()
+
+    def test_the_flag_is_cleared_even_when_the_pass_fails(self):
+        app = self.stand_in(False)
+        app._fill_viewport_rows.side_effect = RuntimeError("layout")
+        with self.assertRaises(RuntimeError):
+            TimingGUI._extend_tab_shading_to_viewport(app, "IMC")
+        app._fill_viewport_rows.assert_called_once_with("IMC")
+        self.assertFalse(app._filling_viewport)
+
+    def test_rows_filled_for_an_earlier_height_come_out(self):
+        body, spacer = mock.Mock(), mock.Mock()
+        holder = mock.Mock()
+        # 633 now against the 833 it was filled for; unmapped once the old
+        # rows are out, which ends the pass there.
+        holder.winfo_height.side_effect = [633, 1]
+        app = mock.Mock(
+            _section_bodies={"IMC": [{"body": body}]},
+            tab_frames={"IMC": holder},
+            _shading_viewports={"IMC": 833},
+            _viewport_spacers={"IMC": [(body, 5, spacer)]},
+        )
+        TimingGUI._fill_viewport_rows(app, "IMC")
+        spacer.destroy.assert_called_once_with()
+        body.grid_rowconfigure.assert_called_once_with(5, minsize=0)
+        self.assertNotIn("IMC", app._viewport_spacers)

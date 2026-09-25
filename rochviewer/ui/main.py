@@ -18,9 +18,10 @@ import customtkinter as ctk
 from rochviewer.paths import module_chain
 from rochviewer.ui.asset_path import find_icon
 from rochviewer.ui.lazy_read import read_timing
-from rochviewer.timings import TIMINGS, apply_formula
+from rochviewer.platform_profiles import LGA1700_DDR5
+from rochviewer.timings import ACTIVE_PLATFORM, TIMINGS, apply_formula
 from rochviewer.memory.dimm_inventory import (
-    channel_of, rank_numeric, read_modules, split_ic,
+    channel_of, rank_numeric, read_modules, read_modules_with_spd_ic, split_ic,
 )
 from rochviewer.version import APP_NAME, __version__
 from rochviewer.ui.display_values import (
@@ -394,6 +395,8 @@ SKEW_SECTION_ORDER = (
     # Legacy section names remain as fallbacks for other memory generations.
     "MR0 / MR1", "MR2 / MR3", "MR4", "MR5 / MR6",
     "Mode Registers", "DQS", "Preamble", "ECS",
+    # The per-channel controller registers, each at the foot of its column.
+    "Features", "Power Down", "Refresh",
 )
 
 # Shared memory-controller and PHY values use three explicit columns. CMD is
@@ -452,6 +455,15 @@ SENSOR_GROUP_ORDER = (
 def summary_column_count(_timings=None):
     """Keep Summary at three columns; snapshots stack in the third one."""
     return SUMMARY_BASE_COLUMNS
+
+
+# The SPD timings table's last grid column: after the names and the five
+# profile columns, a filler that takes the rest of each row.
+SPD_TABLE_FILLER_COLUMN = 6
+
+# Banded rows below the SPD table, enough for the tallest window a screen can
+# give the page; the ones past the foot of the page are clipped.
+SPD_FILLER_ROWS = 60
 
 
 def half_is_used(frame):
@@ -588,6 +600,83 @@ SUMMARY_EXCLUDED_TIMING_NAMES = (
 )
 
 
+# The SPD page's module fields, in reading order: the first half is the
+# MODULE panel, the second IDENTITY.
+SPD_FIELDS = (
+    ("Memory Type", "memory_type"),
+    ("Module Type", "module_type"),
+    ("Channels", "system_channels"),
+    ("Capacity", "system_capacity"),
+    ("Module Size", "capacity"),
+    ("Max Bandwidth", "max_bandwidth"),
+    ("Module Manuf.", "module_manufacturer"),
+    ("DRAM Manuf.", "dram_manufacturer"),
+    ("DRAM Die", "dram_die"),
+    ("SPD Extension", "extension"),
+    ("Ranks", "rank"),
+    ("Part Number", "part_number"),
+    ("Serial Number", "serial_number"),
+    ("Manufactured", "manufacture_date"),
+    ("SPD Address", "address"),
+)
+# On LGA1700 DDR5 the module's makeup reads down MODULE -- size, the dies it
+# is built from, its ranks -- and IDENTITY opens with the DRAM maker beside
+# the die, then the module's own PMIC and SPD hub.
+SPD_DDR5_FIELDS = (
+    ("Memory Type", "memory_type"),
+    ("Module Type", "module_type"),
+    ("Channels", "system_channels"),
+    ("Capacity", "system_capacity"),
+    ("Module Size", "capacity"),
+    ("DRAM Organization", "organization"),
+    ("Ranks", "rank"),
+    ("Max Bandwidth", "max_bandwidth"),
+    ("Module Manuf.", "module_manufacturer"),
+    ("DRAM Manuf.", "dram_manufacturer"),
+    ("DRAM Die", "dram_die"),
+    ("PMIC", "pmic"),
+    ("SPD Hub", "spd_hub"),
+    ("SPD Extension", "extension"),
+    ("Part Number", "part_number"),
+    ("Serial Number", "serial_number"),
+    ("Manufactured", "manufacture_date"),
+    ("SPD Address", "address"),
+)
+
+# The SPD timings table's rows.
+SPD_PROFILE_FIELDS = (
+    ("Frequency", "frequency"),
+    ("CAS Latency", "cl"),
+    ("tRCD", "trcd"),
+    ("tRP", "trp"),
+    ("tRAS", "tras"),
+    ("tRC", "trc"),
+    ("Voltage", "voltage"),
+)
+# DDR5 profiles also carry tWR, the three refresh cycle times, tRRD_L,
+# tCCD_L, tFAW and tRTP, and a voltage for each of VDD, VDDQ and VPP.
+SPD_DDR5_PROFILE_FIELDS = SPD_PROFILE_FIELDS[:-1] + (
+    ("tWR", "twr"),
+    ("tRFC1", "trfc1"),
+    ("tRFC2", "trfc2"),
+    ("tRFCsb", "trfcsb"),
+    ("tRRD_L", "trrd_l"),
+    ("tCCD_L", "tccd_l"),
+    ("tFAW", "tfaw"),
+    ("tRTP", "trtp"),
+    ("VDD", "vdd"),
+    ("VDDQ", "vddq"),
+    ("VPP", "vpp"),
+)
+
+# What this machine's SPD page shows, and so what Advanced lists for it.
+SPD_TAB_FIELDS = (SPD_DDR5_FIELDS if ACTIVE_PLATFORM == LGA1700_DDR5
+                  else SPD_FIELDS)
+SPD_TAB_PROFILE_FIELDS = (SPD_DDR5_PROFILE_FIELDS
+                          if ACTIVE_PLATFORM == LGA1700_DDR5
+                          else SPD_PROFILE_FIELDS)
+
+
 # Carried at the foot of the Summary signal panel, under the VREF levels.
 # Added at the call site rather than inside summary_vref_row_names, which
 # takes its rows straight from the Training tab's VREF category so the two
@@ -700,13 +789,28 @@ AM5_SUMMARY_LEFTOVER_PRIORITY = (
 )
 
 
-def intel_summary_timing_columns(timings):
+# Rows the LGA1700 DDR5 Summary leaves to the Timings tab. The first three
+# each say again what another row already says: tRDPRE is tRTP under a second
+# name -- the same register field. tWRPRE is the write-to-precharge sum of
+# rows the Summary shows, tCWL + BL/2 + tWR (36 + 8 + 48 = 92). tREFIx9 is a
+# limit derived from tREFI, which is shown. tMOD is a setting of its own, read
+# live from 0xE440[31:24] on both controllers; it is simply not one the
+# Summary carries, and stays in the Timings tab's Command group.
+INTEL_DDR5_SUMMARY_OMITTED = ("tRDPRE", "tWRPRE", "tREFIx9", "tMOD")
+# And the rows it adds, each after the row named: tXP, the power-down exit,
+# under tCKE, the power-down entry.
+INTEL_DDR5_SUMMARY_ADDED = (("tCKE", ("tXP",)),)
+
+
+def intel_summary_timing_columns(timings, omitted=(), added=()):
     """Return the Intel Summary's (primary/secondary, tertiary) column names.
 
     SUMMARY_EXCLUDED_TIMING_NAMES governs both columns. It used to be applied
     to the first only, so a name added to it that happened to be a Tertiary
     row -- Allow 2cyc B2B LPDDR was -- stayed on the Summary with nothing to
-    say why.
+    say why. ``omitted`` names rows to leave out on this platform alone, and
+    ``added`` rows to put in, as (row to follow, names) pairs; see
+    INTEL_DDR5_SUMMARY_OMITTED and INTEL_DDR5_SUMMARY_ADDED.
     """
     def wanted(category):
         return [
@@ -745,6 +849,16 @@ def intel_summary_timing_columns(timings):
     # The full per-rank RTL table remains on its dedicated tab; the Summary's
     # four rows close the first column.
     primary_secondary = list(primary_secondary) + list(SUMMARY_RTL_ROWS)
+    primary_secondary = [name for name in primary_secondary
+                         if name not in omitted]
+    tertiary = [name for name in tertiary if name not in omitted]
+    for anchor, extra in added:
+        extra = [name for name in extra if name in names]
+        if anchor in primary_secondary:
+            primary_secondary = insert_summary_rows_after(
+                primary_secondary, anchor, extra)
+        elif anchor in tertiary:
+            tertiary = insert_summary_rows_after(tertiary, anchor, extra)
     return primary_secondary, tertiary
 
 
@@ -833,6 +947,8 @@ class TimingGUI:
         # geometry settles. Cache completed sizes and keep only the newest
         # idle callback so rapid clicks do not queue redundant full layouts.
         self._shading_viewports = {}
+        self._viewport_spacers = {}
+        self._filling_viewport = False
         self._tab_shading_job = None
         self.build_title_bar()
         self.create_widgets()
@@ -1121,23 +1237,31 @@ class TimingGUI:
         self.COMPACT_BOLD = (self.GLOBAL_FONT_FAMILY, self.COMPACT_FONT_SIZE, "bold")
         self.TRAINING_FONT = self.COMPACT_FONT
         self.TRAINING_BOLD = self.COMPACT_BOLD
-        # The complete IMC register table uses a 17-pixel row pitch so it can
-        # remain unscrolled on a 1080p display.  A dedicated 11-point face
-        # keeps Consolas glyphs clear inside that pitch instead of clipping
-        # the top and bottom of the shared 12-point font.
-        self.IMC_FONT = (self.GLOBAL_FONT_FAMILY, 11)
-        self.IMC_BOLD = (self.GLOBAL_FONT_FAMILY, 11, "bold")
         self.HEADER_FONT = (self.GLOBAL_FONT_FAMILY, 12, "bold")
+        # IMC carries the controller's full register set elsewhere, so it uses
+        # a 17-pixel row pitch and a dedicated 11-point face that keeps
+        # Consolas clear inside it. On LGA1700 DDR5 the per-module rows moved
+        # to Training, and the rest reads in the same face and pitch as every
+        # other tab.
+        if ACTIVE_PLATFORM == LGA1700_DDR5:
+            self.IMC_FONT = self.COMPACT_FONT
+            self.IMC_BOLD = self.HEADER_FONT
+        else:
+            self.IMC_FONT = (self.GLOBAL_FONT_FAMILY, 11)
+            self.IMC_BOLD = (self.GLOBAL_FONT_FAMILY, 11, "bold")
         self.TAB_FONT = (self.GLOBAL_FONT_FAMILY, 13, "bold")
         self.ROW_PADX = 0
         self.ROW_PADY = 0
         self.SECTION_GAP = 3
         self.ROW_HEIGHT = 20
-        self.TRAINING_ROW_HEIGHT = 19
-        # IMC carries the complete DDR4 controller register set.  A slightly
-        # tighter row keeps every field visible in the fixed 750 px-wide
-        # window without reintroducing a scrollbar.
-        self.IMC_ROW_HEIGHT = 17
+        # 18 on LGA1700 DDR5, whose Training is 43 lines to a column: at 19
+        # it needed more height than a 1080p screen leaves. Consolas at 12
+        # stays clear inside 18; it clipped at IMC's 17.
+        self.TRAINING_ROW_HEIGHT = 18 if ACTIVE_PLATFORM == LGA1700_DDR5 else 19
+        # See IMC_FONT: tighter only where IMC holds DDR4's full register set.
+        self.IMC_ROW_HEIGHT = (
+            self.ROW_HEIGHT if ACTIVE_PLATFORM == LGA1700_DDR5 else 17
+        )
         # Content-width timing rows: short name gutter, values pack after labels.
         self.NAME_MINSIZE = 50
         self.VALUE_MINSIZE = 20
@@ -1314,22 +1438,28 @@ class TimingGUI:
         which firmware often leaves as "Unknown" -- it reads G.Skill off the
         DIMM here while WMI has nothing.
         """
-        from rochviewer.memory.dimm_inventory import rank_numeric, read_modules
+        from rochviewer.memory.dimm_inventory import (
+            apply_spd_ic, rank_numeric, read_modules,
+        )
 
         modules = []
         try:
             spd_by_part = {}
+            identities = []
             try:
                 from rochviewer.memory.ddr5_spd import read_identity
 
-                for entry in read_identity() or []:
+                identities = read_identity() or []
+                for entry in identities:
                     part = (entry.get("part_number") or "").strip()
                     if part:
                         spd_by_part[part] = entry
             except Exception:
                 spd_by_part = {}
 
-            for module in read_modules():
+            # The IC maker and die the panel shows come from each module's
+            # SPD where it answers, not from the part-number table.
+            for module in apply_spd_ic(read_modules(), identities):
                 enriched = dict(module)
                 enriched["rank_numeric"] = rank_numeric(module.get("rank_count", 0))
                 spd = spd_by_part.get((module.get("part_number") or "").strip())
@@ -1385,7 +1515,7 @@ class TimingGUI:
     # out because every row on it is repeated from one of these, and the
     # telemetry window is its own thing with its own statistics.
     ADVANCED_TABS = (
-        "System Info", "Timings", "Training", "IMC", "RTL"
+        "System Info", "Timings", "Training", "IMC", "RTL", "Voltages",
     )
 
     def advanced_entries(self):
@@ -1417,7 +1547,71 @@ class TimingGUI:
                     read = lambda timing=timing: self._read_compact_value(timing)
                 entries.append((
                     tab, timing.get("Category") or "", name, read,
+                    timing.get("display_name", name),
                 ))
+        if "SPD" in getattr(self, "tab_names", ()):
+            entries.extend(self._advanced_spd_entries())
+        return entries
+
+    def _advanced_spd_entries(self):
+        """The SPD tab's module fields and profile table, one column a module.
+
+        Read from the modules the SPD tab reads, so they fill in once that
+        read is done -- opening Advanced starts it if the tab has not. Each
+        module goes under the channel heading its slot names; the profiles are
+        numbered sections headed by the profile's own name, since which
+        profiles a kit carries is not known until it is read.
+        """
+        fields = SPD_TAB_FIELDS
+        profile_fields = SPD_TAB_PROFILE_FIELDS
+        channels = self._channel_headers(None, "A1", "B1")
+
+        def modules():
+            found = list(getattr(self, "_spd_modules", None) or [])
+            by_slot = {str(module.get("slot")): module for module in found}
+            placed = [by_slot.get(str(label)) for label in channels]
+            # A module whose slot the headings do not name still gets a
+            # column -- the first one free, in the order the modules were read
+            # -- rather than being left out beside one that matched.
+            rest = [module for module in found
+                    if not any(module is other for other in placed)]
+            return [module if module is not None
+                    else (rest.pop(0) if rest else None)
+                    for module in placed]
+
+        def field(key):
+            def read():
+                return tuple(
+                    "—" if module is None else self._spd_field_text(module, key)
+                    for module in modules())
+            return read
+
+        def profile(index, key):
+            def read():
+                values = []
+                for module in modules():
+                    profiles = list((module or {}).get("profiles") or [])
+                    value = (profiles[index].get(key)
+                             if index < len(profiles) else None)
+                    values.append("—" if value in (None, "") else str(value))
+                return tuple(values)
+            return read
+
+        half = (len(fields) + 1) // 2
+        entries = [
+            ("SPD", "Module" if position < half else "Identity",
+             label, field(key), label)
+            for position, (label, key) in enumerate(fields)
+        ]
+        for index in range(5):
+            category = "Profile %d" % (index + 1)
+            entries.append(("SPD", category, "Profile " + str(index + 1),
+                            profile(index, "name"), "Profile"))
+            entries.extend(
+                ("SPD", category, "%s (Profile %d)" % (label, index + 1),
+                 profile(index, key), label)
+                for label, key in profile_fields
+            )
         return entries
 
     def open_advanced(self):
@@ -1447,6 +1641,10 @@ class TimingGUI:
             "font": self.COMPACT_FONT,
             "bold": self.COMPACT_BOLD,
         }
+        # The SPD rows fill in from the SPD tab's read; start it if the tab
+        # has not been opened yet.
+        if "SPD" in self.tab_names:
+            self._load_spd_tab_async()
         self._advanced_window = AdvancedWindow(
             self.root,
             theme,
@@ -1540,8 +1738,9 @@ class TimingGUI:
         """
         try:
             # Same decode the System Info rank/die/size rows read, so the two
-            # displays cannot disagree about the installed modules.
-            memory_info = read_modules()
+            # displays cannot disagree about the installed modules -- with the
+            # DRAM maker and die the modules' own SPD reports, where it can.
+            memory_info = read_modules_with_spd_ic()
 
             channels = {}
             for info in memory_info:
@@ -1645,6 +1844,12 @@ class TimingGUI:
             )
             holder.grid(row=0, column=0, sticky="nsew")
             self.tab_frames[name] = holder
+            if name in VIEWPORT_SHADED_TABS:
+                holder.bind(
+                    "<Configure>",
+                    lambda _event, tab=name: self._on_tab_area_resized(tab),
+                    add="+",
+                )
 
             frame = ctk.CTkFrame(holder, corner_radius=0, fg_color=self.BG_COLOR)
             # Summary is sized close to its content: the panels and 24 rows
@@ -1652,7 +1857,7 @@ class TimingGUI:
             # margin above and below is left off rather than spent.
             frame.pack(
                 fill="both", expand=True,
-                padx=0 if name == "System Info" else 2,
+                padx=2,
                 pady=0 if name == "Summary" else 1,
             )
 
@@ -1729,8 +1934,7 @@ class TimingGUI:
                 continue
 
             # Timings uses three columns. Training selects three only when its
-            # active profile still has a middle group; the tall DDR4 layout
-            # and the tall IMC layout use two wider columns.
+            # active profile has a middle group; IMC uses two wider columns.
             uniform = None if name in SHADED_TABS else "equal"
             training_has_middle = (
                 name == "Training"
@@ -1746,20 +1950,38 @@ class TimingGUI:
                 column_keys = ("Left", "Right")
             for column in range(len(column_keys)):
                 frame.grid_columnconfigure(column, weight=1, uniform=uniform)
-            # Columns touch so row shading crosses the full table. The 25px
-            # content gap is reserved by _stretch_tab_halves inside every
-            # leading column rather than left as an unpainted frame gutter.
+            # _stretch_tab_halves sizes each leading column's cell to its
+            # content plus the 25px gap, which the panels' insets and the
+            # spacing between them take up.
             detail_columns = {}
             last = len(column_keys) - 1
             for column, key in enumerate(column_keys):
-                column_frame = ctk.CTkFrame(
-                    frame, corner_radius=0, fg_color=self.BG_COLOR
+                # Each column sits on its own bordered panel, the way Summary
+                # groups its blocks. The panel shares the column's grid cell
+                # and is created first, so it draws underneath; the column
+                # stays a direct child of ``frame``, which the width and
+                # shading passes measure it against.
+                panel = self._column_panel(frame)
+                panel.grid(
+                    row=0, column=column, sticky="nsew",
+                    padx=(0, 0 if column == last else self.PANEL_COLUMN_SPACING),
                 )
+                column_frame = ctk.CTkFrame(
+                    frame, corner_radius=0, fg_color=self.PANEL_COLOR
+                )
+                column_frame._panel = panel
+                # Inset past the panel's border and rounded corners. A leading
+                # column's cell also holds the spacing to the next panel, so
+                # the inset, the spacing and the next column's inset come to
+                # the 25px every tab keeps between one column's text and the
+                # next.
                 column_frame.grid(
                     row=0,
                     column=column,
                     sticky="nsew",
-                    padx=0,
+                    padx=(self.PANEL_PADX, self.PANEL_PADX + (
+                        0 if column == last else self.PANEL_COLUMN_SPACING)),
+                    pady=self.PANEL_PADY,
                 )
                 column_frame.grid_columnconfigure(0, weight=1)
                 detail_columns[key] = column_frame
@@ -1815,42 +2037,43 @@ class TimingGUI:
         self._spd_profile_values = []
         self._spd_loading = False
         self._spd_loaded = False
+        self._spd_info_halves = []
 
         parent.grid_columnconfigure(0, weight=1)
         parent.grid_rowconfigure(0, weight=0)
-        parent.grid_rowconfigure(1, weight=0)
-        parent.grid_rowconfigure(2, weight=1)
+        parent.grid_rowconfigure(1, weight=1)
 
         info = ctk.CTkFrame(parent, corner_radius=0, fg_color=self.BG_COLOR)
         info.grid(row=0, column=0, sticky="ew")
-        info.grid_columnconfigure(0, weight=1, uniform="spd_info")
-        info.grid_columnconfigure(1, weight=1, uniform="spd_info")
+        # Laid out like every other tab: names, the 25px gap, values ending on
+        # one edge; the spacing to the second half; that half taking the rest.
+        # The two halves were equal and stretched, which put each value at its
+        # half's far edge while the timings table below kept the 25px rule.
+        # Each half is a panel of its own, as each column is on the other
+        # tabs, and the timings table below is a third.
+        info.grid_columnconfigure(0, weight=0)
+        info.grid_columnconfigure(1, weight=1)
 
-        fields = (
-            ("Memory Type", "memory_type"),
-            ("Module Type", "module_type"),
-            ("Channels", "system_channels"),
-            ("Capacity", "system_capacity"),
-            ("Module Size", "capacity"),
-            ("Max Bandwidth", "max_bandwidth"),
-            ("Module Manuf.", "module_manufacturer"),
-            ("DRAM Manuf.", "dram_manufacturer"),
-            ("DRAM Die", "dram_die"),
-            ("SPD Extension", "extension"),
-            ("Ranks", "rank"),
-            ("Part Number", "part_number"),
-            ("Serial Number", "serial_number"),
-            ("Manufactured", "manufacture_date"),
-            ("SPD Address", "address"),
-        )
+        fields = SPD_TAB_FIELDS
         fields_per_column = (len(fields) + 1) // 2
         for column in range(2):
+            panel = self._summary_panel(info)
+            panel.grid(row=0, column=column, sticky="nsew",
+                       padx=(0, self.PANEL_COLUMN_SPACING if column == 0 else 0))
+            panel.grid_columnconfigure(0, weight=1)
+            panel.grid_rowconfigure(0, weight=1)
             column_frame = ctk.CTkFrame(
-                info, corner_radius=0, fg_color=self.BG_COLOR
+                panel, corner_radius=0, fg_color=self.PANEL_COLOR
             )
-            column_frame.grid(row=0, column=column, sticky="nsew")
+            column_frame.grid(row=0, column=0, sticky="nsew",
+                              padx=self.PANEL_PADX, pady=self.PANEL_PADY)
             column_frame.grid_columnconfigure(0, weight=0)
-            column_frame.grid_columnconfigure(1, weight=1)
+            column_frame.grid_columnconfigure(1, weight=0)
+            # The second half's third column is a filler that carries the
+            # bands to its panel's edge; the first half ends on its values,
+            # the spacing between the panels keeping the 25px to the second.
+            column_frame.grid_columnconfigure(2, weight=column)
+            half_names, half_values = [], []
             heading = ctk.CTkLabel(
                 column_frame,
                 text="MODULE" if column == 0 else "IDENTITY",
@@ -1862,7 +2085,7 @@ class TimingGUI:
                 text_color=self.VALUE_COLOR,
                 fg_color="transparent",
             )
-            heading.grid(row=0, column=0, columnspan=2, sticky="ew")
+            heading.grid(row=0, column=0, columnspan=3, sticky="ew")
             for local_row, (label, key) in enumerate(
                 fields[
                     column * fields_per_column:
@@ -1878,21 +2101,63 @@ class TimingGUI:
                     pady=self.ROW_PADY, text_color=self.TEXT_COLOR,
                     fg_color=background, bg_color=background, corner_radius=0,
                 )
+                # Right-aligned, ending on one edge per half as the other
+                # tabs' values do; see _size_spd_info.
                 value = ctk.CTkLabel(
                     column_frame, text="—", font=self.COMPACT_FONT,
-                    height=self.ROW_HEIGHT, anchor="w", padx=25,
+                    height=self.ROW_HEIGHT, anchor="e", padx=self.ROW_PADX,
                     pady=self.ROW_PADY, text_color=self.VALUE_COLOR,
                     fg_color=background, bg_color=background, corner_radius=0,
                 )
                 name.grid(row=local_row, column=0, sticky="nsew")
                 value.grid(row=local_row, column=1, sticky="nsew")
+                # The gutter to the other half, or the filler past the second
+                # half, painted with the row's band so it crosses in one piece.
+                ctk.CTkLabel(
+                    column_frame, text="", width=0,
+                    height=self.ROW_HEIGHT, pady=self.ROW_PADY,
+                    fg_color=background, bg_color=background,
+                    corner_radius=0,
+                ).grid(row=local_row, column=2, sticky="nsew")
+                half_names.append(name)
+                half_values.append(value)
                 self._spd_value_labels[key] = value
+            # An odd field count leaves the second half a row short, and its
+            # bands stopped one row above the first half's. A blank banded
+            # row carries them down to the same depth.
+            drawn = len(fields[column * fields_per_column:
+                               (column + 1) * fields_per_column])
+            for local_row in range(drawn + 1, fields_per_column + 1):
+                background = (
+                    self.HIGHLIGHT_COLOR if local_row % 2 else "transparent"
+                )
+                ctk.CTkLabel(
+                    column_frame, text="", height=self.ROW_HEIGHT,
+                    pady=self.ROW_PADY, fg_color=background,
+                    bg_color=background, corner_radius=0,
+                ).grid(row=local_row, column=0, columnspan=3, sticky="nsew")
+            self._spd_info_halves.append(
+                (column_frame, half_names, half_values))
 
-        table = ctk.CTkFrame(parent, corner_radius=0, fg_color=self.BG_COLOR)
-        table.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        table.grid_columnconfigure(0, minsize=118, weight=0)
+        # The table and the bands below it share one panel, which runs down
+        # to the module selector.
+        table_panel = self._summary_panel(parent)
+        table_panel.grid(row=1, column=0, sticky="nsew",
+                         pady=(self.PANEL_GAP, 0))
+        table_panel.grid_columnconfigure(0, weight=1)
+        table_panel.grid_rowconfigure(0, weight=0)
+        table_panel.grid_rowconfigure(1, weight=1)
+        table = ctk.CTkFrame(table_panel, corner_radius=0,
+                             fg_color=self.PANEL_COLOR)
+        table.grid(row=0, column=0, sticky="ew",
+                   padx=self.PANEL_PADX, pady=(self.PANEL_PADY, 0))
+        self._spd_table = table
+        # Names, then five profile columns sized by _show_spd_profile_columns,
+        # then a filler that takes the rest of the row so its band crosses.
+        table.grid_columnconfigure(0, weight=0)
         for column in range(1, 6):
-            table.grid_columnconfigure(column, weight=1, uniform="spd_profile")
+            table.grid_columnconfigure(column, weight=0)
+        table.grid_columnconfigure(SPD_TABLE_FILLER_COLUMN, weight=1)
         title = ctk.CTkLabel(
             table, text="TIMINGS TABLE", font=self.HEADER_FONT,
             height=self.ROW_HEIGHT, anchor="w", padx=self.ROW_PADX,
@@ -1903,22 +2168,14 @@ class TimingGUI:
         for column in range(5):
             header = ctk.CTkLabel(
                 table, text="", font=self.COMPACT_BOLD,
-                height=self.ROW_HEIGHT, anchor="center", padx=2,
+                height=self.ROW_HEIGHT, anchor="e", padx=self.ROW_PADX,
                 pady=self.ROW_PADY, text_color=self.TEXT_COLOR,
                 fg_color="transparent",
             )
             header.grid(row=0, column=column + 1, sticky="nsew")
             self._spd_profile_headers.append(header)
 
-        profile_fields = (
-            ("Frequency", "frequency"),
-            ("CAS Latency", "cl"),
-            ("tRCD", "trcd"),
-            ("tRP", "trp"),
-            ("tRAS", "tras"),
-            ("tRC", "trc"),
-            ("Voltage", "voltage"),
-        )
+        profile_fields = SPD_TAB_PROFILE_FIELDS
         for row, (label, key) in enumerate(profile_fields, start=1):
             background = self.HIGHLIGHT_COLOR if row % 2 else "transparent"
             ctk.CTkLabel(
@@ -1931,18 +2188,43 @@ class TimingGUI:
             for column in range(5):
                 value = ctk.CTkLabel(
                     table, text="", font=self.COMPACT_FONT,
-                    height=self.ROW_HEIGHT, anchor="center", padx=2,
+                    height=self.ROW_HEIGHT, anchor="e", padx=self.ROW_PADX,
                     pady=self.ROW_PADY, text_color=self.VALUE_COLOR,
                     fg_color=background, bg_color=background, corner_radius=0,
                 )
                 value.grid(row=row, column=column + 1, sticky="nsew")
                 labels.append(value)
             self._spd_profile_values.append((key, labels))
+            ctk.CTkLabel(
+                table, text="", height=self.ROW_HEIGHT, pady=self.ROW_PADY,
+                fg_color=background, bg_color=background, corner_radius=0,
+            ).grid(row=row, column=SPD_TABLE_FILLER_COLUMN, sticky="nsew")
+
+        # The bands carry on below the table to the foot of the page, as on
+        # every other tab. The frame takes whatever height row 2 is given and
+        # does not grow for its rows, so the ones past its foot are clipped
+        # rather than pushing the module selector down.
+        filler = ctk.CTkFrame(table_panel, corner_radius=0,
+                              fg_color=self.PANEL_COLOR, height=1)
+        filler.grid(row=1, column=0, sticky="nsew",
+                    padx=self.PANEL_PADX, pady=(0, self.PANEL_PADY))
+        filler.grid_propagate(False)
+        filler.grid_columnconfigure(0, weight=1)
+        first = len(profile_fields) + 1
+        for offset in range(SPD_FILLER_ROWS):
+            background = (
+                self.HIGHLIGHT_COLOR if (first + offset) % 2 else "transparent"
+            )
+            ctk.CTkLabel(
+                filler, text="", height=self.ROW_HEIGHT, pady=self.ROW_PADY,
+                fg_color=background, bg_color=background, corner_radius=0,
+            ).grid(row=offset, column=0, sticky="ew")
+        self._size_spd_info()
 
         selector_border = ctk.CTkFrame(
             parent, corner_radius=0, fg_color=self.BRAND_COLOR
         )
-        selector_border.grid(row=3, column=0, sticky="ew", pady=(3, 1))
+        selector_border.grid(row=2, column=0, sticky="ew", pady=(3, 1))
         choices = ["Open SPD tab to read modules"]
         self.spd_selector = ctk.CTkOptionMenu(
             selector_border, values=choices, command=self._select_spd_module,
@@ -2042,10 +2324,7 @@ class TimingGUI:
         if module is None:
             return
         for key, label in self._spd_value_labels.items():
-            value = self._spd_system_values.get(key, module.get(key))
-            if key == "address" and isinstance(value, int):
-                value = "0x%02X" % value
-            label.configure(text="—" if value in (None, "") else str(value))
+            label.configure(text=self._spd_field_text(module, key))
         profiles = list(module.get("profiles") or [])[:5]
         for index, header in enumerate(self._spd_profile_headers):
             header.configure(text=(profiles[index].get("name", "")
@@ -2054,6 +2333,64 @@ class TimingGUI:
             for index, label in enumerate(labels):
                 value = profiles[index].get(key) if index < len(profiles) else ""
                 label.configure(text="" if value is None else str(value))
+        self._show_spd_profile_columns(len(profiles))
+        self._size_spd_info()
+
+    def _spd_field_text(self, module, key):
+        """One SPD field as the page shows it; Advanced reads it the same way.
+
+        The system-wide values moved here from System Info win over the
+        module's own, the SPD address reads in hex, and nothing reads as a
+        dash.
+        """
+        value = getattr(self, "_spd_system_values", {}).get(
+            key, module.get(key))
+        if key == "address" and isinstance(value, int):
+            value = "0x%02X" % value
+        return "—" if value in (None, "") else str(value)
+
+    def _size_spd_info(self):
+        """Put each SPD half's values 25px past its longest name.
+
+        Measured from the text shown, so it runs again whenever a module is
+        selected. The value column is its widest value; values are
+        right-aligned, so they end on one edge.
+        """
+        halves = getattr(self, "_spd_info_halves", None)
+        if not halves:
+            return
+        self.root.update_idletasks()
+        for frame, names, values in halves:
+            name_width = max(label.winfo_reqwidth() for label in names)
+            value_width = max(label.winfo_reqwidth() for label in values)
+            frame.grid_columnconfigure(
+                0, minsize=name_width + self.COLUMN_GAP)
+            frame.grid_columnconfigure(1, minsize=value_width)
+
+    def _show_spd_profile_columns(self, count):
+        """Draw as many profile columns as the module carries profiles.
+
+        Each is its widest entry plus the 25px gap every table keeps between
+        its names and values and between one column and the next; values are
+        right-aligned, so the gap sits on the column's left. The unused ones
+        take no width and hold no text, and the filler column after them
+        carries the bands to the edge. Their cells stay gridded: CustomTkinter
+        re-grids a widget from its last grid() call when the display scaling
+        changes, which would bring a removed one back.
+        """
+        table = getattr(self, "_spd_table", None)
+        if table is None:
+            return
+        self.root.update_idletasks()
+        cells = [self._spd_profile_headers] + [
+            labels for _key, labels in self._spd_profile_values
+        ]
+        for index in range(len(self._spd_profile_headers)):
+            width = 0
+            if index < count:
+                width = max(row[index].winfo_reqwidth() for row in cells)
+                width += self.COLUMN_GAP
+            table.grid_columnconfigure(index + 1, weight=0, minsize=width)
 
     def _prepare_module_choices(self, channel_a, channel_b):
         """Build physical-DIMM choices once, using the board slot labels."""
@@ -2501,8 +2838,8 @@ class TimingGUI:
     # them whole. Anything taller than the window would be cut off unseen
     # here rather than reachable, so a tab only belongs on this list while
     # its content clears the viewport -- see the fit check in the tests.
-    # Every main tab fits at its requested height, including the tall IMC
-    # table, so none gives up width to a scrollbar gutter.
+    # Every main tab fits at its requested height, including the tall
+    # Training table, so none gives up width to a scrollbar gutter.
     UNSCROLLED_TABS = (
         "Summary", "System Info", "SPD", "Timings", "Training", "IMC", "RTL",
         "Voltages",
@@ -2513,12 +2850,16 @@ class TimingGUI:
     # mode-register rows, worded as the reference tools word them ("Package
     # Output Driver Test Mode", "Timer Stops at 2048th clocks"), and at 750
     # that column ran 260px past the window's edge.
+    #
+    # System Info is 780 wide on every platform: its two halves came to the
+    # whole of a 750px window with nothing to spare, so its right-hand values
+    # ran against the border on a display whose font renders a little wider.
     TAB_WINDOW_SIZES = {
         # Larger than the other pages: the Summary's blocks are bordered
         # panels, which cost 17px of height over the rules that divided them,
         # and the width gives the three columns room to breathe.
         "Summary": (775, 775),
-        "System Info": (750, 750),
+        "System Info": (780, 750),
         "SPD": (750, 750),
         "Timings": (750, 750),
         "Training": (1010, 800),
@@ -2526,9 +2867,68 @@ class TimingGUI:
         "RTL": (750, 654),
         "Voltages": (750, 654),
     }
+    # LGA1700 DDR5, where the per-channel controller registers, MR2-MR4 and
+    # Add/Dec tCWL joined Training: 43 lines to each of three columns, with
+    # Refresh's names widening the middle one. Held under 960px tall, what a
+    # 1080p screen leaves once window_size_for_tab takes its 120 off -- at
+    # 1000 the last row was cut off there, with no scrollbar to reach it.
+    # IMC gave up the same rows, and shares one size with the other pages
+    # that are not wide tables. Training's three column panels need 954px
+    # since the capability rows left it (DDR5_TRAINING_REMOVED); 975 is the
+    # size chosen for them.
+    LGA1700_DDR5_TAB_WINDOW_SIZES = {
+        "Summary": (700, 750),
+        "System Info": (775, 750),
+        "SPD": (700, 750),
+        "Timings": (700, 750),
+        "Training": (975, 950),
+        "IMC": (700, 750),
+        "RTL": (700, 750),
+        "Voltages": (700, 750),
+    }
+    if ACTIVE_PLATFORM == LGA1700_DDR5:
+        TAB_WINDOW_SIZES.update(LGA1700_DDR5_TAB_WINDOW_SIZES)
     WINDOW_WIDTH, WINDOW_HEIGHT = TAB_WINDOW_SIZES["Summary"]
     MIN_WINDOW_WIDTH = 700
     MIN_WINDOW_HEIGHT = 654
+
+    def _column_text_width(self, tab_name, column_frame):
+        """How far a detail column's text reaches: its widest row's columns.
+
+        Measured from the rows' own column widths rather than the frame's
+        requested width, which ran a pixel past the text on Timings and
+        Training and put 26-27px between their columns against 25.
+        """
+        widths = []
+        for body in self._dual_content_frames.get(
+                (tab_name, id(column_frame)), []):
+            widths.append(sum(
+                int(body.grid_columnconfigure(column).get("minsize") or 0)
+                for column in (0,) + self.DETAIL_VALUE_COLUMNS
+            ))
+        return max(widths) if widths else column_frame.winfo_reqwidth()
+
+    def _widen_value_columns(self, tab_name, column_frame, extra):
+        """Give a detail column's last value column ``extra`` pixels."""
+        if extra <= 0:
+            return
+        for body in self._dual_content_frames.get(
+                (tab_name, id(column_frame)), []):
+            used = [column for column in self.DETAIL_VALUE_COLUMNS
+                    if int(body.grid_columnconfigure(column).get("minsize") or 0)]
+            if not used:
+                continue
+            last = max(used)
+            current = int(body.grid_columnconfigure(last).get("minsize") or 0)
+            body.grid_columnconfigure(last, minsize=current + extra)
+
+    def _close_last_panel(self, column_frame):
+        """Drop the spacing a column's cell keeps for a panel after it."""
+        panel = getattr(column_frame, "_panel", None)
+        if panel is None:
+            return
+        column_frame.grid_configure(padx=self.PANEL_PADX)
+        panel.grid_configure(padx=0)
 
     def _stretch_tab_halves(self):
         """Give every tab the same content width, so a band crosses it whole.
@@ -2560,6 +2960,8 @@ class TimingGUI:
                 ]
                 total = sum(frame.winfo_reqwidth() for frame in used)
                 total += self.DETAIL_COLUMN_GAP * max(0, len(used) - 1)
+                if used and getattr(used[-1], "_panel", None) is not None:
+                    total += 2 * self.PANEL_PADX
                 widest = max(widest, total)
             if widest <= 0:
                 return
@@ -2574,6 +2976,9 @@ class TimingGUI:
                 if not used:
                     continue
                 parent = used[0].master
+                # The last column in use runs to the edge, with no spacing
+                # kept after its panel for a column that is not drawn.
+                self._close_last_panel(used[-1])
                 # Detail tabs use two to four columns, each as wide as its
                 # content needs to be with the gap between them.
                 if len(used) > 1:
@@ -2605,33 +3010,13 @@ class TimingGUI:
                                 uniform="imc_columns",
                             )
                         allocated = third * len(used)
-                    elif name in ("IMC", "RTL") and len(used) == 2:
-                        # These are deliberately balanced left/right views.
-                        # Applying the normal content-first allocation while
-                        # System Info's grid still has ``uniform`` doubles the
-                        # wider minimum and pushes its right half outside the
-                        # tab. RTL also reads correctly only when CHA and CHB
-                        # occupy equal halves rather than leaving CHB to absorb
-                        # all spare width.
-                        column_gap = self.DETAIL_COLUMN_GAP
-                        half = max(
-                            max(frame.winfo_reqwidth() for frame in used),
-                            (min(widest, parent.winfo_width())
-                             - column_gap + 1) // 2,
-                        )
-                        half = summary_column_width(half, is_last=False)
-                        for column_frame in used:
-                            grid_column = int(
-                                column_frame.grid_info()["column"]
-                            )
-                            parent.grid_columnconfigure(
-                                grid_column, minsize=half, weight=1
-                            )
-                        allocated = half * len(used)
                     else:
                         # Each leading column is its own content plus the gap;
                         # the last takes whatever is left, so a narrow tab
                         # still fills the window and its bands reach the edge.
+                        # IMC and RTL included: they were split into equal
+                        # halves, which left 139px and 223px between their
+                        # columns against the 25 every other tab keeps.
                         # Rounded to an even width, for the reason
                         # summary_column_width spells out: the draw engine
                         # rounds an odd fill down and leaves a hairline seam.
@@ -2641,20 +3026,26 @@ class TimingGUI:
                         for index, column_frame in enumerate(used):
                             grid_column = int(column_frame.grid_info()["column"])
                             if index == len(used) - 1:
+                                # Its cell also holds its panel's inset.
                                 width = max(
-                                    column_frame.winfo_reqwidth(),
+                                    column_frame.winfo_reqwidth()
+                                    + 2 * self.PANEL_PADX,
                                     target_width - allocated,
                                 )
                             else:
                                 natural_with_gap = (
-                                    column_frame.winfo_reqwidth() + column_gap
+                                    self._column_text_width(name, column_frame)
+                                    + column_gap
                                 )
-                                width = (
-                                    natural_with_gap
-                                    if name == "System Info"
-                                    else summary_column_width(
-                                        natural_with_gap, is_last=False
-                                    )
+                                width = summary_column_width(
+                                    natural_with_gap, is_last=False
+                                )
+                                # The pixel an odd width is rounded up by goes
+                                # to the values, which are right-aligned, so
+                                # they move with it and the gutter stays 25.
+                                self._widen_value_columns(
+                                    name, column_frame,
+                                    width - natural_with_gap,
                                 )
                             parent.grid_columnconfigure(
                                 grid_column, minsize=width,
@@ -2690,6 +3081,10 @@ class TimingGUI:
                         )
                         if unused.winfo_manager():
                             unused.grid_remove()
+                        # And the panel drawn behind it.
+                        panel = getattr(unused, "_panel", None)
+                        if panel is not None and panel.winfo_manager():
+                            panel.grid_remove()
                     except Exception:
                         continue
         except Exception:
@@ -3616,6 +4011,9 @@ class TimingGUI:
     PANEL_PADX = 6
     PANEL_PADY = 4
     PANEL_GAP = 6
+    # Between two column panels on the detail tabs: with each panel's inset
+    # either side, one column's text ends 25px before the next one's starts.
+    PANEL_COLUMN_SPACING = 25 - 2 * PANEL_PADX
     # The least space left between a CPU / Model name and its value when the
     # value is pulled left to end on its column's edge.
     IDENTITY_MIN_GAP = 8
@@ -3626,6 +4024,16 @@ class TimingGUI:
             parent, corner_radius=self.PANEL_RADIUS, border_width=1,
             border_color=self.PANEL_BORDER_COLOR, fg_color=self.PANEL_COLOR,
         )
+
+    def _column_panel(self, parent):
+        """A Summary panel drawn behind a detail column in its grid cell.
+
+        Asks for no size of its own -- an empty CTkFrame otherwise asks for
+        200x200 -- so the column it frames decides the cell.
+        """
+        panel = self._summary_panel(parent)
+        panel.configure(width=1, height=1)
+        return panel
 
     def _summary_rule(self, parent, row, pady=(4, 4)):
         """Draw a hairline across the panel, the way ZenTimings separates its
@@ -3842,7 +4250,13 @@ class TimingGUI:
             primary_secondary_names, tertiary_names = am5_summary_timing_columns(TIMINGS)
         else:
             primary_secondary_names, tertiary_names = (
-                intel_summary_timing_columns(TIMINGS)
+                intel_summary_timing_columns(
+                    TIMINGS,
+                    omitted=(INTEL_DDR5_SUMMARY_OMITTED
+                             if ACTIVE_PLATFORM == LGA1700_DDR5 else ()),
+                    added=(INTEL_DDR5_SUMMARY_ADDED
+                           if ACTIVE_PLATFORM == LGA1700_DDR5 else ()),
+                )
             )
 
         # The command rate reads as a timing, so it belongs under tRC rather
@@ -4123,6 +4537,7 @@ class TimingGUI:
             draw_column(self.grid_frames[tab_name]["Right"], right_column)
 
         self._align_dual_columns()
+        self._right_align_detail_values()
         for shaded_tab in PAIRED_SECTION_TABS:
             self._pair_section_rows(shaded_tab)
         for continuous_tab in CONTINUOUS_SECTION_TABS:
@@ -4275,6 +4690,21 @@ class TimingGUI:
         if not columns:
             return
         self._summary_clock_pairs = columns
+        # The last column's values keep no gap after them: there is no column
+        # to their right, and the edge pass below ends them where the timing
+        # values under them end. With the gap the MCLK column asked for 225px
+        # of the 224 the 700px window leaves it, and Summary ran a pixel past
+        # its own edge.
+        last = {}
+        for master, column in columns:
+            try:
+                last[master] = max(last.get(master, -1), int(column))
+            except (TypeError, ValueError):
+                continue
+        for (master, column), pairs in columns.items():
+            if str(column) == str(last.get(master)):
+                for _frame, _name, value in pairs:
+                    value.grid_configure(padx=0)
 
         def needed(label):
             # The cell has to hold the grid padding as well: each value
@@ -4403,6 +4833,16 @@ class TimingGUI:
                     values.append((int(label.grid_info()["column"]) // 2, label))
                 else:
                     label.grid_configure(padx=(0, self.COLUMN_GAP))
+            # A row's last value keeps no gap after it, as the clock strip's
+            # last column does not: nothing follows it, and with the gap
+            # Microcode's value ran the row a pixel past the 700px window.
+            row_values = [label for label in body.grid_slaves()
+                          if isinstance(label, ctk.CTkLabel)
+                          and int(label.grid_info()["column"]) % 2 == 1]
+            if row_values:
+                max(row_values,
+                    key=lambda label: int(label.grid_info()["column"])
+                    ).grid_configure(padx=0)
         self.root.update_idletasks()
         starts = self._summary_column_starts()
 
@@ -4642,17 +5082,46 @@ class TimingGUI:
         """Continue a short table's zebra rows to the bottom of its viewport."""
         if tab_name not in VIEWPORT_SHADED_TABS or self.tabview.get() != tab_name:
             return
+        # Not while a pass is already running: the update_idletasks below runs
+        # the pass _on_tab_area_resized queued, and the outer one then wrote
+        # over the inner one's record of its rows, which stayed for good --
+        # 200px of them on IMC after Training.
+        if self._filling_viewport:
+            return
+        self._filling_viewport = True
+        try:
+            self._fill_viewport_rows(tab_name)
+        finally:
+            self._filling_viewport = False
+
+    def _fill_viewport_rows(self, tab_name):
+        """The body of _extend_tab_shading_to_viewport."""
         sections = self._section_bodies.get(tab_name) or []
         if not sections:
             return
-        viewport_size = self.window_size_for_tab(
-            tab_name, self.root.winfo_screenheight()
-        )
-        if self._shading_viewports.get(tab_name) == viewport_size:
+        # The table's own area rather than the whole page, which on Timings
+        # and Training also holds the module selector. Keyed by the height it
+        # was filled for: this runs just after the window was asked for the
+        # tab's size and can come before the area has taken it -- straight
+        # after Training, IMC filled 199px too far -- so a later change of
+        # height (see _on_tab_area_resized) fills it again.
+        viewport = self.tab_frames[tab_name]
+        if self._shading_viewports.get(tab_name) == viewport.winfo_height():
             return
+        # The rows added for an earlier height come out first.
+        for body, row, spacer in self._viewport_spacers.pop(tab_name, []):
+            spacer.destroy()
+            body.grid_rowconfigure(row, minsize=0)
         self.root.update_idletasks()
-        viewport = self.tabview.tab(tab_name)
-        target_bottom = viewport.winfo_rooty() + viewport.winfo_height() - 2
+        area_height = viewport.winfo_height()
+        if area_height <= 1:
+            return
+        # Where each column has to end: the area's foot, less the content
+        # frame's margin and the panel's inset below the column, so the
+        # panels close inside the area instead of losing their bottom border.
+        target_bottom = (viewport.winfo_rooty() + area_height
+                         - 1 - self.PANEL_PADY)
+        spacers = []
 
         groups = {}
         for section in sections:
@@ -4681,7 +5150,12 @@ class TimingGUI:
             )
             body = deepest["body"]
             bottom = body.winfo_rooty() + body.winfo_height()
-            remaining = target_bottom - bottom
+            # Measured at the column's own foot, as tall as its content asks:
+            # the section padding below the last row counts, and a column
+            # stretched to its taller neighbour's height does not.
+            column = body.master.master
+            remaining = target_bottom - (
+                column.winfo_rooty() + column.winfo_reqheight())
             if remaining <= 0:
                 continue
 
@@ -4705,15 +5179,43 @@ class TimingGUI:
                     if next_band % 2 else "transparent"
                 )
                 body.grid_rowconfigure(next_row, weight=0, minsize=height)
-                spacer = ctk.CTkLabel(
-                    body, text="", height=height, fg_color=bg, corner_radius=0,
-                )
+                if height < pitch:
+                    # The part-row at the foot. A label is never shorter than
+                    # a line of its font, so one asked for 3px drew 15 and ran
+                    # the column 12px past the panel's bottom border; an empty
+                    # frame is the height it is given.
+                    spacer = ctk.CTkFrame(
+                        body, height=height, fg_color=bg, corner_radius=0,
+                    )
+                else:
+                    spacer = ctk.CTkLabel(
+                        body, text="", height=height, fg_color=bg,
+                        corner_radius=0,
+                    )
                 spacer.grid(row=next_row, column=0,
                             columnspan=self.ROW_FILL_SPAN, sticky="nsew")
+                spacers.append((body, next_row, spacer))
                 next_row += 1
                 next_band += 1
                 remaining -= height
-        self._shading_viewports[tab_name] = viewport_size
+        self._viewport_spacers[tab_name] = spacers
+        self._shading_viewports[tab_name] = area_height
+
+    def _on_tab_area_resized(self, tab_name):
+        """Fill the selected tab's bands again once its area has its size."""
+        if self.tabview.get() != tab_name:
+            return
+        if (self._shading_viewports.get(tab_name)
+                == self.tab_frames[tab_name].winfo_height()):
+            return
+        if self._tab_shading_job is not None:
+            try:
+                self.root.after_cancel(self._tab_shading_job)
+            except Exception:
+                pass
+        self._tab_shading_job = self.root.after_idle(
+            lambda name=tab_name: self._finish_tab_shading(name)
+        )
 
     def _normalize_continuous_tab_shading(self, tab_name):
         """Shade continuous tables from their actual shared screen rows.
@@ -4930,9 +5432,14 @@ class TimingGUI:
                     # set a minsize the column then grew past to fit the pads,
                     # which is why the strip sat seven pixels right of the
                     # timing columns it is supposed to start on.
+                    #
+                    # Less the value's own trailing gap: the column adds the
+                    # gutter itself just below, and counting the pair's too
+                    # put 51px between Summary's columns against 25.
                     widths[index] = max(
                         widths[index],
-                        cell.winfo_reqwidth() + _grid_padx(info),
+                        cell.winfo_reqwidth() + _grid_padx(info)
+                        - self.DETAIL_COLUMN_GAP,
                     )
 
         last = len(widths) - 1
@@ -5046,6 +5553,63 @@ class TimingGUI:
                         )
                     # Slack belongs past the last value column.
                     frame.grid_columnconfigure(len(widths), weight=1)
+
+    # The grid columns a detail section draws its values and channel headers
+    # in. Column 0 is the name; anything past 2 is the slack filler.
+    DETAIL_VALUE_COLUMNS = (1, 2)
+
+    def _right_align_detail_values(self):
+        """End every value in a detail column on one edge, as the Summary does.
+
+        _align_dual_columns has already given the sections in each half one
+        set of column widths -- except on System Info, which sizes each
+        section on its own so its two halves fit the window. There the value
+        column of a narrower section is widened until it ends where the
+        widest section's does: that is the width the half already takes, so
+        nothing moves outward. Then every value, and the channel header above
+        it, is anchored to the right of its cell.
+        """
+        self.root.update_idletasks()
+        groups = {}
+        for (tab_name, parent_id), frames in self._dual_content_frames.items():
+            groups.setdefault((tab_name, parent_id), []).extend(frames)
+
+        def minsize(frame, column):
+            return int(frame.grid_columnconfigure(column).get("minsize") or 0)
+
+        for frames in groups.values():
+            # The last value column that holds any text. Timings and Training
+            # leave their channel-B cells blank, and _align_dual_columns gave
+            # those no width, so they do not count.
+            used = {}
+            for frame in frames:
+                values = [c for c in self.DETAIL_VALUE_COLUMNS
+                          if minsize(frame, c) > 0]
+                if values:
+                    used[frame] = max(values)
+            if not used:
+                continue
+            edges = {
+                frame: sum(minsize(frame, c) for c in range(last + 1))
+                for frame, last in used.items()
+            }
+            edge = max(edges.values())
+            for frame, last in used.items():
+                shortfall = edge - edges[frame]
+                if shortfall > 0:
+                    frame.grid_columnconfigure(
+                        last, minsize=minsize(frame, last) + shortfall
+                    )
+                for child in frame.grid_slaves():
+                    info = child.grid_info()
+                    column = int(info.get("column", 0))
+                    if (column not in self.DETAIL_VALUE_COLUMNS
+                            or int(info.get("columnspan", 1)) != 1
+                            or not isinstance(child, ctk.CTkLabel)):
+                        continue
+                    # Filling the cell is what gives the anchor room to move.
+                    child.grid_configure(sticky="nsew")
+                    child.configure(anchor="e")
 
     @staticmethod
     def row_band(band_offset, uniform_header, data_row):
@@ -5401,7 +5965,7 @@ class TimingGUI:
                         font=content_font,
                         height=row_height,
                         anchor="w",
-                        padx=5,
+                        padx=self.VALUE_PADX,
                         pady=value_pady,
                         text_color=self._value_color(timing),
                         fg_color=bg_color, bg_color=bg_color
@@ -5414,7 +5978,7 @@ class TimingGUI:
                         font=content_font,
                         height=row_height,
                         anchor="w",
-                        padx=5,
+                        padx=self.VALUE_PADX,
                         pady=value_pady,
                         text_color=self._value_color(timing),
                         fg_color=bg_color, bg_color=bg_color
@@ -5438,7 +6002,7 @@ class TimingGUI:
                         font=content_font,
                         height=row_height,
                         anchor="w",
-                        padx=5,
+                        padx=self.VALUE_PADX,
                         pady=value_pady,
                         text_color=self._value_color(timing),
                         fg_color=bg_color, bg_color=bg_color
@@ -5451,7 +6015,7 @@ class TimingGUI:
                         font=content_font,
                         height=row_height,
                         anchor="w",
-                        padx=5,
+                        padx=self.VALUE_PADX,
                         pady=value_pady,
                         fg_color=bg_color, bg_color=bg_color
                     )

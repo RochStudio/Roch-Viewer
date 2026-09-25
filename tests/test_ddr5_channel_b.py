@@ -29,9 +29,10 @@ class ChannelBTest(unittest.TestCase):
                 if isinstance(t.get("dynamic_params_a"), dict)
                 and isinstance(t.get("dynamic_params_b"), dict)]
 
-    def test_ddr5_mode_register_rows_read_the_other_sub_channel(self):
-        # These were written with MCHBAR2 as the second side: on DDR5 that is
-        # MC1 channel A, the same A1 module as the first column.
+    def test_ddr5_mode_register_rows_read_b1s_controller(self):
+        # B1 is on MC1 on Raptor Lake DDR5: SMBIOS names Controller1-DIMMB1,
+        # and the MC1 DFE taps and DQ VREF are the ones the reference tool
+        # shows for DIMM1. MCHBAR + 0x800 is A1's other sub-channel.
         timings = intel_stub.install(LGA1700_DDR5)
         try:
             rows = self.rows_with_both_sides(timings)
@@ -41,7 +42,7 @@ class ChannelBTest(unittest.TestCase):
                     self.assertEqual(row["dynamic_params_a"]["mchbar"],
                                      timings.MCHBAR)
                     self.assertEqual(row["dynamic_params_b"]["mchbar"],
-                                     timings.MCHBAR + 0x800)
+                                     timings.MCHBAR2)
         finally:
             intel_stub.restore()
 
