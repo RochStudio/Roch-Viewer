@@ -1,16 +1,16 @@
-# Roch Viewer 1.0.8
+# Roch Viewer 1.0.9
 
-Version 1.0.8 is the current published release and is available from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/tag/v1.0.8).
+Version 1.0.9 is the current source version. Published builds are on [Releases](https://github.com/RochStudio/Roch-Viewer/releases).
 
 Roch Viewer is a read-only Windows memory-timing and hardware-monitoring tool for supported Intel and AMD systems. It displays clocks, timings, per-channel settings, RAM identity, motherboard sensors and native CPU/memory telemetry in a compact light/dark interface. It does not require HWiNFO.
 
-Version 1.0.8 completes Raptor Lake DDR5 and regroups every tab:
+Version 1.0.9 brings AM5 up to the Intel coverage:
 
-- DDR5 module B1 is read from its own memory controller, so every two-module row shows both modules; tCCD_L_WR and tCCD_L_WR2 are corrected.
-- The DDR5 mode registers MR2-MR4 and the remaining controller fields, with per-module registers on Training.
-- Every tab's columns in bordered panels, like the Summary, with right-aligned values and new, tighter window sizes.
-- A fuller SPD tab: every DDR5 timing and voltage in each JEDEC, XMP and EXPO profile, module organization, and the PMIC and SPD hub makers.
-- System Info adds P/E core counts, the GPU's PCIe link and VBIOS; Telemetry adds fan duty; Advanced covers Voltages and SPD.
+- The X870 AORUS TACHYON ICE's board voltages, fans and PCH and PCIe x16 temperatures in Telemetry.
+- Experimental Ryzen 7000 (Raphael) support for training values and clocks.
+- A screenshot button that saves a PNG and copies it to the clipboard, and Light mode by default.
+- A fuller AM5 System Info and SPD tab, RTT and ODT in RZQ terms, and the Misc tab folded into Training.
+- Every AM5 tab resized to the least that holds it.
 
 See the [changelog](CHANGELOG.md) for the full list.
 

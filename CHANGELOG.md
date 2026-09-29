@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.0.9 (2026-09-28)
+
+Most of this is AMD AM5 (Ryzen 9000), tested on an X870 AORUS TACHYON ICE with DDR5-6000. Other platforms keep their readings and layout except where noted.
+
+- Telemetry on the X870 AORUS TACHYON ICE: the IT8696E's board Vcore, +12V, +5V, +3.3V, 3VSB, VBAT and AVCC3, the CPU, CPU_OPT and system fan headers, and the PCH and PCIe x16 temperatures, read in one hold of the bus per refresh. A fan header with nothing on it stays hidden, and appears on its first reading rather than only when the window opens.
+- Telemetry opens without reading hardware on the UI thread, and the DIMM panels label the PMIC rails VIN (5V), LDO 1.8V and LDO 1.0V (all DDR5 platforms).
+- Experimental Ryzen 7000 (Raphael) support: training values from the Zen4 APOB block and the Raphael SMU clock tables, which are only trusted when they agree with the memory controller's own clock.
+- A screenshot button saves the window as a PNG in Pictures\Roch Viewer and copies it to the clipboard (all platforms).
+- Light mode is the default appearance (all platforms).
+- Summary: 700x750; cores and threads as 8/16; Refresh Mode under Gear Down; VDD, VDDQ and VPP under tPHYRDL; a controller setting read on only one channel shows that channel's value instead of a pair with a missing half. DRAM ratio, tSTAG, tSTAGSB, tMRD, tMRDPDA, tMODPDA, tRDPOST, tWRPOST, tRDPRE, tWRPRE, tPHYWRD, tPHYWRL, tMOD, tCKE and tXP are left to the other tabs.
+- System Info: two columns like Intel, 788x750, with Status and SMU Status rows, the OS edition, cache sizes, board revision, the GPU's PCIe link and VBIOS, and the power limits.
+- SPD: the DDR5 page on AM5, with raw card, and tCCD_L_WR, tWTR_L and tWTR_S in each profile (also LGA1700 DDR5); 700x816 on both. Montage is named as a module maker.
+- Timings: 750x650, with the PHY section in the middle column, tREFI in ns and FCLK/UCLK in whole MHz.
+- Training: 700x650, holding the per-channel controller settings, Other Settings and the raw training codes from the Misc tab, which is removed. RTT and ODT read in RZQ terms, like Intel: 40 RZQ/6, 480 RZQ/0.5.
+- Voltages: 700x650.
+
 ## 1.0.8 (2026-09-25)
 
 Nearly all of this is Raptor Lake DDR5 (LGA1700). DDR4 and the other platforms keep their readings and layout except where noted.
