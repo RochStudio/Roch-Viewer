@@ -186,5 +186,53 @@ class Ddr5RecordTest(unittest.TestCase):
         self.assertEqual(decode_ddr5_xmp(values)["extension"], "XMP 3.0, EXPO")
 
 
+class WriteTimingsTest(unittest.TestCase):
+    def test_the_jedec_columns_carry_tccd_l_wr_and_both_twtr(self):
+        # The bench kit's base block: 20 ns / 32 at byte 76, 10 ns / 16 at
+        # 85 and 2.5 ns / 4 at 88 -- 48, 24 and 6 clocks at DDR5-4800.
+        jedec = column(decode_ddr5_spd(module_bytes()), "JEDEC 4800")
+        self.assertEqual(
+            (jedec["tccd_l_wr"], jedec["twtr_l"], jedec["twtr_s"]),
+            (48, 24, 6))
+
+    def test_a_slower_bin_counts_fewer_clocks_but_not_below_the_floor(self):
+        # At DDR5-4000 (500 ps) 2.5 ns is 5 clocks, above tWTR_S's floor of
+        # 4, and 20 ns is 40, above tCCD_L_WR's floor of 32.
+        jedec = column(decode_ddr5_spd(module_bytes()), "JEDEC 4000")
+        self.assertEqual((jedec["twtr_s"], jedec["tccd_l_wr"]), (5, 40))
+
+    def test_expo_leaves_them_blank(self):
+        # EXPO stores tRRD_L, tCCD_L, tFAW and tRTP of the floored timings,
+        # and none of these three.
+        expo = next(p for p in decode_ddr5_spd(module_bytes())["profiles"]
+                    if p["name"].startswith("EXPO"))
+        for key in ("tccd_l_wr", "twtr_l", "twtr_s"):
+            with self.subTest(key=key):
+                self.assertEqual(expo[key], "—")
+
+
+class RawCardTest(unittest.TestCase):
+    def raw_card(self, byte):
+        values = module_bytes()
+        values[232] = byte
+        return decode_ddr5_base(values)["raw_card"]
+
+    def test_the_bench_kit_is_card_a_revision_0(self):
+        # Read off both of the X870 bench's G.Skill modules: 0x00, which
+        # a reference tool also shows as "A Rev 0".
+        self.assertEqual(self.raw_card(0x00), "A Rev 0")
+
+    def test_the_card_is_the_low_five_bits_and_the_revision_the_top_three(self):
+        self.assertEqual(self.raw_card(0x01), "B Rev 0")
+        self.assertEqual(self.raw_card(0x21), "B Rev 1")
+        self.assertEqual(self.raw_card(0xF9), "Z Rev 7")
+
+    def test_a_module_off_the_jedec_designs_says_so(self):
+        self.assertEqual(self.raw_card(0x1F), "None (not a JEDEC design)")
+
+    def test_a_code_past_z_is_shown_as_its_number(self):
+        self.assertEqual(self.raw_card(0x1A), "code 0x1A Rev 0")
+
+
 if __name__ == "__main__":
     unittest.main()

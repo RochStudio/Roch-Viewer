@@ -106,6 +106,36 @@ def resizable_bar_text(megabytes):
     return "%s (%d MB)" % (state, megabytes)
 
 
+# GPU-Z's names for the link speeds: 2.5 GT/s is "1.1", not "1.0".
+PCIE_GENERATIONS = {1: "1.1", 2: "2.0", 3: "3.0", 4: "4.0", 5: "5.0", 6: "6.0"}
+
+
+def pcie_link_text(link):
+    """"PCIe 5.0 x16", with how it runs now after an "@" when that differs.
+
+    The capability first, as the Intel profile's NVIDIA row writes it, then
+    GPU-Z's "@" for the live state: a Radeon narrows and slows its link at
+    idle to save power, so "PCIe 5.0 x16 @ 5.0 x2" is a card resting in a
+    full slot, not a card in the wrong one.
+    """
+    if not link:
+        return None
+    best = PCIE_GENERATIONS.get(link["max_gen"])
+    now = PCIE_GENERATIONS.get(link["gen"])
+    if best is None or now is None:
+        return None
+    text = "PCIe %s x%d" % (best, link["max_width"])
+    if (link["gen"], link["width"]) != (link["max_gen"], link["max_width"]):
+        text += " @ %s x%d" % (now, link["width"])
+    return text
+
+
+def _registry_text(value):
+    if isinstance(value, bytes):
+        value = value.decode("utf-16-le", "ignore")
+    return str(value or "").strip("\x00").strip()
+
+
 def driver_date_text(raw):
     """WMI datetime yyyymmddHHMMSS -> yyyy-mm-dd, as the BIOS date reads."""
     raw = str(raw or "")
@@ -137,11 +167,15 @@ def read_gpu(pnp_device_ids=None):
         found["board_manufacturer"] = vendor
 
     registry = _registry_adapter()
-    name = registry.get("HardwareInformation.AdapterString")
-    if isinstance(name, bytes):
-        name = name.decode("utf-16-le", "ignore").strip("\x00")
+    name = _registry_text(registry.get("HardwareInformation.AdapterString"))
     if name:
-        found["name"] = str(name).strip()
+        found["name"] = name
+    # The VBIOS part number the driver read at load, "113-EXT114484-100":
+    # what AMD Software lists as the VBIOS part number. There is no ROM to
+    # read it from ourselves -- see the module docstring.
+    vbios = _registry_text(registry.get("HardwareInformation.BiosString"))
+    if vbios:
+        found["vbios"] = vbios
     memory = memory_size_text(registry.get("HardwareInformation.qwMemorySize"))
     if memory:
         found["memory_size"] = memory
@@ -151,14 +185,17 @@ def read_gpu(pnp_device_ids=None):
         found.update(silicon)
 
     from rochviewer.system_identity import (
-        find_display_function, resizable_bar_megabytes,
+        find_display_path, pcie_link, resizable_bar_megabytes,
     )
 
-    bar = resizable_bar_text(
-        resizable_bar_megabytes(find_display_function(AMD_VENDOR_ID))
-    )
+    path = find_display_path(AMD_VENDOR_ID)
+    location = path[-1] if path else None
+    bar = resizable_bar_text(resizable_bar_megabytes(location))
     if bar:
         found["resizable_bar"] = bar
+    link = pcie_link_text(pcie_link(path))
+    if link:
+        found["pcie_link"] = link
 
     driver = _driver_details()
     found.update(driver)
@@ -169,7 +206,6 @@ def read_gpu(pnp_device_ids=None):
     # table does not know still gets a type.
     from rochviewer.amd.adl import read_memory
 
-    location = find_display_function(AMD_VENDOR_ID)
     found.update(read_memory(*location) if location else read_memory())
     return found
 

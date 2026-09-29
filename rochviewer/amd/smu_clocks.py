@@ -21,18 +21,21 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Fail-closed Granite Ridge FCLK/UCLK reader via RSMU PM-table telemetry.
+"""Fail-closed AM5 FCLK/UCLK reader via RSMU PM-table telemetry.
 
-Only the exact validated table version ``0x620105`` is decoded, using the
-CONFIRMED offsets from the MIT gnr-smu map:
+On Ryzen 9000 only the exact validated table version ``0x620105`` is
+decoded, using the CONFIRMED offsets from the MIT gnr-smu map:
 
   FCLK @ 0x11C (float MHz)
   UCLK @ 0x12C (float MHz)
   MCLK @ 0x13C (float MHz, cross-check only)
 
+Ryzen 7000 is read experimentally from ZenStates-Core's Zen 4 table list
+(RAPHAEL_CLOCK_TABLES); its results carry ``verified=False``.
+
 Flow (fixed addresses / commands only):
-  1. CPU gate (desktop Ryzen 9000 Granite Ridge)
-  2. RSMU cmd 0x05 -> table version must equal 0x620105
+  1. CPU gate (desktop Ryzen 9000 Granite Ridge, or Ryzen 7000 Raphael)
+  2. RSMU cmd 0x05 -> table version must be one listed for that CPU
   3. RSMU cmd 0x04 args [1,1,0,0,0,0] -> firmware DRAM base
   4. RSMU cmd 0x03 args all-zero -> transfer table into that base
   5. Read physical floats at the fixed offsets
@@ -69,7 +72,7 @@ from rochviewer.amd.smn import (
     SMN_INDEX_REG,
     VENDOR_REG,
 )
-from rochviewer.platform_profiles import is_granite_ridge_cpu
+from rochviewer.platform_profiles import is_granite_ridge_cpu, is_raphael_cpu
 
 RSMU_TABLE_ADDRESS_COMMAND = 0x04
 RSMU_TABLE_TRANSFER_COMMAND = 0x03
@@ -101,6 +104,49 @@ OFFSET_FCLK = 0x11C
 OFFSET_UCLK = 0x12C
 OFFSET_MCLK = 0x13C
 
+
+@dataclass(frozen=True)
+class ClockTableLayout:
+    """Where one PM-table version keeps its three clocks, and how long it is."""
+
+    length: int
+    fclk: int
+    uclk: int
+    mclk: int
+    # True only for a version whose offsets this project has confirmed on
+    # real hardware. The rest come from ZenStates-Core's tables, which mark
+    # their Zen 4 entries "unverified" themselves.
+    verified: bool
+
+
+GRANITE_RIDGE_CLOCK_TABLES = {
+    EXPECTED_TABLE_VERSION: ClockTableLayout(
+        PM_TABLE_LENGTH, OFFSET_FCLK, OFFSET_UCLK, OFFSET_MCLK, True),
+}
+
+# Desktop Ryzen 7000 (Raphael), experimental. Versions, sizes and offsets are
+# ZenStates-Core's PowerTable.cs Zen 4 entries as of 8979d27 (2026-09-24),
+# whose own comment reads "offsets are not verified yet". A wrong offset here
+# decodes as a float that validate_clocks then has to reject: it must be a
+# whole number of MHz inside the clock ranges, and UCLK must equal the UMC's
+# own MCLK or half of it. That cross-check against a register read another
+# way is what makes showing these at all defensible.
+_RAPHAEL_LOW = (0x118, 0x128, 0x138)
+_RAPHAEL_HIGH = (0x11C, 0x12C, 0x13C)
+RAPHAEL_CLOCK_TABLES = {
+    version: ClockTableLayout(length, *offsets, verified=False)
+    for version, length, offsets in (
+        (0x540000, 0x828, _RAPHAEL_LOW), (0x540001, 0x82C, _RAPHAEL_LOW),
+        (0x540002, 0x87C, _RAPHAEL_LOW), (0x540003, 0x89C, _RAPHAEL_LOW),
+        (0x540004, 0x8BC, _RAPHAEL_LOW), (0x540005, 0x8C8, _RAPHAEL_LOW),
+        (0x540100, 0x618, _RAPHAEL_LOW), (0x540101, 0x61C, _RAPHAEL_LOW),
+        (0x540102, 0x66C, _RAPHAEL_LOW), (0x540103, 0x68C, _RAPHAEL_LOW),
+        (0x540104, 0x6A8, _RAPHAEL_LOW), (0x540105, 0x6B4, _RAPHAEL_LOW),
+        (0x540108, 0x6BC, _RAPHAEL_LOW),
+        (0x540208, 0x8D0, _RAPHAEL_HIGH),
+    )
+}
+
 FCLK_MIN_MHZ = 600.0
 FCLK_MAX_MHZ = 3000.0
 UCLK_MIN_MHZ = 600.0
@@ -114,6 +160,7 @@ class SmuClocks:
     fclk_mhz: float
     uclk_mhz: float
     mclk_mhz: float
+    verified: bool = True
 
 
 def check_cpu_gate(cpu_name=""):
@@ -124,10 +171,29 @@ def check_cpu_gate(cpu_name=""):
     CPUID they needed was a stub returning None, and the gate that read as
     "family 0x1A, model 0x44" was in fact the name test alone. Better one
     check that runs than four that describe an intention.
+
+    This gate is Ryzen 9000's alone and stays so for voltages and power;
+    the clocks have their own, clock_tables_for_cpu, which also admits
+    Ryzen 7000.
     """
     if not is_granite_ridge_cpu(str(cpu_name or "")):
         return "CPU is not a validated desktop Ryzen 9000 Granite Ridge part"
     return ""
+
+
+def clock_tables_for_cpu(cpu_name=""):
+    """The PM-table versions whose clocks may be read on this CPU.
+
+    Empty for anything but desktop Ryzen 9000 and 7000, and each CPU accepts
+    only its own versions: a Ryzen 7000 reporting a Ryzen 9000 table, or the
+    other way round, is refused rather than decoded.
+    """
+    name = str(cpu_name or "")
+    if is_granite_ridge_cpu(name):
+        return GRANITE_RIDGE_CLOCK_TABLES
+    if is_raphael_cpu(name):
+        return RAPHAEL_CLOCK_TABLES
+    return {}
 
 
 def decode_table_float(raw_dword, what="value", finite_only=True):
@@ -288,7 +354,9 @@ class RsmuClockReader:
         timeout=0.25,
         total_timeout=1.0,
         umc_mclk_mhz=None,
+        tables=None,
     ):
+        self._tables = GRANITE_RIDGE_CLOCK_TABLES if tables is None else tables
         self._access = access
         self._mutex = mutex if mutex is not None else NamedMutex(mutex_name)
         self._lock = threading.Lock()
@@ -367,10 +435,13 @@ class RsmuClockReader:
                     self._run_deadline = self._clock_now() + self._total_timeout
                     self._command(RSMU_TABLE_VERSION_COMMAND, (0, 0, 0, 0, 0, 0))
                     version = int(self._access.read_arg0()) & 0xFFFFFFFF
-                    if version != EXPECTED_TABLE_VERSION:
+                    layout = self._tables.get(version)
+                    if layout is None:
                         raise ValueError(
-                            "PM-table version 0x%06X is not the approved 0x%06X"
-                            % (version, EXPECTED_TABLE_VERSION)
+                            "PM-table version 0x%06X is not an approved version "
+                            "for this CPU (%s)" % (version, ", ".join(
+                                "0x%06X" % known for known in sorted(self._tables)
+                            ) or "none")
                         )
                     self._command(
                         RSMU_TABLE_ADDRESS_COMMAND, ADDRESS_REQUEST_ARGUMENTS
@@ -382,18 +453,26 @@ class RsmuClockReader:
                         raise ValueError("firmware returned an invalid PM-table base")
                     if base > (1 << 48):
                         raise ValueError("PM-table base exceeds phys address width")
-                    if base + PM_TABLE_LENGTH > (1 << 48):
+                    if base + layout.length > (1 << 48):
                         raise ValueError("PM-table range is not mappable")
                     self._command(RSMU_TABLE_TRANSFER_COMMAND, (0, 0, 0, 0, 0, 0))
                     fclk = decode_clock_float(
-                        self._access.read_phys_dword(base + OFFSET_FCLK)
+                        self._access.read_phys_dword(base + layout.fclk)
                     )
                     uclk = decode_clock_float(
-                        self._access.read_phys_dword(base + OFFSET_UCLK)
+                        self._access.read_phys_dword(base + layout.uclk)
                     )
                     mclk = decode_clock_float(
-                        self._access.read_phys_dword(base + OFFSET_MCLK)
+                        self._access.read_phys_dword(base + layout.mclk)
                     )
+                    # The cross-check against the UMC's own MCLK is optional
+                    # for the confirmed table and the only real safeguard for
+                    # an unconfirmed one, so without it nothing is shown.
+                    if not layout.verified and self._umc_mclk_mhz is None:
+                        raise ValueError(
+                            "PM-table 0x%06X is unverified and the UMC MCLK "
+                            "it must be checked against is unavailable" % version
+                        )
                     fclk, uclk = validate_clocks(
                         fclk,
                         uclk,
@@ -406,6 +485,7 @@ class RsmuClockReader:
                         fclk_mhz=fclk,
                         uclk_mhz=uclk,
                         mclk_mhz=float(round(mclk)) if math.isfinite(mclk) else 0.0,
+                        verified=layout.verified,
                     )
                 finally:
                     try:
@@ -437,11 +517,12 @@ def shared_rsmu_access():
 
 def read_smu_clocks(cpu_name="", umc_mclk_mhz=None):
     """Convenience entry used by Am5Runtime. Returns SmuClocks or None."""
-    reason = check_cpu_gate(cpu_name=cpu_name)
-    if reason:
+    tables = clock_tables_for_cpu(cpu_name)
+    if not tables:
         return None
     try:
-        reader = RsmuClockReader(shared_rsmu_access(), umc_mclk_mhz=umc_mclk_mhz)
+        reader = RsmuClockReader(
+            shared_rsmu_access(), umc_mclk_mhz=umc_mclk_mhz, tables=tables)
         return reader.read_clocks()
     except Exception:
         _SHARED_ACCESS["access"] = None      # rebuild next time

@@ -8,6 +8,7 @@ from rochviewer.amd import smu_power as amd_smu_power
 from rochviewer.amd import smu_voltages as amd_smu_voltages
 from rochviewer.memory import ddr5_pmic
 from rochviewer.sensors import superio_lpc
+from rochviewer.amd.apob import GraniteRidgeApobReader
 from rochviewer.amd.smn_mcfg import McfgSmnReader
 from tests.test_am5_timings import _oracle_regs
 
@@ -156,25 +157,27 @@ class Am5RuntimeTest(unittest.TestCase):
             if row["Tab"] == "System Info"
         ]
         # Sectioned the way the Intel tab reads: what the machine is, the
-        # board, the clock chain, what is installed, how it is set, the card,
-        # then what could and could not be read.
+        # board, and what could and could not be read down the left; the
+        # clock chain and the card down the right.
         self.assertEqual(names, [
-            "OS", "Platform",
+            "OS", "OS Version", "Platform",
             "CPU", "CPU Package", "CPU Signature", "Code Name",
             "Vendor", "Technology",
-            "Cores / Threads", "Microcode",
+            "Cores / Threads", "L3 Cache", "Microcode",
             # CPU-Z's names for the board, which is why the processor's own
             # vendor row is "Vendor" -- two rows cannot share one name.
-            "Manufacturer", "Model", "BIOS", "BIOS Date",
+            "Manufacturer", "Model", "Board Revision", "BIOS", "BIOS Date",
             "Chipset", "Southbridge", "LPCIO", "AGESA",
+            "Status", "SMU Status", "Read Status", "Training Status",
+            "Voltage Status", "Power Status",
             "BCLK", "MCLK", "FCLK", "UCLK", "DRAM Frequency", "UCLK:MCLK",
             "DRAM Ratio",
-            "Status", "Read Status", "Training Status",
-            "Voltage Status", "Power Status",
+            "Temp Limit", "PPT Limit", "TDC Limit", "EDC Limit", "Scalar",
             "GPU", "Board Manufacturer", "GPU Code Name", "GPU Revision",
             "GPU Technology", "Cores", "ROPs / TMUs",
             "Memory Size", "Memory Type", "Memory Vendor",
-            "Bus Width", "Resizable BAR", "Driver Version", "Driver Date",
+            "Bus Width", "Resizable BAR", "PCIe Link", "VBIOS",
+            "Driver Version", "Driver Date",
         ])
 
     def test_channels_and_capacity_live_on_spd(self):
@@ -192,8 +195,8 @@ class Am5RuntimeTest(unittest.TestCase):
         # A row nobody placed would have no heading at all. Failing here is
         # how it stays visible long enough to be noticed and placed.
         runtime = Am5Runtime(reader_factory=lambda: FakeReader(_oracle_regs()))
-        placed = {name for _title, names in am5_profile.SYSTEM_INFO_SECTIONS
-                  for name in names}
+        placed = {name for _title, _column, names
+                  in am5_profile.SYSTEM_INFO_SECTIONS for name in names}
         for row in build_timings(runtime):
             if row["Tab"] != "System Info":
                 continue
@@ -217,8 +220,42 @@ class Am5RuntimeTest(unittest.TestCase):
                 seen.append(category)
                 previous = category
         self.assertEqual(
-            seen, [title for title, _names in am5_profile.SYSTEM_INFO_SECTIONS]
+            seen, [title for title, _column, _names
+                   in am5_profile.SYSTEM_INFO_SECTIONS]
         )
+
+    def test_system_info_splits_identity_from_clocks_and_graphics(self):
+        # One column of every section came to 930px on a 633px tab.
+        runtime = Am5Runtime(reader_factory=lambda: FakeReader(_oracle_regs()))
+        columns = {}
+        for row in build_timings(runtime):
+            if row["Tab"] == "System Info":
+                columns.setdefault(row["Category"], set()).add(row["Column"])
+        self.assertEqual(columns, {
+            "System": {"Left"}, "Processor": {"Left"},
+            "Motherboard": {"Left"}, "Status": {"Left"},
+            "Clocks": {"Right"}, "Limits": {"Right"},
+            "Graphics": {"Right"},
+        })
+
+    def test_the_os_splits_into_edition_and_version(self):
+        from unittest import mock
+
+        from rochviewer import system_identity
+        from rochviewer.amd.profile import _os_part
+
+        combined = ("Microsoft Windows 11 Professional (x64) "
+                    "23H2 Build 22631.6060")
+        with mock.patch.object(system_identity, "os_name",
+                               return_value=combined):
+            self.assertEqual(_os_part(0),
+                             "Microsoft Windows 11 Professional (x64)")
+            self.assertEqual(_os_part(1), "23H2 Build 22631.6060")
+        # A reading with no architecture to split after stays whole.
+        with mock.patch.object(system_identity, "os_name",
+                               return_value="Windows"):
+            self.assertEqual(_os_part(0), "Windows")
+            self.assertEqual(_os_part(1), "—")
 
     def test_spd_identity_is_not_repeated_in_system_info(self):
         runtime = Am5Runtime(reader_factory=lambda: FakeReader(_oracle_regs()))
@@ -385,7 +422,7 @@ class Am5RuntimeTest(unittest.TestCase):
         # too; this fixture has no per-channel records to read them from.
         runtime = Am5Runtime(reader_factory=lambda: FakeReader(_oracle_regs()))
         by_name = {row["name"]: row for row in build_timings(runtime)}
-        self.assertEqual(by_name["tREFIns"]["value"](), "15984 (ns)")
+        self.assertEqual(by_name["tREFIns"]["value"](), "15984 ns")
 
     def test_trfcns_shows_one_interval_in_normal_refresh(self):
         regs = _oracle_regs()
@@ -419,7 +456,7 @@ class Am5RuntimeTest(unittest.TestCase):
 
     def test_apob_termination_values_are_lazy_and_exposed_as_rows(self):
         training = FakeTrainingReader({
-            "rtt_wr": "RZQ/6 (40 Ω)",
+            "rtt_wr": "40 RZQ/6",
             "ca_odt_a": "480 Ω",
             "proc_dq_ds_pu": "40 Ω",
         })
@@ -432,38 +469,56 @@ class Am5RuntimeTest(unittest.TestCase):
         by_name = {row["name"]: row for row in rows}
 
         self.assertEqual(training.calls, 0)
-        self.assertEqual(by_name["RTT WR"]["value"](), "RZQ/6 (40 Ω)")
+        self.assertEqual(by_name["RTT WR"]["value"](), "40 RZQ/6")
         self.assertEqual(by_name["CA ODT A"]["value"](), "480 Ω")
         self.assertEqual(by_name["Proc DQ DS Pu"]["value"](), "40 Ω")
         self.assertEqual(training.calls, 1)
         self.assertIn("0x0A200000", runtime.training_status)
 
-    def test_raphael_never_instantiates_granite_ridge_apob_reader(self):
+    def test_raphael_asks_for_the_zen4_layout_never_the_zen5_one(self):
+        # Ryzen 7000 reads its training record experimentally now, but only
+        # through ZenStates-Core's Zen 4 layout: decoding its APOB with the
+        # validated Ryzen 9000 layout would put every field at the wrong byte.
         calls = []
 
-        def training_factory():
-            calls.append("instantiated")
-            return FakeTrainingReader({"rtt_wr": "wrong"})
+        def training_factory(layout=GraniteRidgeApobReader.ZEN5):
+            calls.append(layout)
+            return FakeTrainingReader({"rtt_wr": "40 RZQ/6"})
 
         runtime = Am5Runtime(
             reader_factory=lambda: FakeReader(_oracle_regs()),
             training_reader_factory=training_factory,
             cpu_name_factory=lambda: "AMD Ryzen 7 7800X3D",
         )
+        self.assertEqual(runtime.value("rtt_wr"), "40 RZQ/6")
+        self.assertEqual(calls, [GraniteRidgeApobReader.ZEN4])
+
+    def test_other_amd_parts_never_instantiate_an_apob_reader(self):
+        calls = []
+
+        def training_factory(**_kwargs):
+            calls.append("instantiated")
+            return FakeTrainingReader({"rtt_wr": "wrong"})
+
+        runtime = Am5Runtime(
+            reader_factory=lambda: FakeReader(_oracle_regs()),
+            training_reader_factory=training_factory,
+            cpu_name_factory=lambda: "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+        )
         self.assertEqual(runtime.value("rtt_wr"), "—")
         self.assertEqual(calls, [])
-        self.assertIn("Granite Ridge", runtime.training_status)
+        self.assertIn("Ryzen 9000 or 7000", runtime.training_status)
 
     def test_apob_rows_expose_distinct_cha_chb_values_without_group_name_collision(self):
         channels = {
             "cha": {
-                "rtt_wr": "RZQ/6 (40 Ω)",
+                "rtt_wr": "40 RZQ/6",
                 "ca_odt_a": "480 Ω",
                 "ca_odt_b": "60 Ω",
                 "proc_odt_pu": "34.3 Ω",
             },
             "chb": {
-                "rtt_wr": "RZQ/4 (60 Ω)",
+                "rtt_wr": "60 RZQ/4",
                 "ca_odt_a": "240 Ω",
                 "ca_odt_b": "48 Ω",
                 "proc_odt_pu": "60 Ω",
@@ -479,8 +534,8 @@ class Am5RuntimeTest(unittest.TestCase):
 
         self.assertEqual(by_name["RTT WR"]["name_a"], "ChA")
         self.assertEqual(by_name["RTT WR"]["name_b"], "ChB")
-        self.assertEqual(by_name["RTT WR"]["value_a"](), "RZQ/6 (40 Ω)")
-        self.assertEqual(by_name["RTT WR"]["value_b"](), "RZQ/4 (60 Ω)")
+        self.assertEqual(by_name["RTT WR"]["value_a"](), "40 RZQ/6")
+        self.assertEqual(by_name["RTT WR"]["value_b"](), "60 RZQ/4")
         self.assertEqual(by_name["CA ODT A"]["value_a"](), "480 Ω")
         self.assertEqual(by_name["CA ODT A"]["value_b"](), "240 Ω")
         self.assertEqual(by_name["CA ODT B"]["value_a"](), "60 Ω")
@@ -544,10 +599,28 @@ class Am5RuntimeTest(unittest.TestCase):
                 Am5Runtime(reader_factory=lambda: FakeReader(_oracle_regs()))
             )
         }
-        # What the controller was configured to do is neither identity nor
-        # timing, so it has a page of its own.
-        self.assertEqual(by_name["Refresh Mode"]["Tab"], "Misc")
-        self.assertEqual(by_name["Gear Down Mode"]["Tab"], "Misc")
+        # Everything read per channel is on Training, which shows a reading
+        # per channel: the controller settings, which each channel's
+        # controller holds its own copy of, and the raw training codes from
+        # each channel's record. Only the CPU-wide limits stay on Misc.
+        for name in ("Refresh Mode", "Gear Down Mode", "Read Preamble",
+                     "Nitro Rx/Tx/Ctrl"):
+            with self.subTest(name=name):
+                self.assertEqual(by_name[name]["Tab"], "Training")
+                self.assertEqual(by_name[name]["Category"], "Other Settings")
+                self.assertEqual(by_name[name]["Column"], "Left")
+                self.assertIn("value_a", by_name[name])
+        for name in ("ALERT_PU", "TX_DFE"):
+            with self.subTest(name=name):
+                self.assertEqual(by_name[name]["Tab"], "Training")
+                self.assertEqual(by_name[name]["Category"], "Misc (raw)")
+                self.assertEqual(by_name[name]["Column"], "Right")
+                self.assertIn("value_b", by_name[name])
+        # The CPU-wide limits, the last of Misc, are on System Info.
+        self.assertEqual(by_name["PPT Limit"]["Tab"], "System Info")
+        self.assertEqual(by_name["PPT Limit"]["Category"], "Limits")
+        self.assertNotIn("value_a", by_name["PPT Limit"])
+        self.assertEqual(by_name["Proc ODT Pu"]["Column"], "Right")
         # The command rate reads as a timing, and closes the primary group.
         self.assertEqual(by_name["CR"]["Tab"], "Timings")
         self.assertEqual(by_name["CR"]["Category"], "Primary")
@@ -829,11 +902,14 @@ class Am5RuntimeTest(unittest.TestCase):
             # What the CPU reports about itself, then what the board measures
             # around it, then what it is all drawing.
             # Scalar is not here: it is a setting rather than a reading, so
-            # it sits with the limits on Misc. This window keeps a maximum
-            # per row, which a value that never moves has no use for.
+            # it sits with the limits on System Info. This window keeps a
+            # maximum per row, which a value that never moves has no use for.
+            # PCH and PCIEX16 follow the board's own three; they come from
+            # the board-gated monitor and are hidden where it reads nothing.
             ["CPU Temp", "IOD Average", "IOD Hotspot", "L3 Temp",
              "VDDCR_VDD VRM", "VDDCR_SOC VRM", "VDD_MISC VRM",
              "CPU Temp (board)", "VRM Temp (board)", "System Temp",
+             "PCH Temp", "PCIEX16 Temp",
              "PPT", "TDC", "EDC"],
         )
         for row in section:
@@ -908,7 +984,9 @@ class Am5RuntimeTest(unittest.TestCase):
         # what the summary carries.
         self.assertIn("APOB table 0x0A200000", summary)
         self.assertNotIn("ChA", summary)
-        self.assertIn("power", summary)
+        # The SMU's reads are the next row, so neither line outgrows its
+        # half of System Info.
+        self.assertIn("power", rows["SMU Status"]["value"]())
 
     def test_a_failing_transport_puts_its_own_message_in_the_line(self):
         # The summary is short only while there is nothing to report.
@@ -933,6 +1011,39 @@ class Am5RuntimeTest(unittest.TestCase):
         summary = rows["Status"]["value"]()
         self.assertIn("no plausible", summary)
 
+    def test_a_missing_driver_is_one_short_status_line(self):
+        # The missing-driver message lists every directory it searched. Each
+        # failing transport carried the whole of it into the Status row, which
+        # made System Info 1500px wide and several lines tall.
+        from rochviewer.hardware.driver_path import missing_message
+
+        def no_driver():
+            raise RuntimeError(missing_message())
+
+        runtime = Am5Runtime(
+            reader_factory=no_driver,
+            training_reader_factory=no_driver,
+            cpu_name_factory=lambda: "AMD Ryzen 7 9850X3D",
+        )
+        freeze_live(runtime)
+        runtime._training_attempted = True
+        runtime.training_status = (
+            "APOB physical reader unavailable: %s" % missing_message()
+        )
+        rows = {row["name"]: row for row in build_timings(runtime)}
+        summary = rows["Status"]["value"]()
+        self.assertEqual(summary, "No register reads: inpoutx64.dll not found")
+
+    def test_a_failure_keeps_only_its_headline(self):
+        from rochviewer.amd.profile import _status_tail
+
+        self.assertEqual(
+            _status_tail(
+                "PM-table read failed: version 0x1 refused. Retry later.\n"
+                "  detail line", "RSMU"),
+            "PM-table read failed: version 0x1 refused",
+        )
+
     def test_the_pm_table_segment_keeps_the_version_it_was_gated_on(self):
         from rochviewer.amd.profile import _pm_table_segment
 
@@ -951,9 +1062,11 @@ class Am5RuntimeTest(unittest.TestCase):
             Am5Runtime(reader_factory=lambda: FakeReader(_oracle_regs()))
         )
         diagnostic = {row["name"] for row in rows if row.get("diagnostic")}
+        # FGR too: Refresh Mode on the tab already reads it, and a bare
+        # number said nothing there, so it is kept for the dump alone.
         self.assertEqual(diagnostic, {
             "Read Status", "Training Status",
-            "Voltage Status", "Power Status",
+            "Voltage Status", "Power Status", "FGR",
         })
         # The summary itself is not diagnostic: it is what the tab shows.
         summary = next(row for row in rows if row["name"] == "Status")
@@ -1127,7 +1240,7 @@ class BoardTemperatureTest(unittest.TestCase):
 
 
 class SummaryStaggerOrderTest(unittest.TestCase):
-    """Stagger reads after the CAS-to-CAS group in the Summary column."""
+    """The Summary's middle column: what it carries and in what order."""
 
     def _middle(self):
         from rochviewer.ui import main
@@ -1136,12 +1249,20 @@ class SummaryStaggerOrderTest(unittest.TestCase):
         rows = build_timings(runtime)
         return main.am5_summary_timing_columns(rows)[1]
 
-    def test_stagger_follows_tccd_l_wr2(self):
-        middle = self._middle()
-        self.assertEqual(
-            middle[middle.index("tCCD_L_WR2") + 1:middle.index("tCCD_L_WR2") + 3],
-            ["tSTAG", "tSTAGsb"],
-        )
+    def test_stagger_mode_register_and_postamble_rows_stay_off(self):
+        # Asked off the Summary; the Timings tab still carries all of them.
+        from rochviewer.ui import main
+
+        runtime = Am5Runtime(reader_factory=lambda: FakeReader(_oracle_regs()))
+        rows = build_timings(runtime)
+        first, middle = main.am5_summary_timing_columns(rows)
+        timings_tab = {row["name"] for row in rows
+                       if row.get("Tab") == "Timings"}
+        for name in ("tSTAG", "tSTAGsb", "tMRD", "tMRDPDA", "tMODPDA",
+                     "tRDPRE", "tWRPRE", "tRDPOST", "tWRPOST"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, first + middle)
+                self.assertIn(name, timings_tab)
 
     def test_the_turnarounds_follow_the_same_direction_groups(self):
         # Each same-direction group reads complete before the turnarounds.
@@ -1207,8 +1328,17 @@ class SiliconAndBridgeTest(unittest.TestCase):
         self.assertEqual(self._with_cpuid("178BFBFF00A20F12"), (None, None))
 
     def test_an_unreadable_cpuid_is_not_an_error(self):
-        with mock.patch.dict("sys.modules", {"wmi": None}):
-            self.assertEqual(am5_profile._cpu_silicon(), (None, None))
+        # From an empty cache, as the test above does: building the table
+        # now asks for the CPU name to pick Ryzen 7000's training rows, so
+        # the facts are usually cached before this runs, and a cached answer
+        # never reaches the missing wmi module.
+        saved = list(am5_profile._PROCESSOR_FACTS)
+        am5_profile._PROCESSOR_FACTS.clear()
+        try:
+            with mock.patch.dict("sys.modules", {"wmi": None}):
+                self.assertEqual(am5_profile._cpu_silicon(), (None, None))
+        finally:
+            am5_profile._PROCESSOR_FACTS[:] = saved
 
     def _bridge(self, reader, device, revision):
         with mock.patch("rochviewer.system_identity.pci_device_and_revision",
@@ -1240,6 +1370,37 @@ class SiliconAndBridgeTest(unittest.TestCase):
         self.assertEqual(
             self._bridge(am5_profile._southbridge, None, None), EM_DASH
         )
+
+
+
+class LiveSourceRetryGapTest(unittest.TestCase):
+    """A failed read is not retried by every row in the same tick."""
+
+    def source(self, results, retry_gap):
+        read = mock.Mock(side_effect=results)
+        return read, am5_profile._LiveSource(
+            read, describe=lambda _r: "ok", label="Board", empty={},
+            retry_gap=retry_gap)
+
+    def test_a_failure_stands_for_the_gap(self):
+        read, source = self.source([{}, {"a": 1}], retry_gap=60)
+        for _ in range(5):
+            source.get()
+        self.assertEqual(read.call_count, 1)
+        self.assertEqual(source.failures, 1)
+
+    def test_the_next_tick_tries_again(self):
+        read, source = self.source([{}, {"a": 1}], retry_gap=60)
+        source.get()
+        source._failed_at -= 61
+        self.assertEqual(source.get(), {"a": 1})
+        self.assertEqual(read.call_count, 2)
+
+    def test_no_gap_retries_at_once(self):
+        read, source = self.source([{}, {}, {"a": 1}], retry_gap=0.0)
+        source.get()
+        source.get()
+        self.assertEqual(source.get(), {"a": 1})
 
 
 if __name__ == "__main__":

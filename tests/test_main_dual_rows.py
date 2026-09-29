@@ -110,21 +110,23 @@ class DualTimingDefinitionTest(unittest.TestCase):
             "Gear Down Mode", "Power Down Mode", "Nitro Rx/Tx/Ctrl",
         }
 
-    def test_am5_summary_omits_refresh_mode(self):
+    def test_am5_summary_places_refresh_mode_under_gear_down(self):
         layout = summary_system_memory_layout(self._am5_names())
         self.assertEqual(layout, [
             ["CPU", "Cores / Threads", "Microcode"],
             ["Model", "BIOS"],
             ["AGESA"],
             ["DRAM Frequency", "BCLK", "MCLK"],
-            ["Memory Capacity", "DRAM Ratio", "FCLK", "Power Down Mode"],
-            ["UCLK:MCLK", "Nitro Rx/Tx/Ctrl", "UCLK", "Gear Down Mode"],
+            ["Memory Capacity", "Nitro Rx/Tx/Ctrl", "FCLK"],
+            ["UCLK:MCLK", "Gear Down Mode", "UCLK"],
+            ["Power Down Mode", "Refresh Mode"],
         ])
 
-    def test_dram_ratio_is_on_the_summary_strip(self):
+    def test_dram_ratio_is_not_on_the_summary_strip(self):
+        # Asked off the Summary; System Info still carries it.
         layout = summary_system_memory_layout(self._am5_names())
         placed = [name for row in layout for name in row]
-        self.assertIn("DRAM Ratio", placed)
+        self.assertNotIn("DRAM Ratio", placed)
 
     def test_the_memory_block_is_aligned_and_the_identity_rows_are_not(self):
         # Only an aligned row lands on the Summary columns; identity packs
@@ -134,24 +136,25 @@ class DualTimingDefinitionTest(unittest.TestCase):
         self.assertFalse(aligned[("CPU", "Cores / Threads", "Microcode")])
         self.assertFalse(aligned[("Model", "BIOS")])
         self.assertTrue(aligned[("DRAM Frequency", "BCLK", "MCLK")])
-        self.assertTrue(aligned[("UCLK:MCLK", "Nitro Rx/Tx/Ctrl", "UCLK", "Gear Down Mode")])
+        self.assertTrue(aligned[("UCLK:MCLK", "Gear Down Mode", "UCLK")])
+        self.assertTrue(aligned[("Power Down Mode", "Refresh Mode")])
 
     def test_an_aligned_row_keeps_a_hole_for_a_missing_name(self):
-        # Dropping it would slide BCLK and FCLK one column to the left, under
-        # the wrong timing section.
+        # Dropping it would slide Nitro and FCLK one column to the left,
+        # under the wrong timing section.
         blocks = summary_system_memory_blocks(
             self._am5_names() - {"Memory Capacity"})
-        row = next(names for names, _ in blocks if "DRAM Ratio" in names)
-        self.assertEqual(row, [None, "DRAM Ratio", "FCLK", "Power Down Mode"])
-        self.assertEqual(row.index("DRAM Ratio"), 1)
+        row = next(names for names, _ in blocks if "FCLK" in names)
+        self.assertEqual(row, [None, "Nitro Rx/Tx/Ctrl", "FCLK"])
+        self.assertEqual(row.index("Nitro Rx/Tx/Ctrl"), 1)
 
-    def test_a_row_that_is_alone_still_holds_the_last_column(self):
+    def test_a_policy_row_missing_its_first_name_holds_its_column(self):
         # Missing readings must not move the controller policy to the left.
         blocks = summary_system_memory_blocks(
-            self._am5_names() - {"Memory Capacity", "DRAM Ratio", "FCLK"})
+            self._am5_names() - {"UCLK:MCLK"})
         row, aligned = next((names, flag) for names, flag in blocks
-                            if "Power Down Mode" in names)
-        self.assertEqual(row, [None, None, None, "Power Down Mode"])
+                            if "Gear Down Mode" in names)
+        self.assertEqual(row, [None, "Gear Down Mode", "UCLK"])
         self.assertTrue(aligned)
 
     def test_channel_columns_take_the_slot_name(self):
@@ -230,21 +233,24 @@ class DualTimingDefinitionTest(unittest.TestCase):
         self.assertIn(("Gear Mode", None, "UCLK"), aligned)
 
     def test_no_summary_row_exceeds_the_configured_column_pairs(self):
-        # Both profiles can have four columns when voltage snapshots are
-        # present; no aligned system row may spill beyond that grid.
+        # The Summary is three columns on every platform. A fourth entry
+        # made an AM5 row too long to align, so it packed tight and ran
+        # 170px past the window's right edge.
         every_name = set(summary_system_memory_names())
         for layout in (summary_system_memory_layout(every_name),
                        summary_system_memory_layout(every_name - {"AGESA"})):
             for row in layout:
                 with self.subTest(row=row):
-                    self.assertLessEqual(len(row), 4)
+                    self.assertLessEqual(len(row), SUMMARY_PAIRS_PER_ROW)
 
     def test_summary_allowlist_includes_fclk(self):
         self.assertIn("FCLK", summary_system_memory_names())
 
     def test_summary_allowlist_excludes_detailed_memory_state(self):
         names = summary_system_memory_names()
-        for name in ("Self Refresh", "Memory Scrambler", "Refresh Mode"):
+        # Refresh Mode was on this list until it was asked on to the AM5
+        # strip, under Gear Down.
+        for name in ("Self Refresh", "Memory Scrambler"):
             with self.subTest(name=name):
                 self.assertNotIn(name, names)
         self.assertNotIn("Error Correction", names)
@@ -308,6 +314,7 @@ class DualTimingDefinitionTest(unittest.TestCase):
             "tWTR_S", "tRTP", "tFAW", "tCWL",
             "tMOD", "tRDPRE", "tWRPRE", "tCKE", "tXP",
         ]
+        omitted = ("tMOD", "tRDPRE", "tWRPRE", "tCKE", "tXP")
         rows = [
             {"name": "tRCDRD", "Category": "Primary"},
             {"name": "tREFI", "Category": "Refresh timings"},
@@ -321,7 +328,11 @@ class DualTimingDefinitionTest(unittest.TestCase):
 
         first, leftover = am5_summary_timing_columns(rows)
 
-        self.assertEqual(first, priority)
+        # The precharge, mode-register and power-down rows were asked off
+        # the Summary; they go to neither column rather than falling through
+        # to the leftovers.
+        self.assertEqual(
+            first, [name for name in priority if name not in omitted])
         self.assertEqual(leftover, ["tREFI"])
         self.assertNotIn("Refresh Mode", first)
         self.assertNotIn("Refresh Mode", leftover)
@@ -352,7 +363,7 @@ class DualTimingDefinitionTest(unittest.TestCase):
             {"name": "tWRWRSCL", "Category": "Tertiary"},
             {"name": "tRDWR", "Category": "Tertiary"},
             {"name": "tWRRD", "Category": "Tertiary"},
-            {"name": "tMRD", "Category": "Tertiary"},
+            {"name": "tCCD_L", "Category": "Tertiary"},
             {"name": "tREFI", "Category": "Refresh timings"},
         ]
 
@@ -360,7 +371,7 @@ class DualTimingDefinitionTest(unittest.TestCase):
 
         self.assertEqual(
             leftover,
-            ["tREFI", "tRDRDSCL", "tWRWRSCL", "tWRRD", "tRDWR", "tMRD"],
+            ["tREFI", "tRDRDSCL", "tWRWRSCL", "tWRRD", "tRDWR", "tCCD_L"],
         )
         self.assertLess(leftover.index("tRDRDSCL"), leftover.index("tWRRD"))
         self.assertLess(leftover.index("tWRRD"), leftover.index("tRDWR"))
@@ -404,7 +415,7 @@ class DualTimingDefinitionTest(unittest.TestCase):
         ]
         self.assertEqual(summary_column_count(timings), 3)
 
-    def test_am5_summary_tails_the_column_with_power_down(self):
+    def test_am5_summary_leaves_the_column_tail_off(self):
         rows = [
             {"name": name, "Category": "Tertiary"}
             for name in ("tCKE", "tXP", "tMOD", "tRDPRE", "tWRPRE", "tRDRDSCL")
@@ -415,12 +426,13 @@ class DualTimingDefinitionTest(unittest.TestCase):
             {"name": "tPHYWRD", "Category": "Tertiary"},
         ]
         first, leftover = am5_summary_timing_columns(rows)
-        # Precharge and mode register read together, then the power-down
-        # pair closes the column.
-        self.assertEqual(
-            first[-5:],
-            ["tMOD", "tRDPRE", "tWRPRE", "tCKE", "tXP"],
-        )
+        # The whole tail the column used to end on -- tMOD, the precharge
+        # pair and the power-down pair -- is off the Summary, and none of it
+        # falls through to the leftovers either.
+        for name in ("tMOD", "tRDPRE", "tWRPRE", "tCKE", "tXP"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, first + leftover)
+        self.assertEqual(first, ["tCL"])
         self.assertNotIn("tPHYRDL", first)
         self.assertNotIn("tPHYRDL", leftover)
         self.assertNotIn("tPHYWRL", leftover)
@@ -430,7 +442,7 @@ class DualTimingDefinitionTest(unittest.TestCase):
         names = summary_system_memory_names()
         self.assertIn("AGESA", names)
         self.assertIn("BCLK", names)
-        self.assertNotIn("Refresh Mode", names)
+        self.assertIn("Refresh Mode", names)
 
 
 class SummaryColumnWidthTest(unittest.TestCase):
@@ -1006,6 +1018,37 @@ class SummaryColumnTailTest(unittest.TestCase):
         )
         self.assertEqual(list(AM5_SUMMARY_TIMING_PRIORITY)[-len(ordered):],
                          ordered)
+
+
+
+class LoneChannelSummaryTest(unittest.TestCase):
+    """A setting only one channel reports is that channel's, not a pair."""
+
+    def compact(self, value_a, value_b, lone=True):
+        from unittest import mock
+        from rochviewer.ui.main import TimingGUI
+
+        gui = mock.Mock(selected_module_channel=None)
+        gui._read_compact_side.side_effect = (
+            lambda timing, side: value_a if side == "a" else value_b)
+        gui._module_pair_text.side_effect = lambda a, b: "%s/%s" % (a, b)
+        timing = {"name": "Nitro Mode", "parameters_a": [], "parameters_b": []}
+        if lone:
+            timing["lone_channel_alone"] = True
+        return TimingGUI._read_compact_value(gui, timing)
+
+    def test_channel_a_alone_shows_its_value(self):
+        self.assertEqual(self.compact("Disabled", "\u2014"), "Disabled")
+
+    def test_channel_b_alone_shows_its_value(self):
+        self.assertEqual(self.compact("\u2014", "Enabled"), "Enabled")
+
+    def test_both_channels_stay_a_pair(self):
+        self.assertEqual(self.compact("1", "2"), "1/2")
+
+    def test_an_unmarked_row_keeps_its_missing_half(self):
+        self.assertEqual(self.compact("Disabled", "\u2014", lone=False),
+                         "Disabled/\u2014")
 
 
 if __name__ == "__main__":

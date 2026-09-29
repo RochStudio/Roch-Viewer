@@ -66,6 +66,25 @@ def is_granite_ridge_cpu(cpu_name):
     return bool(match and match.group(1).startswith("9"))
 
 
+def is_raphael_cpu(cpu_name):
+    """Return whether the non-privileged CPU name identifies desktop Ryzen 7000.
+
+    Raphael shares Granite Ridge's IO die, SMU mailbox and command numbers,
+    but not its APOB training-record layout or its PM-table versions. Every
+    reading taken on it through those paths is from ZenStates-Core's Zen 4
+    tables and has not been confirmed on Raphael hardware by this project, so
+    callers mark it unverified.
+    """
+    name = str(cpu_name or "").strip().lower()
+    if not _is_desktop_am5_cpu(name):
+        return False
+    match = re.search(
+        r"ryzen\s+(?:[3579]\s+)?(?:pro\s+)?(\d{4})([a-z0-9]*)",
+        name,
+    )
+    return bool(match and match.group(1).startswith("7"))
+
+
 def _is_lga1700_desktop_cpu(cpu_name):
     name = str(cpu_name or "").strip().lower()
     match = re.search(

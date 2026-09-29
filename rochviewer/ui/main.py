@@ -18,7 +18,7 @@ import customtkinter as ctk
 from rochviewer.paths import module_chain
 from rochviewer.ui.asset_path import find_icon
 from rochviewer.ui.lazy_read import read_timing
-from rochviewer.platform_profiles import LGA1700_DDR5
+from rochviewer.platform_profiles import AM5, LGA1700_DDR5
 from rochviewer.timings import ACTIVE_PLATFORM, TIMINGS, apply_formula
 from rochviewer.memory.dimm_inventory import (
     channel_of, rank_numeric, read_modules, read_modules_with_spd_ic, split_ic,
@@ -172,11 +172,22 @@ def summary_system_memory_blocks(available_names):
         #
         # Processor identity occupies the first row above. The second keeps
         # the board model and BIOS; its manufacturer remains on System Info.
+        #
+        # Every aligned row holds at most three entries, one per Summary
+        # column. A fourth made the row too long to align, so it was packed
+        # tight instead, and Power Down Mode and Gear Down Mode ran 170px
+        # past the window's right edge.
+        #
+        # DRAM Ratio was asked off the strip; it stays on System Info. Nitro
+        # and Gear Down Mode moved up a row each to take its place, so the
+        # only empty cells are at the end of the last row.
         add(("Model", "BIOS"))
         add(("AGESA",))
         add_aligned(("DRAM Frequency", "BCLK", "MCLK"))
-        add_aligned(("Memory Capacity", "DRAM Ratio", "FCLK", "Power Down Mode"))
-        add_aligned(("UCLK:MCLK", "Nitro Rx/Tx/Ctrl", "UCLK", "Gear Down Mode"))
+        add_aligned(("Memory Capacity", "Nitro Rx/Tx/Ctrl", "FCLK"))
+        add_aligned(("UCLK:MCLK", "Gear Down Mode", "UCLK"))
+        # Refresh Mode under Gear Down, the other controller policy.
+        add_aligned(("Power Down Mode", "Refresh Mode"))
         return blocks
 
     # Intel's fixed-width Summary keeps three aligned columns:
@@ -243,6 +254,10 @@ SUMMARY_HIDDEN_SNAPSHOT_NAMES = frozenset({
     "CHA VIN", "CHA 1.8V output", "CHA 1.0V output",
     "CHB VIN", "CHB 1.8V output", "CHB 1.0V output",
 })
+
+
+# The per-DIMM PMIC rails' categories on the Voltages tab.
+SUMMARY_DIMM_RAIL_CATEGORIES = frozenset({"CHA memory", "CHB memory"})
 
 
 def summary_snapshot_voltage_rows(timings):
@@ -331,10 +346,12 @@ TIMINGS_SECTION_ORDER = (
     "Turnaround",
     "Read to read",
     "Write to write",
-    "PHY",
     "Stagger",
     "Preamble / postamble",
     "Mode register",
+    # Last: on AM5 it closes the middle column, under the mode registers.
+    # Intel's Timings tab has none of the four sections above it here.
+    "PHY",
     # Training tab sections. This order is only applied to the Timings tab and
     # they no longer appear there, so their position is inert -- but a name
     # dropped from the list is easy to mistake for a section deliberately
@@ -371,7 +388,9 @@ AM5_TIMINGS_THREE_COLUMN_LAYOUT = {
     "Turnaround": "Right",
     "Read to read": "Right",
     "Write to write": "Right",
-    "PHY": "Right",
+    # Under the mode registers: the right column ran eight rows longer than
+    # the middle with it there, and the two are twenty rows each without it.
+    "PHY": "Middle",
 }
 
 
@@ -532,9 +551,12 @@ def summary_system_memory_names():
         "Model", "BIOS", "AGESA",
         "BCLK", "QCLK Ratio", "Uncore", "FCLK", "MCLK", "UCLK",
         "DRAM Frequency",
-        "DRAM Ratio", "UCLK:MCLK", "Gear Mode",
+        "UCLK:MCLK", "Gear Mode",
         "Memory Capacity",
         "Power Down Mode", "Power Down", "Gear Down Mode", "Nitro Rx/Tx/Ctrl",
+        # AM5 only: the Intel layout does not place it, so there it is
+        # eligible and unused.
+        "Refresh Mode",
     ]
 
 
@@ -630,6 +652,9 @@ SPD_DDR5_FIELDS = (
     ("Module Size", "capacity"),
     ("DRAM Organization", "organization"),
     ("Ranks", "rank"),
+    # The JEDEC reference PCB the module is built on, which is what tuners
+    # mean by an A-die kit being "on an A0 board".
+    ("Raw Card", "raw_card"),
     ("Max Bandwidth", "max_bandwidth"),
     ("Module Manuf.", "module_manufacturer"),
     ("DRAM Manuf.", "dram_manufacturer"),
@@ -654,7 +679,9 @@ SPD_PROFILE_FIELDS = (
     ("Voltage", "voltage"),
 )
 # DDR5 profiles also carry tWR, the three refresh cycle times, tRRD_L,
-# tCCD_L, tFAW and tRTP, and a voltage for each of VDD, VDDQ and VPP.
+# tCCD_L, tCCD_L_WR, tFAW, tRTP, tWTR_L and tWTR_S, and a voltage for each of
+# VDD, VDDQ and VPP. EXPO stores only four of the floored timings, and XMP's
+# are not read, so those columns show a dash for the rest.
 SPD_DDR5_PROFILE_FIELDS = SPD_PROFILE_FIELDS[:-1] + (
     ("tWR", "twr"),
     ("tRFC1", "trfc1"),
@@ -662,18 +689,25 @@ SPD_DDR5_PROFILE_FIELDS = SPD_PROFILE_FIELDS[:-1] + (
     ("tRFCsb", "trfcsb"),
     ("tRRD_L", "trrd_l"),
     ("tCCD_L", "tccd_l"),
+    ("tCCD_L_WR", "tccd_l_wr"),
     ("tFAW", "tfaw"),
     ("tRTP", "trtp"),
+    ("tWTR_L", "twtr_l"),
+    ("tWTR_S", "twtr_s"),
     ("VDD", "vdd"),
     ("VDDQ", "vddq"),
     ("VPP", "vpp"),
 )
 
 # What this machine's SPD page shows, and so what Advanced lists for it.
-SPD_TAB_FIELDS = (SPD_DDR5_FIELDS if ACTIVE_PLATFORM == LGA1700_DDR5
+# AM5 is DDR5-only, so it takes the DDR5 page too: it had been getting the
+# DDR4-shaped one, which leaves out the organization, the PMIC and SPD hub,
+# and every profile timing past tRC.
+DDR5_SPD_PLATFORMS = (LGA1700_DDR5, AM5)
+SPD_TAB_FIELDS = (SPD_DDR5_FIELDS if ACTIVE_PLATFORM in DDR5_SPD_PLATFORMS
                   else SPD_FIELDS)
 SPD_TAB_PROFILE_FIELDS = (SPD_DDR5_PROFILE_FIELDS
-                          if ACTIVE_PLATFORM == LGA1700_DDR5
+                          if ACTIVE_PLATFORM in DDR5_SPD_PLATFORMS
                           else SPD_PROFILE_FIELDS)
 
 
@@ -774,7 +808,19 @@ AM5_SUMMARY_PLACED_NAMES = frozenset({"CR"})
 # tREFIns is tREFI restated in nanoseconds. On the Timings tab it earns its
 # place next to the raw interval it converts; in a Summary column it is a
 # second row saying what the row above it already said.
-AM5_SUMMARY_OMITTED = frozenset({"tREFIns"})
+#
+# The stagger, mode-register, pre- and post-amble timings, the power-down
+# pair and two of the three PHY timings were asked off the Summary; they
+# remain on the Timings tab.
+AM5_SUMMARY_OMITTED = frozenset({
+    "tREFIns",
+    "tSTAG", "tSTAGsb",
+    "tMRD", "tMRDPDA", "tMOD", "tMODPDA",
+    "tRDPRE", "tWRPRE",
+    "tRDPOST", "tWRPOST",
+    "tCKE", "tXP",
+    "tPHYWRD", "tPHYWRL",
+})
 
 AM5_SUMMARY_PHY_NAMES = ("tPHYWRD", "tPHYRDL", "tPHYWRL")
 
@@ -924,6 +970,9 @@ class TimingGUI:
         self.selected_module_channel = None
         # Fixed rows whose one read came back empty; read once more below.
         self._blank_labels = []
+        # Labels whose row can be re-taken, by tab: see _reread_tab.
+        self._reread_labels = {}
+        self._reread_busy = set()
         self._live_refresh_busy = False
         # Dual-channel section bodies per tab, aligned once every tab is built.
         self._dual_content_frames = {}
@@ -983,6 +1032,9 @@ class TimingGUI:
     TITLE_THEME_WIDTH = 36
     LIGHT_MODE_ICON = "☀"
     DARK_MODE_ICON = "☾"
+    SCREENSHOT_ICON = "\U0001F4F7"
+    TITLE_SCREENSHOT_FONT = ("Segoe UI Symbol", 14)
+    SCREENSHOT_STATUS_MS = 4000
     CLOSE_HOVER_COLOR = "#C42B1C"
 
     def build_title_bar(self):
@@ -1049,6 +1101,34 @@ class TimingGUI:
         )
         self.appearance_button.pack(side="right")
 
+        # A picture of the window, saved and put on the clipboard: timings
+        # are shared as screenshots, and this takes the window alone, without
+        # whatever is lying over it. In the title bar rather than beside
+        # Telemetry and Advanced because the tab strip has no room to spare
+        # on the 700px presets.
+        self.screenshot_button = ctk.CTkButton(
+            bar,
+            text=self.SCREENSHOT_ICON,
+            command=self.take_screenshot,
+            width=self.TITLE_THEME_WIDTH,
+            height=self.TITLE_BAR_HEIGHT,
+            corner_radius=0,
+            fg_color="transparent",
+            hover_color=self.TAB_UNSELECTED_HOVER_COLOR,
+            text_color=self.TEXT_COLOR,
+            font=self.TITLE_SCREENSHOT_FONT,
+        )
+        self.screenshot_button.pack(side="right")
+        # Where the last picture went, for a few seconds; a click opens the
+        # folder. Packed after the button so it sits to its left.
+        self.screenshot_status = ctk.CTkLabel(
+            bar, text="", font=self.COMPACT_FONT,
+            text_color=self.SUBTITLE_COLOR, cursor="hand2",
+        )
+        self.screenshot_status.pack(side="right", padx=(0, 4))
+        self.screenshot_status.bind(
+            "<Button-1>", lambda _event: self.open_screenshot_folder())
+
         # The strip, its title and the logo all drag: a widget sitting on the
         # bar would otherwise be a dead patch in the middle of it.
         for widget in (bar, title, logo_label) if logo_label else (bar, title):
@@ -1065,6 +1145,65 @@ class TimingGUI:
                            and self.restore_from_taskbar()),
             add="+",
         )
+
+    def take_screenshot(self):
+        """Save a PNG of the window to Pictures and copy it to the clipboard.
+
+        Deferred a moment so the button is drawn released rather than
+        pressed in the picture it takes.
+        """
+        self.root.after(80, self._capture_screenshot)
+
+    def _capture_screenshot(self):
+        from datetime import datetime
+
+        from rochviewer.ui import screenshot
+
+        try:
+            self.root.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+            width, height, pixels = screenshot.capture_window(hwnd)
+            folder = screenshot.default_folder()
+            path = screenshot.save_png(
+                folder,
+                screenshot.screenshot_filename(self.tabview.get(),
+                                               datetime.now()),
+                width, height, pixels,
+            )
+        except Exception as exc:
+            print(f"Screenshot failed: {exc}")
+            self._show_screenshot_status("Screenshot failed")
+            return
+        self.last_screenshot_path = path
+        # The file is what matters; a clipboard another program is holding
+        # open only costs the paste.
+        try:
+            screenshot.copy_to_clipboard(width, height, pixels)
+            self._show_screenshot_status("Saved · copied")
+        except Exception as exc:
+            print(f"Screenshot saved to {path}; not copied: {exc}")
+            self._show_screenshot_status("Saved")
+
+    def _show_screenshot_status(self, text):
+        self.screenshot_status.configure(text=text)
+        pending = getattr(self, "_screenshot_status_job", None)
+        if pending is not None:
+            self.root.after_cancel(pending)
+        self._screenshot_status_job = self.root.after(
+            self.SCREENSHOT_STATUS_MS,
+            lambda: self.screenshot_status.configure(text=""))
+
+    def open_screenshot_folder(self):
+        """Show the saved picture in Explorer, selected."""
+        path = getattr(self, "last_screenshot_path", None)
+        if not path or not os.path.exists(path):
+            return
+        try:
+            import subprocess
+
+            subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+        except OSError as exc:
+            print(f"Could not open the screenshot folder: {exc}")
 
     def restore_taskbar_button(self):
         """Put the window back on the taskbar after the frame comes off.
@@ -1355,11 +1494,16 @@ class TimingGUI:
         except OSError as e:
             print(f"Could not save setting {key}: {e}")
 
+    # What a first run opens in, and what an unreadable setting falls back
+    # to. The sun/moon button still switches, and the choice is remembered.
+    DEFAULT_APPEARANCE_MODE = "Light"
+
     def load_appearance_mode(self):
-        mode = self.load_settings().get("appearance_mode", "Dark")
+        mode = self.load_settings().get(
+            "appearance_mode", self.DEFAULT_APPEARANCE_MODE)
         if str(mode).lower() in ("light", "dark"):
             return str(mode).title()
-        return "Dark"
+        return self.DEFAULT_APPEARANCE_MODE
 
     # The compact window has room for the tab list and the two utility
     # buttons on one line. Overlay the tools on the tab header so both groups
@@ -1510,6 +1654,23 @@ class TimingGUI:
             return len(SENSOR_GROUP_ORDER)
 
         return sorted(groups, key=position)
+
+    @staticmethod
+    def sensor_reveal_keys():
+        """The sensor rows the window holds back until they read.
+
+        Rows marked ``hide_when_blank`` -- a fan header that may have no fan,
+        a board channel on a board it is not mapped for. The window decides
+        from its own worker's readings, so nothing is read on this thread to
+        decide it, and a row that answers late still appears.
+        """
+        return {
+            ("sensor", timing.get("Category") or "Sensors",
+             timing.get("display_name", timing.get("name", "")))
+            for timing in TIMINGS
+            if timing.get("Tab") in WINDOWED_TABS
+            and timing.get("hide_when_blank")
+        }
 
     # The reading tabs, in the order the tab strip shows them. Summary is left
     # out because every row on it is repeated from one of these, and the
@@ -1696,6 +1857,7 @@ class TimingGUI:
                 "telemetry_auto_open", value
             ),
             sensor_groups=self.sensor_groups(),
+            reveal_on_read=self.sensor_reveal_keys(),
             icon_path=self.icon_path(),
             position=self.adjacent_window_position(
                 "left", WINDOW_WIDTH, WINDOW_HEIGHT
@@ -2001,6 +2163,7 @@ class TimingGUI:
         self._resize_for_tab(tab_name)
         if tab_name == "SPD":
             self._load_spd_tab_async()
+        self._reread_tab(tab_name)
         if self._tab_shading_job is not None:
             try:
                 self.root.after_cancel(self._tab_shading_job)
@@ -2879,18 +3042,51 @@ class TimingGUI:
     LGA1700_DDR5_TAB_WINDOW_SIZES = {
         "Summary": (700, 750),
         "System Info": (775, 750),
-        "SPD": (700, 750),
+        "SPD": (700, 816),
         "Timings": (700, 750),
         "Training": (975, 950),
         "IMC": (700, 750),
         "RTL": (700, 750),
         "Voltages": (700, 750),
     }
+    # Each AM5 page at the least size that holds it, measured on the X870
+    # bench; the fit tests in test_unscrolled_fit_live check them.
+    AM5_TAB_WINDOW_SIZES = {
+        # The strip has a fourth row Intel's does not (Power Down, Refresh
+        # Mode); 750 tall holds it with the DIMM rails closing the middle
+        # column rather than lengthening the third.
+        "Summary": (700, 750),
+        # Two halves: the OS edition on the left and the graphics names on
+        # the right need 764px across, which 788 holds. The power limits in
+        # the right column make the content 630px tall; 747 is the least.
+        "System Info": (788, 750),
+        # The DDR5 page, with organization, PMIC, SPD hub and raw card, and
+        # tCCD_L_WR, tWTR_L and tWTR_S in the profile table: 699px of
+        # content. 700 wide like the Summary. LGA1700 DDR5 draws the same
+        # page and takes the same height.
+        "SPD": (700, 816),
+        # PHY closes the middle column, so the tallest column is the first at
+        # 22 rows, and 650 -- the window minimum -- holds it with rows to
+        # spare. 750 wide: the three equal columns need 718px, which a 700
+        # window cuts off.
+        "Timings": (750, 650),
+        # With the preambles worded briefly and FGR off the tab, Training's
+        # columns need 450px across and fit the 650 minimum with rows spare;
+        # 700 wide matches the Summary and SPD.
+        "Training": (700, 650),
+        # 700 like the Summary, now the "reopen to update" note that was its
+        # widest line is gone: the columns need 441px.
+        "Voltages": (700, 650),
+    }
     if ACTIVE_PLATFORM == LGA1700_DDR5:
         TAB_WINDOW_SIZES.update(LGA1700_DDR5_TAB_WINDOW_SIZES)
+    elif ACTIVE_PLATFORM == AM5:
+        TAB_WINDOW_SIZES.update(AM5_TAB_WINDOW_SIZES)
     WINDOW_WIDTH, WINDOW_HEIGHT = TAB_WINDOW_SIZES["Summary"]
     MIN_WINDOW_WIDTH = 700
-    MIN_WINDOW_HEIGHT = 654
+    # 650 so AM5's Timings, Training and Voltages can be the 650 they were
+    # sized to; every other preset is taller.
+    MIN_WINDOW_HEIGHT = 650
 
     def _column_text_width(self, tab_name, column_frame):
         """How far a detail column's text reaches: its widest row's columns.
@@ -3175,6 +3371,9 @@ class TimingGUI:
         if hasattr(self, "_module_value_labels"):
             self._module_value_labels.append(
                 (label, lambda t=timing: self._read_compact_value(t)))
+        if callable(timing.get("refresh")):
+            self._reread_labels.setdefault(timing.get("Tab"), []).append(
+                (timing, label))
         if timing.get("live"):
             self.live_value_labels.append((timing, label))
         elif self._is_blank(label):
@@ -3214,6 +3413,57 @@ class TimingGUI:
                 pass
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _reread_tab(self, tab_name):
+        """Re-take a tab's snapshot rows each time it is opened.
+
+        A row may carry ``refresh``, which drops its cached reading; every
+        such row on the tab is refreshed and re-read here, off the UI thread
+        as the live refresh is, and only the label writes come back to Tk.
+        Rows without it -- and every Intel row -- are untouched.
+        """
+        pending = self._reread_labels.get(tab_name)
+        if not pending or tab_name in self._reread_busy:
+            return
+        self._reread_busy.add(tab_name)
+        for refresh in {id(t["refresh"]): t["refresh"] for t, _ in pending}.values():
+            try:
+                refresh()
+            except Exception:
+                pass
+
+        def work():
+            com_ready = False
+            try:
+                import pythoncom
+                pythoncom.CoInitialize()
+                com_ready = True
+            except Exception:
+                pass
+            results = []
+            try:
+                for timing, label in pending:
+                    try:
+                        results.append((label, self._read_compact_value(timing)))
+                    except Exception:
+                        continue
+            finally:
+                if com_ready:
+                    try:
+                        pythoncom.CoUninitialize()
+                    except Exception:
+                        pass
+
+            def finish():
+                self._reread_busy.discard(tab_name)
+                self._apply_values(results)
+
+            try:
+                self.root.after(0, finish)
+            except Exception:
+                self._reread_busy.discard(tab_name)
+
+        threading.Thread(target=work, name="Tab re-read", daemon=True).start()
 
     def start_live_refresh(self):
         """Begin periodically re-reading the live rows."""
@@ -3297,6 +3547,16 @@ class TimingGUI:
                 return self._read_compact_side(timing, selected)
             value_a = self._read_compact_side(timing, "a")
             value_b = self._read_compact_side(timing, "b")
+            if timing.get("lone_channel_alone"):
+                # A controller setting read on one channel only -- one DIMM,
+                # or both on channel A -- is that channel's setting, not a
+                # pair with a missing half: "Disabled", not "Disabled/-".
+                a_missing = str(value_a).strip() == EM_DASH
+                b_missing = str(value_b).strip() == EM_DASH
+                if b_missing and not a_missing:
+                    return summary_compact_ohm(value_a)
+                if a_missing and not b_missing:
+                    return summary_compact_ohm(value_b)
             return self._module_pair_text(value_a, value_b)
 
         if timing.get("read_type") == "dynamic" and "dynamic_params" in timing:
@@ -3728,7 +3988,7 @@ class TimingGUI:
                 text_color=self.TEXT_COLOR,
                 fg_color=bg, bg_color=bg,
             )
-            name.grid(row=index, column=0, sticky="nw",
+            name.grid(row=index, column=0, sticky="nsew",
                       padx=(0, self.COLUMN_GAP))
 
             if is_dual_timing(timing):
@@ -3751,7 +4011,11 @@ class TimingGUI:
                 text_color=self.VALUE_COLOR,
                 fg_color=bg, bg_color=bg,
             )
-            value.grid(row=index, column=1, sticky="nw")
+            # Filling the cell, as the single-value sections' values do, is
+            # what lets _align_summary_values anchor it to the column's
+            # value edge. Pinned to the north-west, the tPHY pairs stopped
+            # 17px short of every other value above them.
+            value.grid(row=index, column=1, sticky="nsew")
 
             def module_value(t=timing):
                 selected = getattr(self, "selected_module_channel", None)
@@ -4014,9 +4278,6 @@ class TimingGUI:
     # Between two column panels on the detail tabs: with each panel's inset
     # either side, one column's text ends 25px before the next one's starts.
     PANEL_COLUMN_SPACING = 25 - 2 * PANEL_PADX
-    # The least space left between a CPU / Model name and its value when the
-    # value is pulled left to end on its column's edge.
-    IDENTITY_MIN_GAP = 8
 
     def _summary_panel(self, parent):
         """One bordered Summary panel; content is gridded inside it."""
@@ -4241,6 +4502,9 @@ class TimingGUI:
             label_overrides={
                 "Uncore": "Ring",
                 "Memory Scrambler": "Mem Scrambler",
+                # Shorter on the strip; Training keeps the full names.
+                "Gear Down Mode": "Gear Down",
+                "Power Down Mode": "Power Down",
             },
             show_header=False,
         )
@@ -4289,16 +4553,23 @@ class TimingGUI:
         # The order comes from AM5_SUMMARY_TIMING_PRIORITY rather than being
         # written again here. Held separately, the two disagreed about where
         # tCKE and tXP go, and this list is applied second, so it silently won.
+        # An omitted row stays omitted here too: the tail is rebuilt from the
+        # priority list, not from what am5_summary_timing_columns kept.
         timing_tail = [
             name for name in AM5_SUMMARY_TIMING_PRIORITY
             if name in SUMMARY_COLUMN_TAIL and name in available_names
+            and name not in AM5_SUMMARY_OMITTED
         ]
         if "Gear Down Mode" in available_names and timing_tail:
             primary_secondary_names = [
                 name for name in primary_secondary_names if name not in set(timing_tail)
             ] + timing_tail
 
-        phy_names = [name for name in AM5_SUMMARY_PHY_NAMES if name in available_names]
+        # Still named in AM5_SUMMARY_PHY_NAMES, which keeps all three out of
+        # the generic columns; the omitted ones are dropped here.
+        phy_names = [name for name in AM5_SUMMARY_PHY_NAMES
+                     if name in available_names
+                     and name not in AM5_SUMMARY_OMITTED]
         if phy_names and "Gear Down Mode" in available_names:
             # Dual ChA/ChB PHY block under tertiary (all three tPHY* rows).
             middle_sections.append({
@@ -4320,20 +4591,33 @@ class TimingGUI:
             third_column_sections,
         ]
 
-        snapshot_rows = summary_snapshot_voltage_rows(TIMINGS)
-        if snapshot_rows:
-            third_column_sections.insert(0, {
-                "title": "Voltages",
+        def voltage_section(title, rows):
+            return {
+                "title": title,
                 "categories": tuple(dict.fromkeys(
-                    t["Category"] for t in snapshot_rows
+                    t["Category"] for t in rows
                 )),
-                "timing_names": [t["name"] for t in snapshot_rows],
+                "timing_names": [t["name"] for t in rows],
                 "label_overrides": {
                     t["name"]: t.get("display_name", t["name"])
-                    for t in snapshot_rows
+                    for t in rows
                 },
                 "show_header": False,
-            })
+            }
+
+        snapshot_rows = summary_snapshot_voltage_rows(TIMINGS)
+        # On AM5 the DIMMs' own PMIC rails close the middle column, under
+        # tPHYRDL: the middle column is the short one, and the rails are
+        # per-module readings rather than the CPU's. The CPU and board rails
+        # keep the head of the third column.
+        dimm_rows = [t for t in snapshot_rows
+                     if t.get("Category") in SUMMARY_DIMM_RAIL_CATEGORIES]
+        if dimm_rows and "Gear Down Mode" in available_names:
+            snapshot_rows = [t for t in snapshot_rows if t not in dimm_rows]
+            middle_sections.append(voltage_section("DIMM Voltages", dimm_rows))
+        if snapshot_rows:
+            third_column_sections.insert(
+                0, voltage_section("Voltages", snapshot_rows))
         for column, sections in zip(columns, column_sections):
             row = 0
             for section in sections:
@@ -4500,7 +4784,10 @@ class TimingGUI:
                 # them, so there is nothing before them to count.
                 grid_row = 0
                 band = 0
+                labelled = False
                 for section_name, timing_names in sections:
+                    dual = any(is_dual_timing(timing) for timing in
+                               self._section_rows(section_name, timing_names))
                     self.create_section(
                         parent, section_name, timing_names,
                         column=0, row=grid_row, extra_pady=0,
@@ -4509,7 +4796,9 @@ class TimingGUI:
                         show_channel_header=False,
                         uniform_header=True,
                         band_offset=band,
+                        heading_channel_label=dual and not labelled,
                     )
+                    labelled = labelled or dual
                     grid_row += 1
                     band += 1 + len(
                         self._section_rows(section_name, timing_names)
@@ -4672,10 +4961,18 @@ class TimingGUI:
         if full_width is None:
             return
         columns = {}
+        # The identity rows are not clock pairs, even the one that looks like
+        # one. AM5's AGESA row holds a single name and value, so it passed
+        # the check below as a pair in the first column -- and its value, the
+        # AGESA string, became the edge tCL's value was carried out to. The
+        # first timing column grew 147px and lost the gap before tREFI.
+        identity_rows = set(getattr(self, "_summary_identity_rows", []))
         stack = list(full_width.winfo_children())
         while stack:
             frame = stack.pop()
             stack.extend(frame.winfo_children())
+            if frame in identity_rows:
+                continue
             labels = [child for child in frame.winfo_children()
                       if isinstance(child, ctk.CTkLabel)
                       and child.winfo_manager() == "grid"]
@@ -4821,7 +5118,6 @@ class TimingGUI:
                 if body.winfo_exists()]
         # From scratch each time, so a second pass measures the rows as they
         # pack rather than as the last pass left them, and cannot overshoot.
-        values = []
         for body in rows:
             for column in range(1, 6, 2):
                 body.grid_columnconfigure(column, minsize=0)
@@ -4830,7 +5126,6 @@ class TimingGUI:
                     continue
                 if int(label.grid_info()["column"]) % 2 == 1:
                     label.configure(width=0)
-                    values.append((int(label.grid_info()["column"]) // 2, label))
                 else:
                     label.grid_configure(padx=(0, self.COLUMN_GAP))
             # A row's last value keeps no gap after it, as the clock strip's
@@ -4865,36 +5160,11 @@ class TimingGUI:
                         column - 1, minsize=width + shortfall)
 
         start_names_on_columns()
-
-        # Then each value ends where the readings below it end, the way the
-        # clock and timing values do: CPU's with DRAM Frequency's and tCL's.
-        # After the names, so widening a value cannot move the name after it;
-        # the slot it widens into is the one that pushed that name out.
-        self.root.update_idletasks()
-        edges = self._summary_value_edges()
-        for index, label in values:
-            if index >= len(edges):
-                continue
-            width = edges[index] - label.winfo_rootx()
-            overrun = label.winfo_reqwidth() - width
-            if overrun > 0:
-                # A long name -- Cores / Threads -- starts its value too late
-                # to end on the edge. The gap before the value gives way,
-                # down to a floor that still reads as a gap.
-                name = next((cell for cell in label.master.grid_slaves(
-                    row=0, column=int(label.grid_info()["column"]) - 1)), None)
-                if name is None:
-                    continue
-                gap = max(self.IDENTITY_MIN_GAP, self.COLUMN_GAP - overrun)
-                name.grid_configure(padx=(0, gap))
-                self.root.update_idletasks()
-                width = edges[index] - label.winfo_rootx()
-            if width > label.winfo_reqwidth():
-                scaling = label._get_widget_scaling()
-                label.configure(width=width / scaling, anchor="e")
-        # A gap that gave way pulled every pair after it left; put them back.
-        # Their values keep their widths, so they move out onto their edges.
-        start_names_on_columns()
+        # The values are not then carried out to the timing columns' value
+        # edge, as they once were. A short one sat a column's width from its
+        # own name -- "BIOS" and its "F4" a hundred and fifty pixels apart --
+        # while the long CPU and board names, too wide to move, stayed beside
+        # theirs. Every identity value now follows its name.
 
     def _summary_column_starts(self):
         """Where each Summary timing column's names begin, on screen."""
@@ -5690,7 +5960,7 @@ class TimingGUI:
                         row=grid_row, column=0, columnspan=3, sticky="nsew"
                     )
 
-    def create_section(self, parent, section_name, timing_names, column=0, row=0, columnspan=1, extra_pady=0, return_frame=False, tab_name=None, pady=(2, 2), show_channel_header=True, uniform_header=False, band_offset=0):
+    def create_section(self, parent, section_name, timing_names, column=0, row=0, columnspan=1, extra_pady=0, return_frame=False, tab_name=None, pady=(2, 2), show_channel_header=True, uniform_header=False, band_offset=0, heading_channel_label=True):
         """Create a categorized section block with consistent layout for single or dual-channel timings.
 
         ``show_channel_header`` draws the A1/B1 pair above the values. A column
@@ -5809,11 +6079,15 @@ class TimingGUI:
             for column, text, output_column in (
                 (1, a_text, "a"), (2, b_text, "b")
             ):
+                # Only the column's first per-channel heading names the
+                # module -- "All modules" nine times down a tab said nothing
+                # the first did not. The rest keep the cells, blank, so the
+                # heading still lines up with the values under it.
                 channel_header = ctk.CTkLabel(
                     header_frame,
-                    text=self._detail_channel_header(
+                    text=(self._detail_channel_header(
                         a_text, b_text, output_column, tab_name
-                    ),
+                    ) if heading_channel_label else ""),
                     font=header_font,
                     anchor="w", padx=name_padx,
                     text_color=self.SUBTITLE_COLOR,
@@ -5824,6 +6098,8 @@ class TimingGUI:
             for output_column, channel_header in zip(
                 ("a", "b"), channel_headers
             ):
+                if not heading_channel_label:
+                    break
                 self._module_value_labels.append((
                     channel_header,
                     lambda side=output_column, a=a_text, b=b_text:

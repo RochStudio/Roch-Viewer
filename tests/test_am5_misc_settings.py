@@ -1,6 +1,8 @@
 import unittest
 from rochviewer.amd.timings import decode_misc_settings, REG_PRE, REG_DRAM_CONFIG
-from rochviewer.amd.profile import _misc_channels
+from rochviewer.amd.profile import (
+    _brief_amble, _brief_read_preamble, _channel_setting_row,
+)
 
 
 class MiscSettingsTest(unittest.TestCase):
@@ -21,10 +23,13 @@ class MiscSettingsTest(unittest.TestCase):
             self.assertTrue(all(v is None for v in decode_misc_settings(regs).values()))
 
     def test_channels_are_not_mirrored(self):
-        class Runtime:
-            def channel_umc_value(self, name, channel):
-                return "Enabled" if channel == "cha" else "Disabled"
-        self.assertEqual(_misc_channels(Runtime(), "ecc")(), "A: Enabled | B: Disabled")
+        row = _channel_setting_row(
+            "ECC", lambda channel: "Enabled" if channel == "cha" else "Disabled",
+            "Other Settings", "Left")
+        self.assertEqual(row["value"](), "A: Enabled | B: Disabled")
+        self.assertEqual((row["value_a"](), row["value_b"]()),
+                         ("Enabled", "Disabled"))
+        self.assertEqual(row["Tab"], "Training")
 
     def test_reserved_postamble_is_not_a_guessed_duration(self):
         for code in range(2, 8):
@@ -46,8 +51,31 @@ class MiscSettingsTest(unittest.TestCase):
         self.assertIsNone(decode_granite_ridge_training_block(block[:0x16]))
 
     def test_raw_training_channels_keep_missing_channel_blank(self):
-        class Runtime:
-            def channel_training_value(self, name, channel):
-                return 0 if channel == "cha" else "—"
-        self.assertEqual(_misc_channels(Runtime(), "RX_DFE", training=True)(),
-                         "A: 0 | B: —")
+        # One channel read: the shared value is that reading, and the other
+        # channel's own value stays a dash rather than borrowing it.
+        row = _channel_setting_row(
+            "RX_DFE", lambda channel: 0 if channel == "cha" else "—",
+            "Misc", "Right")
+        self.assertEqual(row["value"](), 0)
+        self.assertEqual(row["value_b"](), "—")
+
+
+class BriefAmbleTest(unittest.TestCase):
+    def test_a_length_alone_where_it_is_the_only_one(self):
+        self.assertEqual(_brief_amble("4 tCK - 00001010 Pattern"), "4 tCK")
+        self.assertEqual(_brief_amble("1.5 tCK - 010 Pattern"), "1.5 tCK")
+        self.assertEqual(_brief_amble("0.5 tCK - 0 Pattern"), "0.5 tCK")
+        # The write preamble has one 2 tCK setting, so no pattern.
+        self.assertEqual(_brief_amble("2 tCK - 0010 Pattern"), "2 tCK")
+
+    def test_the_read_preambles_two_2_tck_settings_stay_apart(self):
+        self.assertEqual(_brief_read_preamble("2 tCK - 0010 Pattern"),
+                         "2 tCK (0010)")
+        self.assertEqual(_brief_read_preamble("2 tCK - 1110 Pattern"),
+                         "2 tCK (1110)")
+        self.assertEqual(_brief_read_preamble("4 tCK - 00001010 Pattern"),
+                         "4 tCK")
+
+    def test_anything_else_reads_as_decoded(self):
+        self.assertEqual(_brief_amble("Reserved (UMC 5)"), "Reserved (UMC 5)")
+        self.assertEqual(_brief_amble("\u2014"), "\u2014")

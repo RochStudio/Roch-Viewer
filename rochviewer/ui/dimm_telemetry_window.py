@@ -47,10 +47,11 @@ PARAMETERS = (
     ("vdd", "VDD (SWA)", "V", 3),
     ("vddq", "VDDQ (SWB)", "V", 3),
     ("vpp", "VPP (SWC)", "V", 3),
-    # Named as the Voltages tab names the same PMIC readings.
-    ("vin_bulk", "VIN", "V", 3),
-    ("vout_1v8", "1.8V output", "V", 3),
-    ("vout_1v0", "1.0V output", "V", 3),
+    # Named as the Voltages tab names the same PMIC readings: VIN_Bulk is the
+    # module's 5 V input, the lower two the PMIC's LDO outputs.
+    ("vin_bulk", "VIN (5V)", "V", 3),
+    ("vout_1v8", "LDO 1.8V", "V", 3),
+    ("vout_1v0", "LDO 1.0V", "V", 3),
     # The sum only. The three per-rail figures it is made of were shown
     # above it and said nothing the total does not: VDD carries almost all
     # of a DDR5 module's draw, so the split read as the total, a small
@@ -241,10 +242,18 @@ class DimmTelemetryWindow(ctk.CTkToplevel):
     def __init__(self, master, theme, read_telemetry, read_modules,
                  on_close=None, poll_ms=POLL_MS, auto_open=False,
                  on_auto_open=None, sensor_groups=(), icon_path=None,
-                 position=None):
+                 position=None, reveal_on_read=()):
         super().__init__(master)
         # [(group title, [(label, read() -> displayed text)])]
         self._sensor_groups = list(sensor_groups)
+        # Sensor row keys that stay hidden until a tick reads them: a fan
+        # header with nothing on it, a board channel on a board it is not
+        # mapped for. Decided by the worker's readings, never by a read on
+        # this thread, and a row that answers late -- a transport busy at
+        # open, a zero-RPM fan that spins up -- still appears.
+        self._reveal_on_read = set(reveal_on_read)
+        # {row key: (its record, its table's records, its table's panel)}
+        self._pending_rows = {}
         self._theme = theme
         self._read_telemetry = read_telemetry
         self._read_modules = read_modules
@@ -368,14 +377,20 @@ class DimmTelemetryWindow(ctk.CTkToplevel):
             parent = record["parent"]
             if parent and not self._expanded.get(parent):
                 continue
+            if record.get("pending"):
+                continue
             background = self._band(visible)
             record["filler"].configure(fg_color=background)
             for widget in record["cells"]:
                 widget.configure(fg_color=background, bg_color=background)
             visible += 1
 
-    def _stat_table(self, parent, heading, rows, remember=None):
-        """Draw one titled table and return its cells, keyed by row key."""
+    def _stat_table(self, parent, heading, rows, remember=None, reveal=()):
+        """Draw one titled table and return its cells, keyed by row key.
+
+        Rows whose key is in ``reveal`` start hidden, and the whole table
+        with them while none has read; _reveal_row shows each as it answers.
+        """
         theme = self._theme
         panel = ctk.CTkFrame(parent, corner_radius=0, fg_color="transparent")
         panel.pack(fill="x", pady=(0, 10))
@@ -427,8 +442,41 @@ class DimmTelemetryWindow(ctk.CTkToplevel):
                 self._hide(record)
             elif label in parents:
                 self._bind_toggle(name, label, records)
+            if key in reveal:
+                record["pending"] = True
+                self._hide(record)
+                self._pending_rows[key] = (record, records, panel)
+        if records and all(record.get("pending") for record in records):
+            panel.pack_forget()
         self._restripe(records)
         return cells
+
+    def _reveal_row(self, key):
+        """Show a row held back until it read, and its table if hidden."""
+        pending = self._pending_rows.pop(key, None)
+        if pending is None:
+            return
+        record, records, panel = pending
+        record["pending"] = False
+        self._show(record)
+        if not panel.winfo_manager():
+            # Back where it was drawn: before the next group still showing.
+            following = self._next_shown_panel(panel)
+            if following is not None:
+                panel.pack(fill="x", pady=(0, 10), before=following)
+            else:
+                panel.pack(fill="x", pady=(0, 10))
+        self._restripe(records)
+
+    def _next_shown_panel(self, panel):
+        """The first packed group panel drawn after ``panel``, or None."""
+        panels = list(self._group_panels.values())
+        try:
+            start = panels.index(panel) + 1
+        except ValueError:
+            return None
+        return next((later for later in panels[start:]
+                     if later.winfo_manager()), None)
 
     @staticmethod
     def _hide(record):
@@ -470,7 +518,7 @@ class DimmTelemetryWindow(ctk.CTkToplevel):
             ]
             self._sensor_cells.update(
                 self._stat_table(self._body, title.upper(), rows,
-                                 remember=title)
+                                 remember=title, reveal=self._reveal_on_read)
             )
 
     def _build_panels(self, entries, modules):
@@ -586,6 +634,9 @@ class DimmTelemetryWindow(ctk.CTkToplevel):
         which is the part that moves.
         """
         for key, text in readings:
+            if key in self._pending_rows and str(text).strip() not in (
+                    "", "\u2014", "N/A"):
+                self._reveal_row(key)
             value, unit, decimals = parse_reading(text)
             statistic = self._stats.setdefault(key, Statistic())
             # A fast-sampled row is already being fed, five times a second.

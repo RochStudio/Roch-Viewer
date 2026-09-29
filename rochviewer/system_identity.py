@@ -229,6 +229,18 @@ def find_display_function(vendor_id, bus=0, depth=0):
     the bus behind it, so the walk follows those rather than sweeping 256
     buses for a device that is on one of them.
     """
+    path = find_display_path(vendor_id, bus, depth)
+    return path[-1] if path else None
+
+
+def find_display_path(vendor_id, bus=0, depth=0):
+    """The bridges from bus 0 down to a display function, then the function.
+
+    A list of ``(bus, device, function)``, the root port first and the card
+    last, or None. The bridges matter for the link: a Radeon sits behind a
+    PCIe switch on its own board, so the card's own link status describes the
+    switch's internal link. The slot's link is the root port's.
+    """
     if depth > 6:
         return None
     for device in range(32):
@@ -239,7 +251,7 @@ def find_display_function(vendor_id, bus=0, depth=0):
             classcode = (pci_config_dword(device, function, 0x08, bus) or 0) >> 16
             if ((classcode >> 8) == PCI_CLASS_DISPLAY
                     and (identity & 0xFFFF) == vendor_id):
-                return bus, device, function
+                return [(bus, device, function)]
             header = (
                 (pci_config_dword(device, function, 0x0C, bus) or 0) >> 16
             ) & 0x7F
@@ -249,10 +261,71 @@ def find_display_function(vendor_id, bus=0, depth=0):
                 (pci_config_dword(device, function, 0x18, bus) or 0) >> 8
             ) & 0xFF
             if secondary and secondary != bus:
-                found = find_display_function(vendor_id, secondary, depth + 1)
+                found = find_display_path(vendor_id, secondary, depth + 1)
                 if found:
-                    return found
+                    return [(bus, device, function)] + found
     return None
+
+
+# The PCI Express capability, and the port type its capabilities register
+# gives a root port.
+PCI_EXPRESS_CAPABILITY = 0x10
+PCIE_ROOT_PORT = 4
+
+
+def pci_capability(location, capability_id):
+    """The offset of one standard capability in a function's list, or None."""
+    bus, device, function = location
+    pointer = (pci_config_dword(device, function, 0x34, bus) or 0) & 0xFC
+    for _hop in range(MAX_CAPABILITY_HOPS):
+        if not pointer:
+            return None
+        header = pci_config_dword(device, function, pointer, bus)
+        if header is None or header == 0xFFFFFFFF:
+            return None
+        if header & 0xFF == capability_id:
+            return pointer
+        pointer = (header >> 8) & 0xFC
+    return None
+
+
+def pcie_link(path):
+    """The slot's PCIe link, as ``{max_gen, max_width, gen, width}``, or None.
+
+    Read at the root port, which is the CPU's end of the slot: its status
+    register gives the link as it runs now, and the link can train no higher
+    than the lower of its capability and that of the device on the other end.
+    Nothing is written. The generation is the speed code, 1 for 2.5 GT/s up
+    to 5 for 32 GT/s.
+    """
+    if not path or len(path) < 2:
+        return None
+    root, below = path[0], path[1]
+    root_cap = pci_capability(root, PCI_EXPRESS_CAPABILITY)
+    below_cap = pci_capability(below, PCI_EXPRESS_CAPABILITY)
+    if root_cap is None or below_cap is None:
+        return None
+    bus, device, function = root
+    port_type = ((pci_config_dword(device, function, root_cap, bus) or 0)
+                 >> 20) & 0xF
+    if port_type != PCIE_ROOT_PORT:
+        return None
+    root_link = pci_config_dword(device, function, root_cap + 0x0C, bus)
+    status = pci_config_dword(device, function, root_cap + 0x10, bus)
+    below_link = pci_config_dword(below[1], below[2], below_cap + 0x0C,
+                                  below[0])
+    if None in (root_link, status, below_link):
+        return None
+    status >>= 16
+    link = {
+        "max_gen": min(root_link & 0xF, below_link & 0xF),
+        "max_width": min((root_link >> 4) & 0x3F, (below_link >> 4) & 0x3F),
+        "gen": status & 0xF,
+        "width": (status >> 4) & 0x3F,
+    }
+    if not all(link.values()):
+        return None
+    return link
 
 
 def resizable_bar_megabytes(location):

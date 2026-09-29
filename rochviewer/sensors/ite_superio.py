@@ -258,6 +258,38 @@ class IteSuperIoReader:
             except OSError:
                 return None
 
+    def read_registers(self, chip_name, registers):
+        """Read several EC registers under one hold of the bus.
+
+        Returns ``{register: value}``, with None for any that failed, or {}
+        when the chip is absent or another tool holds the bus. One mutex
+        acquisition for the lot: a board's whole sensor block per tick would
+        otherwise be a mutex round trip per register, each able to wait out
+        MUTEX_TIMEOUT_MS, and a fan's two tachometer bytes would be read
+        under different holds.
+        """
+        chip = self.chips.get(chip_name)
+        if chip is None:
+            return {}
+        base = chip["ec_base"]
+        values = {}
+        with self._lock, self._mutex as mutex:
+            if not mutex.acquired:
+                self.last_error = "LPC bus busy; sensor read skipped"
+                return {}
+            for register in registers:
+                try:
+                    self._outb(base + EC_INDEX_OFFSET, register)
+                    values[register] = self._inb(base + EC_DATA_OFFSET)
+                except OSError:
+                    values[register] = None
+        return values
+
+    def voltage_step(self, chip_name):
+        """The chip's volts per count, or None when it is absent."""
+        chip = self.chips.get(chip_name)
+        return None if chip is None else chip.get("step")
+
     def read_voltage(self, chip_name, register, divider=1.0):
         """Return a decoded rail in volts, or None."""
         chip = self.chips.get(chip_name)

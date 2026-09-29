@@ -139,15 +139,15 @@ class GraniteRidgeTrainingDecodeTest(unittest.TestCase):
 
         self.assertEqual(decoded["rtt_nom_wr"], "Off")
         self.assertEqual(decoded["rtt_nom_rd"], "Off")
-        self.assertEqual(decoded["rtt_wr"], "RZQ/6 (40 Ω)")
-        self.assertEqual(decoded["rtt_park"], "RZQ/5 (48 Ω)")
-        self.assertEqual(decoded["rtt_park_dqs"], "RZQ/6 (40 Ω)")
-        self.assertEqual(decoded["ca_odt_a"], "480 Ω")
+        self.assertEqual(decoded["rtt_wr"], "40 RZQ/6")
+        self.assertEqual(decoded["rtt_park"], "48 RZQ/5")
+        self.assertEqual(decoded["rtt_park_dqs"], "40 RZQ/6")
+        self.assertEqual(decoded["ca_odt_a"], "480 RZQ/0.5")
         self.assertEqual(decoded["ck_odt_a"], "Off")
         self.assertEqual(decoded["cs_odt_a"], "Off")
-        self.assertEqual(decoded["ca_odt_b"], "60 Ω")
-        self.assertEqual(decoded["ck_odt_b"], "60 Ω")
-        self.assertEqual(decoded["cs_odt_b"], "60 Ω")
+        self.assertEqual(decoded["ca_odt_b"], "60 RZQ/4")
+        self.assertEqual(decoded["ck_odt_b"], "60 RZQ/4")
+        self.assertEqual(decoded["cs_odt_b"], "60 RZQ/4")
         self.assertEqual(decoded["proc_odt_pu"], "40 Ω")
         self.assertEqual(decoded["proc_odt_pd"], "34.3 Ω")
         self.assertEqual(decoded["proc_ca_ds"], "40 Ω")
@@ -164,8 +164,8 @@ class ApobTableParseTest(unittest.TestCase):
     def test_finds_valid_training_record_inside_apob_container(self):
         parsed = parse_apob_table(_apob_table())
         self.assertEqual(parsed.record_offset, 0xD0)
-        self.assertEqual(parsed.values["rtt_wr"], "RZQ/6 (40 Ω)")
-        self.assertEqual(parsed.values["ca_odt_b"], "60 Ω")
+        self.assertEqual(parsed.values["rtt_wr"], "40 RZQ/6")
+        self.assertEqual(parsed.values["ca_odt_b"], "60 RZQ/4")
 
     def test_rejects_ambiguous_multiple_training_records(self):
         table = bytearray(_apob_table())
@@ -181,7 +181,7 @@ class ApobTableParseTest(unittest.TestCase):
         parsed = parse_apob_table(table)
 
         self.assertEqual(parsed.record_offset, 0xD0)
-        self.assertEqual(parsed.values["rtt_wr"], "RZQ/6 (40 Ω)")
+        self.assertEqual(parsed.values["rtt_wr"], "40 RZQ/6")
 
     def test_rejects_same_decoding_when_an_ignored_raw_byte_differs(self):
         second = bytearray(_real_training_block())
@@ -206,12 +206,12 @@ class ApobChannelParseTest(unittest.TestCase):
 
         self.assertEqual(parsed.channel_a.record_offset, 0xD0)
         self.assertEqual(parsed.channel_b.record_offset, 0x100)
-        self.assertEqual(parsed.channel_a.values["rtt_wr"], "RZQ/6 (40 Ω)")
-        self.assertEqual(parsed.channel_b.values["rtt_wr"], "RZQ/4 (60 Ω)")
-        self.assertEqual(parsed.channel_a.values["ca_odt_a"], "480 Ω")
-        self.assertEqual(parsed.channel_b.values["ca_odt_a"], "240 Ω")
-        self.assertEqual(parsed.channel_a.values["ca_odt_b"], "60 Ω")
-        self.assertEqual(parsed.channel_b.values["ca_odt_b"], "48 Ω")
+        self.assertEqual(parsed.channel_a.values["rtt_wr"], "40 RZQ/6")
+        self.assertEqual(parsed.channel_b.values["rtt_wr"], "60 RZQ/4")
+        self.assertEqual(parsed.channel_a.values["ca_odt_a"], "480 RZQ/0.5")
+        self.assertEqual(parsed.channel_b.values["ca_odt_a"], "240 RZQ/1")
+        self.assertEqual(parsed.channel_a.values["ca_odt_b"], "60 RZQ/4")
+        self.assertEqual(parsed.channel_b.values["ca_odt_b"], "48 RZQ/5")
 
     def test_maps_byte_identical_boundary_records_as_two_channels(self):
         parsed = parse_apob_channel_records(_duplicate_real_apob_table())
@@ -298,7 +298,7 @@ class EnumerateGraniteRidgeCandidatesTest(unittest.TestCase):
         self.assertEqual(candidate.record_offset, 0xD0)
         self.assertEqual(len(candidate.raw), 0x30)
         self.assertEqual(candidate.raw, table[0xD0:0x100])
-        self.assertEqual(candidate.values["rtt_wr"], "RZQ/6 (40 Ω)")
+        self.assertEqual(candidate.values["rtt_wr"], "40 RZQ/6")
 
     def test_enumerates_every_plausible_candidate_without_selecting(self):
         table = _ambiguous_apob_table()
@@ -311,7 +311,7 @@ class EnumerateGraniteRidgeCandidatesTest(unittest.TestCase):
         )
         self.assertEqual(
             [candidate.values["rtt_park"] for candidate in diag.candidates],
-            ["RZQ/5 (48 Ω)", "Off", "RZQ/5 (48 Ω)"],
+            ["48 RZQ/5", "Off", "48 RZQ/5"],
         )
         for candidate in diag.candidates:
             self.assertEqual(len(candidate.raw), 0x30)
@@ -355,7 +355,7 @@ class ApobPhysicalReaderTest(unittest.TestCase):
         )
         values = reader.read()
 
-        self.assertEqual(values["rtt_park"], "RZQ/5 (48 Ω)")
+        self.assertEqual(values["rtt_park"], "48 RZQ/5")
         self.assertEqual(reader.table_address, valid_base)
         self.assertEqual(reader.record_address, valid_base + 0xD0)
         self.assertIn(0x1000, calls)
@@ -490,11 +490,11 @@ class ApobPhysicalReaderTest(unittest.TestCase):
 
         values = reader.read()
 
-        self.assertEqual(values["rtt_wr"], "RZQ/6 (40 Ω)")
-        self.assertEqual(reader.channel_values["cha"]["rtt_wr"], "RZQ/6 (40 Ω)")
-        self.assertEqual(reader.channel_values["chb"]["rtt_wr"], "RZQ/4 (60 Ω)")
-        self.assertEqual(reader.channel_values["cha"]["ca_odt_a"], "480 Ω")
-        self.assertEqual(reader.channel_values["chb"]["ca_odt_a"], "240 Ω")
+        self.assertEqual(values["rtt_wr"], "40 RZQ/6")
+        self.assertEqual(reader.channel_values["cha"]["rtt_wr"], "40 RZQ/6")
+        self.assertEqual(reader.channel_values["chb"]["rtt_wr"], "60 RZQ/4")
+        self.assertEqual(reader.channel_values["cha"]["ca_odt_a"], "480 RZQ/0.5")
+        self.assertEqual(reader.channel_values["chb"]["ca_odt_a"], "240 RZQ/1")
         self.assertEqual(reader.channel_record_addresses["cha"], base + 0xD0)
         self.assertEqual(reader.channel_record_addresses["chb"], base + 0x100)
         self.assertEqual(reader.ambiguous_candidates, ())

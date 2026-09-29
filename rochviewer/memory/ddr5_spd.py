@@ -71,6 +71,10 @@ JEP106_VENDORS = {
     # and it is Renesas that sells the SPD5118 hubs under that ID.
     (1, 0xB3): "Renesas (IDT)",
     (11, 0x8C): "Richtek",
+    # Bank 7 code 0x32, "Montage Technology Group" in the same list: the
+    # SPD5118 hub on the X870 bench's G.Skill kit reads 0x8632, and
+    # a reference tool names that hub Montage too.
+    (7, 0x32): "Montage",
 }
 
 # Which SPD hubs answered last, so repeat reads skip the bus scan.

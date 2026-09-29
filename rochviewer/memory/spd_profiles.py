@@ -258,7 +258,13 @@ DDR5_TRFC_FOLLOWERS = (("trfc1", 12), ("trfc2", 14), ("trfcsb", 16))
 # Base-block timings stored as picoseconds and then a least number of clocks,
 # three bytes each (JESD400-5): tRRD_L 5 ns / 8, tCCD_L 5 ns / 8, tFAW
 # 13.333 ns / 32 and tRTP 7.5 ns / 12 on the bench kit.
-DDR5_FLOORED = {"trrd_l": 70, "tccd_l": 73, "tfaw": 82, "trtp": 91}
+#
+# tCCD_L_WR at 76, tCCD_L_WTR (tWTR_L) at 85 and tCCD_S_WTR (tWTR_S) at 88,
+# as i2c-tools' DDR5 decode-dimms reads them. The bench kit gives 20 ns / 32,
+# 10 ns / 16 and 2.5 ns / 4 there, the JEDEC minimums for each. 79 between
+# them is tCCD_L_WR2, which also reads 10 ns / 16 and is not shown.
+DDR5_FLOORED = {"trrd_l": 70, "tccd_l": 73, "tccd_l_wr": 76, "tfaw": 82,
+                "twtr_l": 85, "twtr_s": 88, "trtp": 91}
 
 # The module's makeup (JESD400-5): the first SDRAM's density and dies per
 # package, its I/O width, ranks per sub-channel and the bus. The bench kit
@@ -282,6 +288,15 @@ DDR5_SPD_HUB_TYPE = 196
 DDR5_PMIC_MAKER = 198
 DDR5_PMIC_TYPE = 200
 DDR5_DEVICE_FITTED = 0x80
+
+# The reference raw card: the JEDEC PCB design the module follows. Bits 4:0
+# name the card, A upward, and bits 7:5 its revision; 0x1F in the low bits
+# means the module follows no JEDEC design. The bench kit reads 0x00 -- card
+# A, revision 0 -- which a reference tool reports the same way, and its height byte
+# beside it (230, 0x11: 17 + 15 = 32 mm) agrees too, which is what places
+# this block's offsets.
+DDR5_RAW_CARD = 232
+DDR5_NO_REFERENCE_CARD = 0x1F
 
 # The build date, BCD, as the identity block reads it.
 DDR5_MFG_YEAR = 0x203
@@ -438,6 +453,21 @@ def _ddr5_device_maker(values, maker, device_type):
     return decode_jep106_id(_byte(values, maker), _byte(values, maker + 1))
 
 
+def _ddr5_raw_card(values):
+    """The reference raw card as "A Rev 0", or a dash where there is none.
+
+    Only A to Z are named. The five codes above Z are left as their number
+    rather than guessed at, since nothing on this bench shows what a module
+    that uses one prints for it.
+    """
+    value = _byte(values, DDR5_RAW_CARD)
+    card, revision = value & 0x1F, value >> 5
+    if card == DDR5_NO_REFERENCE_CARD:
+        return "None (not a JEDEC design)"
+    name = chr(ord("A") + card) if card < 26 else "code 0x%02X" % card
+    return "%s Rev %d" % (name, revision)
+
+
 def _ddr5_week(values):
     """The build date as "Week 4, 2025", or None where it is not set."""
     date = decode_manufacture_date(
@@ -483,6 +513,7 @@ def decode_ddr5_base(values):
         "pmic": _ddr5_device_maker(values, DDR5_PMIC_MAKER, DDR5_PMIC_TYPE),
         "spd_hub": _ddr5_device_maker(
             values, DDR5_SPD_HUB_MAKER, DDR5_SPD_HUB_TYPE),
+        "raw_card": _ddr5_raw_card(values),
     })
     week = _ddr5_week(values)
     if week:
@@ -648,6 +679,7 @@ def read_spd_modules(reader_factory=None, refresh=False):
                 "organization": EM_DASH,
                 "pmic": EM_DASH,
                 "spd_hub": EM_DASH,
+                "raw_card": EM_DASH,
                 "profiles": [],
             })
             values = read_spd_bytes(

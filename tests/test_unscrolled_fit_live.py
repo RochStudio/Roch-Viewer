@@ -23,6 +23,9 @@ Skipped wherever a window cannot be opened, which is every headless machine.
 """
 
 import unittest
+from unittest import mock
+
+from rochviewer.ui import main as main_module
 
 
 def build():
@@ -294,6 +297,58 @@ class UnscrolledTabFitTest(unittest.TestCase):
         for name in SUMMARY_STATIC_ROWS:
             with self.subTest(name=name):
                 self.assertNotIn(name, live)
+
+    def test_each_column_names_its_module_once(self):
+        # The heading of the first per-channel section says "All modules" (or
+        # the module picked); the headings under it leave that cell blank.
+        # Counted on screen: each section also builds a channel header row in
+        # its body that this layout never shows.
+        import customtkinter as ctk
+
+        for name in ("Timings", "Training"):
+            if name not in self.app.tabview._name_list:
+                continue
+            self.show_tab_at_its_requested_size(name)
+            for key, column in self.app.grid_frames[name].items():
+                labels = []
+                stack = list(column.winfo_children())
+                while stack:
+                    widget = stack.pop()
+                    stack.extend(widget.winfo_children())
+                    if (isinstance(widget, ctk.CTkLabel)
+                            and widget.winfo_ismapped()
+                            and widget.cget("text") == "All modules"):
+                        labels.append(widget)
+                with self.subTest(tab=name, column=key):
+                    self.assertLessEqual(len(labels), 1)
+
+    def test_opening_a_tab_re_takes_its_snapshot(self):
+        pending = self.app._reread_labels.get("Voltages")
+        if not pending:
+            self.skipTest("no re-readable rows on this platform")
+        timing, label = pending[0]
+        calls = []
+        original = timing["refresh"]
+        timing["refresh"] = lambda: calls.append("refreshed")
+
+        class Inline:
+            """threading.Thread, run on the spot: no mainloop in a test."""
+            def __init__(self, target=None, **_kwargs):
+                self._target = target
+
+            def start(self):
+                self._target()
+
+        try:
+            with mock.patch.object(main_module.threading, "Thread", Inline), \
+                    mock.patch.object(self.app, "_read_compact_value",
+                                      return_value="9.999 V"):
+                self.app._reread_tab("Voltages")
+                self.root.update()
+        finally:
+            timing["refresh"] = original
+        self.assertEqual(calls, ["refreshed"])
+        self.assertEqual(label.cget("text"), "9.999 V")
 
     def test_every_detail_column_stays_inside_its_tab(self):
         overflow = []

@@ -146,7 +146,8 @@ class CounterRowTest(unittest.TestCase):
     def apply(self, label, texts):
         key = ("sensor", "Errors", label)
         cells = {(key, column): mock.Mock() for column in range(1, 5)}
-        window = mock.Mock(_stats={}, _fast_keys=set(), _sensor_cells=cells)
+        window = mock.Mock(_stats={}, _fast_keys=set(), _sensor_cells=cells,
+                           _pending_rows={})
         for text in texts:
             w.DimmTelemetryWindow._apply_sensors(window, [(key, text)])
         return {column: cells[(key, column)].configure.call_args.kwargs["text"]

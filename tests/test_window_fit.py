@@ -69,12 +69,20 @@ class ChromeTest(unittest.TestCase):
     def test_each_main_tab_has_its_own_size(self):
         # The sizes follow the machine's own platform, so the expectation is
         # built the same way rather than written for one bench.
-        from rochviewer.platform_profiles import LGA1700_DDR5
+        from rochviewer.platform_profiles import AM5, LGA1700_DDR5
 
+        self.assertEqual(TimingGUI.AM5_TAB_WINDOW_SIZES, {
+            "Summary": (700, 750),
+            "System Info": (788, 750),
+            "SPD": (700, 816),
+            "Timings": (750, 650),
+            "Training": (700, 650),
+            "Voltages": (700, 650),
+        })
         self.assertEqual(TimingGUI.LGA1700_DDR5_TAB_WINDOW_SIZES, {
             "Summary": (700, 750),
             "System Info": (775, 750),
-            "SPD": (700, 750),
+            "SPD": (700, 816),
             "Timings": (700, 750),
             "Training": (975, 950),
             "IMC": (700, 750),
@@ -84,6 +92,8 @@ class ChromeTest(unittest.TestCase):
         expected = dict(self.BASE_SIZES)
         if main_ui.ACTIVE_PLATFORM == LGA1700_DDR5:
             expected.update(TimingGUI.LGA1700_DDR5_TAB_WINDOW_SIZES)
+        elif main_ui.ACTIVE_PLATFORM == AM5:
+            expected.update(TimingGUI.AM5_TAB_WINDOW_SIZES)
         self.assertEqual(TimingGUI.TAB_WINDOW_SIZES, expected)
         self.assertEqual(
             TimingGUI.window_size_for_tab("unknown"), expected["Summary"]
@@ -92,7 +102,8 @@ class ChromeTest(unittest.TestCase):
     def test_every_size_is_within_the_window_minimum(self):
         # window_size_for_tab raises anything under the minimum back up to it,
         # so a size below it would silently not be the size asked for.
-        for sizes in (self.BASE_SIZES, TimingGUI.LGA1700_DDR5_TAB_WINDOW_SIZES):
+        for sizes in (self.BASE_SIZES, TimingGUI.LGA1700_DDR5_TAB_WINDOW_SIZES,
+                      TimingGUI.AM5_TAB_WINDOW_SIZES):
             for name, (width, height) in sizes.items():
                 with self.subTest(tab=name):
                     self.assertGreaterEqual(width, TimingGUI.MIN_WINDOW_WIDTH)
@@ -339,6 +350,9 @@ class ChromeTest(unittest.TestCase):
         self.assertEqual(layout["Primary"], "Left")
         self.assertEqual(layout["Power down"], "Middle")
         self.assertEqual(layout["Refresh timings"], "Right")
+        # PHY closes the middle column, which leaves the middle and right
+        # columns twenty rows each.
+        self.assertEqual(layout["PHY"], "Middle")
 
         from rochviewer.ui.main import SKEW_SECTION_ORDER
 

@@ -116,20 +116,39 @@ def _ohms(value):
 
 
 def _rtt(code):
+    """An RTT setting worded the way the Intel backends word it: "40 RZQ/6".
+
+    Resistance first, then the divider, and RZQ itself rather than RZQ/1,
+    so the same setting reads the same on either platform.
+    """
     code = int(code)
     if code == 0:
         return "Off"
     if code not in _RTT_OHMS:
         return None
-    return "RZQ/%d (%d Ω)" % (code, _RTT_OHMS[code])
+    if code == 1:
+        return "%d RZQ" % _RTT_OHMS[code]
+    return "%d RZQ/%d" % (_RTT_OHMS[code], code)
+
+
+# The divider behind each group-ODT code: RZQ (240 ohms) over 0.5 to 6.
+_GROUP_ODT_DIVIDERS = {1: "0.5", 2: "1", 3: "2", 4: "3", 5: "4", 6: "5", 7: "6"}
 
 
 def _group_odt(code):
+    """A CA/CK/CS ODT setting worded as the Intel backends word it.
+
+    Resistance, then the divider: "480 RZQ/0.5", "40 RZQ/6". Intel's DDR5
+    tables write the 240-ohm step "240 RZQ/1" here, unlike the RTT tables'
+    bare "240 RZQ", so this follows that.
+    """
     code = int(code)
     if code == 0:
         return "Off"
     value = _GROUP_ODT_OHMS.get(code)
-    return None if value is None else _ohms(value)
+    if value is None:
+        return None
+    return "%d RZQ/%s" % (value, _GROUP_ODT_DIVIDERS[code])
 
 
 def _proc_odt(code):
@@ -250,11 +269,13 @@ def _plausible_granite_ridge_block(block):
     return decode_granite_ridge_training_block(data) is not None
 
 
-def enumerate_granite_ridge_candidates(table):
-    """Return bounded container metadata and every plausible training record.
+def _memory_config_geometry(table):
+    """Walk an APOB table to its memory configuration entry.
 
-    This function accepts table bytes only.  It performs no physical access
-    and deliberately does not choose between candidates.
+    Returns ``(data, table_size, header_size, config_offsets, first,
+    first_size, main, main_size)``, with ``data`` cut to the declared size.
+    Shared by the Zen 5 and Zen 4 parsers: the container is the same on
+    both, only the record inside the entry differs.
     """
     data = bytes(table)
     if len(data) < 0x40 or data[:4] != APOB_SIGNATURE:
@@ -286,6 +307,18 @@ def enumerate_granite_ridge_candidates(table):
     if data[main] != 0x01 or data[main + 4] != 0x19:
         raise ValueError("APOB memory configuration signature is invalid")
     main_size = _u32(data, main + 0x0C)
+    return (data, table_size, header_size, config_offsets, first,
+            first_size, main, main_size)
+
+
+def enumerate_granite_ridge_candidates(table):
+    """Return bounded container metadata and every plausible training record.
+
+    This function accepts table bytes only.  It performs no physical access
+    and deliberately does not choose between candidates.
+    """
+    (data, table_size, header_size, config_offsets, first, first_size,
+     main, main_size) = _memory_config_geometry(table)
     main_end = main + main_size
     scan_start = main + 0x30
     if main_size < 0x30 + GRANITE_RIDGE_BLOCK_SIZE or main_end > table_size:
@@ -315,6 +348,113 @@ def enumerate_granite_ridge_candidates(table):
         scan_end=main_end,
         candidates=tuple(matches),
     )
+
+
+# --- Zen 4 desktop (Ryzen 7000 Raphael), experimental ----------------------
+#
+# From ZenStates-Core's ApobLayout.cs ("Zen4 19h main"/"extended", as of
+# 8979d27), not from a capture on Raphael hardware: nothing decoded here has
+# been confirmed by this project, which is why the reader reports it as
+# unverified. The block is 0x1A bytes and puts the RTTs at 0x02-0x06 --
+# Zen 5 repeats them per P-state at 0x1A-0x1E, and has pull-up/pull-down
+# pairs Zen 4 does not, so Zen 4 carries one processor ODT and one DRAM drive
+# strength instead. Processor CK and CS drive strength exist only in the
+# extended block, found the way ZenStates finds it: by the same five RTT
+# bytes.
+RAPHAEL_BLOCK_SIZE = 0x1A
+_RAPHAEL_EXTENDED_ENTRY = (0x07, 0x03)
+
+
+def decode_raphael_training_block(block, extended=None):
+    """Decode one 0x1A-byte Zen 4 desktop record, or None if any field fails."""
+    data = bytes(block)
+    if len(data) < RAPHAEL_BLOCK_SIZE:
+        return None
+    decoded = {
+        "rtt_nom_rd": _rtt(data[0x02]),
+        "rtt_nom_wr": _rtt(data[0x03]),
+        "rtt_wr": _rtt(data[0x04]),
+        "rtt_park": _rtt(data[0x05]),
+        "rtt_park_dqs": _rtt(data[0x06]),
+        "dram_dq_ds": _dram_drive(data[0x07]),
+        "ck_odt_a": _group_odt(data[0x08]),
+        "cs_odt_a": _group_odt(data[0x09]),
+        "ca_odt_a": _group_odt(data[0x0A]),
+        "ck_odt_b": _group_odt(data[0x0B]),
+        "cs_odt_b": _group_odt(data[0x0C]),
+        "ca_odt_b": _group_odt(data[0x0D]),
+        "proc_odt": _proc_odt(data[0x0E]),
+        "proc_dq_ds": _proc_odt(data[0x0F]),
+        "proc_ca_ds": _direct_drive(data[0x11]),
+    }
+    if any(value is None for value in decoded.values()):
+        return None
+    # The extended pair is extra: an extended block that does not decode
+    # leaves those two rows blank rather than discarding the record.
+    if extended is not None:
+        extra = bytes(extended)
+        if len(extra) >= RAPHAEL_BLOCK_SIZE:
+            ck, cs = _direct_drive(extra[0x12]), _direct_drive(extra[0x13])
+            if ck is not None and cs is not None:
+                decoded["proc_ck_ds"] = ck
+                decoded["proc_cs_ds"] = cs
+    return decoded
+
+
+def _plausible_raphael_block(block):
+    data = bytes(block)
+    if len(data) < RAPHAEL_BLOCK_SIZE or data[0] == 0:
+        return False
+    if data[1] not in (0, 1):
+        return False
+    if any(value > 7 for value in data[0x02:0x07]) or not any(data[0x02:0x07]):
+        return False
+    if any(value > 7 for value in data[0x08:0x0E]):
+        return False
+    return decode_raphael_training_block(data) is not None
+
+
+def parse_raphael_apob_table(table):
+    """Return ``(record_offset, values)`` for the Zen 4 desktop record.
+
+    The record starts at the first non-zero byte past the memory entry's
+    0x30-byte lead, as ZenStates reads it. Where ZenStates would decode
+    whatever sits there, this also requires the block to be plausible, so an
+    APOB laid out some other way yields nothing rather than a wrong setting.
+    """
+    (data, table_size, _header_size, config_offsets, _first, _first_size,
+     main, main_size) = _memory_config_geometry(table)
+    main_end = main + main_size
+    if main_size < 0x30 + RAPHAEL_BLOCK_SIZE or main_end > table_size:
+        raise ValueError("APOB memory configuration block is invalid")
+    start = next((offset for offset in range(main + 0x30, main_end)
+                  if data[offset]), None)
+    if start is None or start + RAPHAEL_BLOCK_SIZE > main_end:
+        raise ValueError("No Ryzen 7000 training record found")
+    block = data[start:start + RAPHAEL_BLOCK_SIZE]
+    if not _plausible_raphael_block(block):
+        raise ValueError("No plausible Ryzen 7000 training record found")
+
+    extended = None
+    rtts = block[0x02:0x07]
+    for offset in config_offsets:
+        if offset + 0x10 > table_size:
+            continue
+        if (data[offset], data[offset + 4]) != _RAPHAEL_EXTENDED_ENTRY:
+            continue
+        size = _u32(data, offset + 0x0C)
+        entry = data[offset:min(offset + size, table_size)]
+        if size < RAPHAEL_BLOCK_SIZE:
+            continue
+        match = entry.find(rtts)
+        if match >= 2 and match - 2 + RAPHAEL_BLOCK_SIZE <= len(entry):
+            extended = entry[match - 2:match - 2 + RAPHAEL_BLOCK_SIZE]
+        break
+
+    values = decode_raphael_training_block(block, extended)
+    if values is None:
+        raise ValueError("No plausible Ryzen 7000 training record found")
+    return ParsedApobTraining(start, values)
 
 
 CCDL_WR_MAX_RATIO = 4
@@ -465,7 +605,16 @@ def parse_apob_channel_records(table):
 class GraniteRidgeApobReader:
     """Locate and decode a bounded APOB table through read-only physical I/O."""
 
-    def __init__(self, read_dword=None, candidate_addresses=DEFAULT_APOB_ADDRESSES):
+    # Which record layout to decode: Ryzen 9000's validated one, or the
+    # experimental Ryzen 7000 one.
+    ZEN5 = "zen5"
+    ZEN4 = "zen4"
+
+    def __init__(self, read_dword=None, candidate_addresses=DEFAULT_APOB_ADDRESSES,
+                 layout=ZEN5):
+        if layout not in (self.ZEN5, self.ZEN4):
+            raise ValueError("unknown APOB layout %r" % (layout,))
+        self.layout = layout
         self._read_dword = read_dword
         self._candidate_addresses = tuple(int(item) for item in candidate_addresses)
         self._port_io = None
@@ -538,16 +687,22 @@ class GraniteRidgeApobReader:
                 header_after = self._read_bytes(read_dword, address, 0x10)
                 if header_after != header:
                     raise ValueError("APOB header changed during the body read")
-                diagnostic = enumerate_granite_ridge_candidates(table)
                 channels = None
-                try:
-                    channels = parse_apob_channel_records(table)
-                    parsed = channels.channel_a
-                except ValueError:
-                    parsed = parse_apob_table(table)
+                if self.layout == self.ZEN4:
+                    # One record, no channel attribution: the two-record
+                    # geometry that attributes channels is Zen 5's.
+                    parsed = parse_raphael_apob_table(table)
+                    block_size = RAPHAEL_BLOCK_SIZE
+                else:
+                    diagnostic = enumerate_granite_ridge_candidates(table)
+                    try:
+                        channels = parse_apob_channel_records(table)
+                        parsed = channels.channel_a
+                    except ValueError:
+                        parsed = parse_apob_table(table)
+                    block_size = GRANITE_RIDGE_BLOCK_SIZE
                 raw_record = table[
-                    parsed.record_offset:
-                    parsed.record_offset + GRANITE_RIDGE_BLOCK_SIZE
+                    parsed.record_offset:parsed.record_offset + block_size
                 ]
                 successes.append((address, table, parsed, raw_record, channels))
             except Exception as exc:

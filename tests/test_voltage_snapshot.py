@@ -53,7 +53,8 @@ class VoltageSnapshotTest(unittest.TestCase):
         runtime = Mock()
         runtime.value.return_value = 3000
         with patch('rochviewer.amd.profile._processor_facts', return_value={'ext_clock': 100}):
-            self.assertEqual(_dram_ratio(runtime), '60.00')
+            # Whole ratios drop their zero decimals.
+            self.assertEqual(_dram_ratio(runtime), '60')
 
 
 class IntelVoltageSnapshotTest(unittest.TestCase):
@@ -222,3 +223,29 @@ class IntelVoltageSnapshotTest(unittest.TestCase):
             )
         self.assertEqual([row['name'] for row in rows], ['Reading mode'])
         modules.assert_not_called()
+
+
+class Am5VoltagesTabTest(unittest.TestCase):
+    def rows(self):
+        from rochviewer.amd.profile import Am5Runtime, build_timings
+        from tests.test_am5_profile import FakeReader, _oracle_regs
+
+        return [row for row in build_timings(
+            Am5Runtime(reader_factory=lambda: FakeReader(_oracle_regs())))
+            if row["Tab"] == "Voltages"]
+
+    def test_the_tab_no_longer_says_it_is_a_startup_snapshot(self):
+        # It is re-taken each time the tab opens, so the note is gone.
+        names = {row["name"] for row in self.rows()}
+        self.assertNotIn("Reading mode", names)
+
+    def test_every_row_can_be_re_taken(self):
+        for row in self.rows():
+            with self.subTest(name=row["name"]):
+                self.assertTrue(callable(row.get("refresh")))
+
+    def test_the_pmic_rails_carry_their_own_names(self):
+        shown = {row["name"]: row.get("display_name") for row in self.rows()}
+        self.assertEqual(shown["CHA VIN"], "CHA VIN (5V)")
+        self.assertEqual(shown["CHA 1.8V output"], "CHA LDO 1.8V")
+        self.assertEqual(shown["CHB 1.0V output"], "CHB LDO 1.0V")

@@ -47,7 +47,12 @@ EMPTY_BLOCK = bytes(0x30)
 
 
 def _decoded_field_names():
-    return set(apob.decode_granite_ridge_training_block(EMPTY_BLOCK))
+    # Both record layouts: Ryzen 9000's, and Ryzen 7000's with its extended
+    # block, which is where proc_odt and dram_dq_ds come from.
+    raphael_block = bytes(apob.RAPHAEL_BLOCK_SIZE)
+    return (set(apob.decode_granite_ridge_training_block(EMPTY_BLOCK))
+            | set(apob.decode_raphael_training_block(raphael_block,
+                                                     raphael_block)))
 
 
 class TrainingFieldsCoverTheBlockTest(unittest.TestCase):

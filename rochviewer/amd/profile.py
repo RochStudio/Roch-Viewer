@@ -34,10 +34,11 @@ from rochviewer.amd.apob import (
     find_ccdl_wr,
 )
 from rochviewer.amd.timings import ALL_OFFSETS, UMC_BASES, decode_channel
-from rochviewer.platform_profiles import is_granite_ridge_cpu
+from rochviewer.platform_profiles import is_granite_ridge_cpu, is_raphael_cpu
 # Hardware-free leaf modules: safe to import at module level, and doing so
 # keeps the import out of the per-read getters that run every refresh.
 from rochviewer.amd.power_metrics import METRICS, METRICS_BY_KEY, format_power
+from rochviewer.hardware.driver_path import DLL_NAME
 from rochviewer.sensors.voltage_rails import (
     PER_MODULE_RAILS,
     RAILS,
@@ -57,7 +58,12 @@ SENSOR_TAB = "Sensors"
 # What training settled on, and what the controller was configured with:
 # neither is a timing, and each fills a page of its own.
 SKEW_TAB = "Training"
-MISC_TAB = "Misc"
+# The two Training sections the controller settings and the raw training
+# codes are drawn under.
+OTHER_SETTINGS_CATEGORY = "Other Settings"
+# Raw APOB bytes, not ohms or volts: the heading says so, so the numbers are
+# not compared as if they were measurements.
+RAW_TRAINING_CATEGORY = "Misc (raw)"
 
 # What the processor was configured to allow, as opposed to what it is
 # drawing. The live halves stay on Telemetry, which keeps a maximum and is
@@ -86,6 +92,9 @@ TRAINING_FIELDS = frozenset(RAW_TRAINING_FIELDS) | frozenset({
     # Summary and Training kept showing it and nothing looked wrong.
     "proc_dq_ds", "proc_dq_ds_pu", "proc_dq_ds_pd",
     "dram_dq_ds_pu", "dram_dq_ds_pd",
+    # Ryzen 7000's single processor ODT and DRAM drive strength, where Ryzen
+    # 9000 has a pull-up and pull-down of each.
+    "proc_odt", "dram_dq_ds",
 })
 
 
@@ -141,13 +150,19 @@ class _LiveSource:
     """
 
     def __init__(self, read, describe, label, empty=None,
-                 ttl=LIVE_CACHE_SECONDS, gate=None):
+                 ttl=LIVE_CACHE_SECONDS, gate=None, retry_gap=0.0):
         self._read = read
         self._describe = describe
         self._label = label
         self._empty = empty
         self._ttl = ttl
         self._gate = gate
+        # How long a failure stands before the next attempt. Zero, the
+        # default, retries on the next ask. A source read by many rows in one
+        # tick wants a gap, or one bad moment is retried by every row and
+        # spends LAZY_READ_ATTEMPTS before the tick is over.
+        self._retry_gap = retry_gap
+        self._failed_at = None
         self.value = empty
         self.stamp = None
         self.failures = 0
@@ -166,6 +181,9 @@ class _LiveSource:
         ever_read = bool(self.value)
         if not ever_read and self.failures >= LAZY_READ_ATTEMPTS:
             return self.value          # gave up; stop paying for the attempt
+        if (self._retry_gap and self._failed_at is not None
+                and time.monotonic() - self._failed_at < self._retry_gap):
+            return self.value          # this tick has already tried
         reason = self._gate() if self._gate else ""
         if reason:
             self.failures += 1
@@ -175,15 +193,18 @@ class _LiveSource:
             result = self._read()
         except Exception as exc:
             self.failures += 1
+            self._failed_at = time.monotonic()
             self.status = "%s read failed: %s" % (self._label, exc)
             return self.value
         if result:
             self.value = result
             self.stamp = time.monotonic()
             self.failures = 0
+            self._failed_at = None
             self.status = self._describe(result)
         else:
             self.failures += 1
+            self._failed_at = time.monotonic()
             self.status = (
                 "%s stale (bus busy)" % self._label if ever_read
                 else "%s unavailable" % self._label
@@ -224,7 +245,9 @@ class Am5Runtime:
         self._sources = {
             "clocks": _LiveSource(
                 self._read_clocks,
-                lambda r: "RSMU PM-table 0x%06X @ 0x%X" % (r.version, r.table_base),
+                lambda r: "RSMU PM-table 0x%06X @ 0x%X%s" % (
+                    r.version, r.table_base,
+                    "" if getattr(r, "verified", True) else " — unverified"),
                 "FCLK/UCLK",
                 ttl=None,          # clocks cannot change; cache for the session
             ),
@@ -263,6 +286,17 @@ class Am5Runtime:
             # come from. One read serves every row on the tick: three rows
             # each unlocking the configuration window would treble the ISA
             # mutex traffic for one set of numbers.
+            # The rest of the board's Super I/O on the boards it is mapped
+            # for: supplies, fans and the x16 slot probe, in one pass.
+            "board_monitor": _LiveSource(
+                lambda: _import_call(
+                    "rochviewer.sensors.am5_board_rails", "read_board_monitor"
+                ),
+                lambda r: "Super I/O READ-ONLY — %d reading(s)" % len(r),
+                "Board monitor", empty={},
+                # Fifteen rows share it: a failed read stands for the tick.
+                retry_gap=LIVE_CACHE_SECONDS,
+            ),
             "board_temp": _LiveSource(
                 lambda: _import_call(
                     "rochviewer.sensors.board_sensors", "read_board_temperatures"
@@ -355,7 +389,9 @@ class Am5Runtime:
             if clocks is None:
                 return EM_DASH
             value = getattr(clocks, name, None)
-            return EM_DASH if value is None else value
+            # Whole MHz, as MCLK reads: validate_clocks has already rounded
+            # them, so the float's ".0" was all "2133.0 MHz" added.
+            return EM_DASH if value is None else int(round(value))
         if name in TRAINING_FIELDS:
             self._load_training()
             if self._training is None:
@@ -452,6 +488,10 @@ class Am5Runtime:
         """The board's own thermistors, off the same Super I/O."""
         return self._sources["board_temp"].get()
 
+    def board_monitor(self):
+        """The board's supplies, fans and slot probe, where it is mapped."""
+        return self._sources["board_monitor"].get() or {}
+
     def power(self):
         """PPT/TDC/EDC from the approved PM-table version only."""
         return self._sources["power"].get()
@@ -517,12 +557,21 @@ class Am5Runtime:
             return
         self._training_attempted = True
         try:
-            if not is_granite_ridge_cpu(self.cpu_name()):
+            name = self.cpu_name()
+            if is_granite_ridge_cpu(name):
+                reader = self._training_reader_factory()
+                unverified = ""
+            elif is_raphael_cpu(name):
+                # Experimental: ZenStates-Core's Zen 4 layout, never checked
+                # against a Ryzen 7000 here. Said so in the status line.
+                reader = self._training_reader_factory(
+                    layout=GraniteRidgeApobReader.ZEN4)
+                unverified = " (unverified)"
+            else:
                 self.training_status = (
-                    "APOB training data disabled — Granite Ridge Ryzen 9000 required"
+                    "APOB training data disabled — desktop Ryzen 9000 or 7000 required"
                 )
                 return
-            reader = self._training_reader_factory()
             values = reader.read()
             # Kept whether or not the training record parsed: tCCD_L_WR is
             # found by scanning the table itself, not the decoded record.
@@ -546,9 +595,13 @@ class Am5Runtime:
                         )
                     )
                 else:
+                    # The marker rides on the table address, ahead of the
+                    # first comma, because that is the part the Status row
+                    # keeps.
                     self.training_status = (
-                        "AMD APOB READ-ONLY — table 0x%08X, record 0x%08X"
-                        % (reader.table_address, reader.record_address)
+                        "AMD APOB READ-ONLY — table 0x%08X%s, record 0x%08X"
+                        % (reader.table_address, unverified,
+                           reader.record_address)
                     )
                 return
             self.training_status = getattr(reader, "last_error", "") or (
@@ -671,40 +724,83 @@ def _power_status(runtime):
     return runtime.power_status
 
 
-def _enabled(runtime, name):
-    def getter():
-        value = runtime.value(name)
-        if value == EM_DASH:
-            return value
-        return "Enabled" if value else "Disabled"
-
-    return getter
-
-
-def _misc_channels(runtime, name, training=False):
-    def getter():
-        read = (runtime.channel_training_value if training
-                else runtime.channel_umc_value)
-        a = read(name, "cha")
-        b = read(name, "chb")
-        if a == b:
-            return a
-        return f"A: {a} | B: {b}"
-    return getter
-
-
 def _dram_frequency(runtime):
     value = runtime.value("mclk_mhz")
     return value if value == EM_DASH else "%d MT/s" % (int(value) * 2)
 
 
-def _nitro(runtime):
-    rx = runtime.value("nitro_rx")
-    tx = runtime.value("nitro_tx")
-    ctrl = runtime.value("nitro_ctrl")
-    if EM_DASH in (rx, tx, ctrl):
+def _channel_setting_row(label, read, category, column, formatter=None,
+                         **extra):
+    """A Training row read once per channel: ChA from UMC0, ChB from UMC1.
+
+    ``read(channel)`` returns that channel's raw value or the em dash;
+    ``formatter`` words a raw value. The shared value is one reading when
+    both channels agree and both, labelled, when they do not. Where only one
+    channel answers -- a single-DIMM system has no UMC1 -- it is that
+    reading: the ChB value itself stays a dash, so nothing is filled in for
+    the channel that was not read.
+    """
+    shown = formatter or (lambda value: value)
+
+    def side(channel):
+        def getter():
+            value = read(channel)
+            return value if value == EM_DASH else shown(value)
+        return getter
+
+    def both():
+        a, b = side("cha")(), side("chb")()
+        if a == b or b == EM_DASH:
+            return a
+        if a == EM_DASH:
+            return b
+        return f"A: {a} | B: {b}"
+
+    row = _row(label, both, category, tab=SKEW_TAB, column=column, **extra)
+    row.update({"value_a": side("cha"), "value_b": side("chb"),
+                "name_a": "ChA", "name_b": "ChB",
+                # Tells the window to show the one channel that answered on
+                # its own rather than pair it with a dash; see
+                # TimingGUI._read_compact_value.
+                "lone_channel_alone": True})
+    return row
+
+
+_AMBLE = re.compile(r"(?P<length>[\d.]+ tCK) - (?P<pattern>[01]+) Pattern")
+
+
+def _brief_amble(value, shared_lengths=()):
+    """A preamble or postamble as its length: "4 tCK", not the pattern too.
+
+    The pattern is kept only where two settings share a length, which on
+    DDR5 is the read preamble's two 2 tCK encodings, "2 tCK (0010)" and
+    "2 tCK (1110)" -- the same rule the Intel Training tab words them by.
+    A reserved code, or anything not shaped like a length and a pattern,
+    reads as decoded.
+    """
+    match = _AMBLE.fullmatch(str(value))
+    if match is None:
+        return value
+    length = match.group("length")
+    if length in shared_lengths:
+        return "%s (%s)" % (length, match.group("pattern"))
+    return length
+
+
+def _brief_read_preamble(value):
+    return _brief_amble(value, shared_lengths=("2 tCK",))
+
+
+def _enabled_text(value):
+    return "Enabled" if value else "Disabled"
+
+
+def _nitro_channel(runtime, channel):
+    parts = [runtime.channel_umc_value(key, channel)
+             for key in ("nitro_rx", "nitro_tx", "nitro_ctrl")]
+    if EM_DASH in parts:
         return EM_DASH
-    return "%s/%s/%s" % (rx, tx, ctrl)
+    return "%s/%s/%s" % tuple(parts)
 
 
 def _status(runtime):
@@ -783,15 +879,23 @@ def _read_system_info_from(connection, field):
         if field == "manufacturer":
             maker = (_processor_facts().get("manufacturer") or "").strip()
             return maker or EM_DASH
+        if field == "l3_cache":
+            return _cache_text(_processor_facts().get("l3_kb"))
         if field == "cores":
             facts = _processor_facts()
             cores, threads = facts.get("cores"), facts.get("threads")
             if cores is None or threads is None:
                 return EM_DASH
-            return "%sC / %sT" % (cores, threads)
+            # Bare numbers, "8/16": the row's name already says which is
+            # cores and which threads.
+            return "%s/%s" % (cores, threads)
         if field == "board":
             boards = connection.Win32_BaseBoard()
             return boards[0].Product.strip() if boards else EM_DASH
+        if field == "board_revision":
+            boards = connection.Win32_BaseBoard()
+            version = (boards[0].Version or "").strip() if boards else ""
+            return _board_revision_text(version)
         if field == "board_vendor":
             # Reported verbatim; the full legal name is what the board
             # actually publishes and is not abbreviated here.
@@ -1026,11 +1130,41 @@ def _processor_facts():
             "cores": getattr(first, "NumberOfCores", None),
             "threads": getattr(first, "NumberOfLogicalProcessors", None),
             "socket": getattr(first, "SocketDesignation", None),
+            # Kilobytes, as Win32_Processor reports it: 98304 on a 9850X3D.
+            "l3_kb": getattr(first, "L3CacheSize", None),
         }
     except Exception:
         return {}
     _PROCESSOR_FACTS.append(facts)
     return facts
+
+
+# Board-revision strings firmware leaves unfilled. The X870 bench's Gigabyte
+# board reports "x.x"; the other two are the common AMI and OEM defaults.
+BOARD_REVISION_PLACEHOLDERS = frozenset({
+    "x.x", "default string", "to be filled by o.e.m.", "none", "n/a",
+})
+
+
+def _board_revision_text(version):
+    """The board revision, or the em dash where the firmware left none."""
+    version = str(version or "").strip()
+    if not version or version.lower() in BOARD_REVISION_PLACEHOLDERS:
+        return EM_DASH
+    return version
+
+
+def _cache_text(kilobytes):
+    """A cache size from Win32_Processor's kilobytes: "96 MB", "512 KB"."""
+    try:
+        kilobytes = int(kilobytes)
+    except (TypeError, ValueError):
+        return EM_DASH
+    if kilobytes <= 0:
+        return EM_DASH
+    if kilobytes % 1024 == 0:
+        return "%d MB" % (kilobytes // 1024)
+    return "%d KB" % kilobytes
 
 
 def _cpu_silicon():
@@ -1137,6 +1271,22 @@ def _identity(reader):
     return getter()
 
 
+def _os_part(index):
+    """The OS edition (0) or its release and build (1).
+
+    Split after the architecture, the way the Intel tab splits the same
+    reading into OS and OS Version. Whole, "Microsoft Windows 11 Professional
+    (x64) 23H2 Build 22631.6060" was 427px on its own, too wide for half of
+    System Info.
+    """
+    text = _identity("os_name")
+    match = re.search(r"\((?:x64|x86)\)\s+", text, re.IGNORECASE)
+    if match is None:
+        return text if index == 0 else EM_DASH
+    parts = (text[:match.end()].strip(), text[match.end():].strip())
+    return parts[index] or EM_DASH
+
+
 def _row(name, value, category, tab="Timings", column="Left", **extra):
     """Build one display row.
 
@@ -1191,7 +1341,9 @@ def _dram_ratio(runtime):
         base = float(_processor_facts().get("ext_clock") or 0)
         if not base:
             return EM_DASH
-        return "%.2f" % (2.0 * float(mclk) / base)
+        # Two decimals at most, and none that are zero: 64, not 64.00,
+        # while an off-100 base clock still shows its 59.7.
+        return ("%.2f" % (2.0 * float(mclk) / base)).rstrip("0").rstrip(".")
     except Exception:
         return EM_DASH
 
@@ -1247,7 +1399,7 @@ def _format_refi_ns(runtime, channel=None):
             megahertz = float(mclk)
             if megahertz <= 0:
                 return EM_DASH
-            return "%.0f (ns)" % (float(cycles) / megahertz * 1000.0)
+            return "%.0f ns" % (float(cycles) / megahertz * 1000.0)
         except (TypeError, ValueError):
             return EM_DASH
 
@@ -1402,7 +1554,15 @@ def _voltage_rows(runtime):
 
 
 def _voltage_snapshot_rows(runtime):
-    """One native voltage snapshot per app session, independent of telemetry."""
+    """One voltage snapshot, re-taken each time the Voltages tab is opened.
+
+    Every row reads the same cached snapshot, so a tab's worth of rails is one
+    pass over the SMU and the PMICs rather than one per row. Each row carries
+    the cache's ``refresh``: the window calls it when the tab is shown, then
+    re-reads the rows, so what the tab shows is as old as the last time it was
+    opened rather than as old as the session. Telemetry is still where a rail
+    is watched.
+    """
     from functools import lru_cache
 
     @lru_cache(maxsize=1)
@@ -1427,35 +1587,72 @@ def _voltage_snapshot_rows(runtime):
                                          if isinstance(raw, (int, float)) else EM_DASH)
         return values
 
-    rows = [_row("Reading mode", "Snapshot at startup — reopen app to update",
-                 "Snapshot", "Voltages")]
+    # The "Reading mode" row that used to head the tab said the snapshot was
+    # taken at startup and needed a restart to update. It is re-taken on
+    # every visit now, so there is nothing left for it to explain.
+    rows = []
     for rail in RAILS:
         if rail.key not in PER_MODULE_RAILS:
             rows.append(_row(rail.label + " snapshot",
                              lambda key=rail.key: snapshot().get(key, EM_DASH),
-                             "CPU and motherboard", "Voltages", display_name=rail.label))
+                             "CPU and motherboard", "Voltages",
+                             display_name=rail.label,
+                             refresh=snapshot.cache_clear))
+    # The PMIC's own names for what it reports: VIN_Bulk is the module's 5 V
+    # input, and the two lower rails are its LDO outputs. The row names stay
+    # as they were, which is what the Summary and the tests find them by.
     for channel, label in (("cha", "CHA"), ("chb", "CHB")):
-        for key, name in (("vdd", "VDD"), ("vddq", "VDDQ"), ("vpp", "VPP"),
-                          ("vin_bulk", "VIN"), ("vout_1v8", "1.8V output"),
-                          ("vout_1v0", "1.0V output")):
+        for key, name, shown in (
+                ("vdd", "VDD", "VDD"), ("vddq", "VDDQ", "VDDQ"),
+                ("vpp", "VPP", "VPP"), ("vin_bulk", "VIN", "VIN (5V)"),
+                ("vout_1v8", "1.8V output", "LDO 1.8V"),
+                ("vout_1v0", "1.0V output", "LDO 1.0V")):
             rows.append(_row(label + " " + name,
                              lambda k=channel + key: snapshot().get(k, EM_DASH),
-                             label + " memory", "Voltages", column="Right"))
+                             label + " memory", "Voltages", column="Right",
+                             display_name=label + " " + shown,
+                             refresh=snapshot.cache_clear))
     return rows
+
+
+def _status_headline(text):
+    """A failure's opening sentence, without the explanation that follows.
+
+    The missing-driver message runs on into a list of the directories it
+    searched, one per line. Passed through whole it made the Status row on
+    System Info 1500px wide and five lines tall; the driver notice above the
+    tabs already carries the explanation. Split on ". " rather than "." for
+    the reason the notice gives: the first sentence ends in a filename.
+    """
+    lines = str(text or "").strip().splitlines()
+    if not lines:
+        return ""
+    return lines[0].split(". ")[0].strip().rstrip(".")
+
+
+def _driver_problem(*statuses):
+    """Why no transport could read, when the driver is that reason."""
+    for status in statuses:
+        status = str(status or "")
+        if "%s not found" % DLL_NAME in status:
+            return "%s not found" % DLL_NAME
+        if "but could not load it" in status:
+            return "%s could not be loaded" % DLL_NAME
+    return None
 
 
 def _status_tail(text, prefix, ok="ok"):
     """Shorten one transport's status to what it adds beyond succeeding.
 
     A message that does not start with the success prefix is a failure, and
-    those are passed through whole: the line should grow exactly when it has
-    something to say.
+    its headline is kept: the line should grow exactly when it has something
+    to say.
     """
     text = str(text or "").strip()
     if not text:
         return EM_DASH
     if not text.startswith(prefix):
-        return text
+        return _status_headline(text)
     _label, separator, tail = text.partition("—")
     tail = tail.strip()
     return tail if separator and tail else ok
@@ -1469,7 +1666,7 @@ def _pm_table_segment(status):
     """
     status = str(status or "").strip()
     if not status.startswith("RSMU"):
-        return status or EM_DASH
+        return _status_headline(status) or EM_DASH
     head, separator, tail = status.partition("—")
     version = re.search(r"0x[0-9A-Fa-f]+", head)
     detail = tail.strip().replace("rail(s)", "rails") if separator else ""
@@ -1485,20 +1682,51 @@ def _status_summary(runtime):
     once, and the rows themselves stay in the dump for when it is not fine.
     """
     def getter():
-        parts = [
+        # Without the driver every transport fails the same way, and four
+        # copies of that say less than one.
+        problem = _driver_problem(_status(runtime), _training_status(runtime))
+        if problem:
+            return "No register reads: %s" % problem
+        return " · ".join((
             "SMN %s" % _status_tail(_status(runtime), "AMD SMN/MCFG READ-ONLY"),
             # The APOB record addresses stay in the dump; the table address is
             # the part worth carrying here.
             "APOB %s" % _status_tail(
                 _training_status(runtime), "AMD APOB READ-ONLY"
             ).split(",")[0],
-            _pm_table_segment(_voltage_status(runtime)),
-        ]
+        ))
+
+    return getter
+
+
+def _smu_status_summary(runtime):
+    """The SMU's half of the status: the PM table, then the power read.
+
+    A row of its own rather than more of the Status line. All four transports
+    on one line came to 546px on a working machine, wider than half of System
+    Info; a second line in the same row made every row on the tab as tall as
+    it.
+    """
+    def getter():
+        if _driver_problem(_status(runtime), _training_status(runtime)):
+            return EM_DASH
+        if is_raphael_cpu(runtime.cpu_name()):
+            # Ryzen 7000 reads its clocks from the PM table and nothing else:
+            # no voltage or power offset is known for it, so those stay off
+            # rather than being shown as failures.
+            runtime.clocks()
+            status = str(runtime.clock_status or "")
+            version = re.search(r"0x[0-9A-Fa-f]+", status)
+            if status.startswith("RSMU") and version:
+                return "PM-table %s clocks (unverified)" % version.group(0)
+            return _status_headline(status) or EM_DASH
         power = _status_tail(_power_status(runtime), "RSMU", "ok")
-        # The power read is its own sequence and can fail on its own, so it is
-        # named even when there is nothing to report but success.
-        parts.append("power %s" % ("ok" if power == "READ-ONLY" else power))
-        return " · ".join(parts)
+        return " · ".join((
+            _pm_table_segment(_voltage_status(runtime)),
+            # The power read is its own sequence and can fail on its own, so
+            # it is named even when there is nothing to report but success.
+            "power %s" % ("ok" if power == "READ-ONLY" else power),
+        ))
 
     return getter
 
@@ -1639,6 +1867,9 @@ BOARD_TEMPERATURES = (
     ("System Temp", "system"),
 )
 
+# Telemetry's fan section, which the Intel boards already fill.
+FAN_CATEGORY = "Fans"
+
 
 def _board_temperature(runtime, key):
     def getter():
@@ -1660,6 +1891,53 @@ def _board_temperature_rows(runtime):
              THERMAL_POWER_CATEGORY, SENSOR_TAB, "Right", live=True)
         for label, key in BOARD_TEMPERATURES
     ]
+
+
+def _board_monitor_temperature_rows(runtime):
+    """PCH and the x16 slot, on the boards the monitor is mapped for.
+
+    Not in BOARD_TEMPERATURES: that map is shared by every board chip, and on
+    the Nuvoton benches the PCH channel was never confirmed. These two come
+    from the board-gated monitor, where each was read beside a reference tool.
+    """
+    return [
+        _row(label, _board_reading(runtime, key, "%.1f °C"),
+             THERMAL_POWER_CATEGORY, SENSOR_TAB, "Right", live=True,
+             hide_when_blank=True)
+        for label, key in (("PCH Temp", "pch"), ("PCIEX16 Temp", "pciex16"))
+    ]
+
+
+def _board_reading(runtime, key, form):
+    """One board-monitor reading, formatted, or the em dash."""
+    def getter():
+        value = runtime.board_monitor().get(key)
+        return EM_DASH if value is None else form % value
+
+    return getter
+
+
+def _board_monitor_rows(runtime):
+    """The board's supplies after the CPU's rails, then its fans.
+
+    Hidden where they read nothing: on any board the monitor is not mapped
+    for, and for a fan header with nothing on it.
+    """
+    from rochviewer.sensors.am5_board_rails import BOARD_FANS, BOARD_VOLTAGES
+
+    rows = [
+        _row(label, _board_reading(runtime, key, "%.3f V"),
+             VOLTAGE_CATEGORY, SENSOR_TAB, "Left", live=True,
+             hide_when_blank=True)
+        for key, label, _register, _divider, _band in BOARD_VOLTAGES
+    ]
+    rows.extend(
+        _row(label, _board_reading(runtime, key, "%d RPM"),
+             FAN_CATEGORY, SENSOR_TAB, "Left", live=True,
+             hide_when_blank=True)
+        for key, label, _low, _high in BOARD_FANS
+    )
+    return rows
 
 
 _GPU_SENSOR_CACHE = []
@@ -1791,39 +2069,53 @@ def _power_rows(runtime):
     return rows
 
 
-# The System Info tab, in sections, the way the Intel tab reads. One column,
-# the full width: the board row alone can want more than half the window, so
-# a two-column split clips it.
+# The System Info tab, in sections, laid out the way the Intel tab is: machine
+# identity on the left, configured clocks and graphics on the right. It was
+# one column once, for fear the board row would clip at half the window, and
+# that column came to 930px on a tab 633px tall -- the bottom third cut off
+# with no scrollbar to reach it. Status closes the left column, which is the
+# shorter one.
 #
 # A row that is not named here would have no section at all, which is why the
 # lookup below fails loudly rather than defaulting to a "General" heading --
 # a row quietly filed under a leftover heading is one nobody notices.
 SYSTEM_INFO_SECTIONS = (
-    ("System", ("OS", "Platform")),
-    ("Processor", ("CPU", "CPU Package", "CPU Signature", "Code Name",
-                   "Vendor", "Technology",
-                   "Cores / Threads", "Microcode")),
-    ("Motherboard", ("Manufacturer", "Model", "BIOS", "BIOS Date",
-                     "Chipset", "Southbridge", "LPCIO", "AGESA")),
-    ("Clocks", ("BCLK", "MCLK", "FCLK", "UCLK", "DRAM Frequency",
-                "UCLK:MCLK", "DRAM Ratio")),
-    ("Status", ("Status", "Read Status", "Training Status", "Voltage Status",
-                "Power Status")),
-    ("Graphics", ("GPU", "Board Manufacturer", "GPU Code Name",
-                  "GPU Revision", "GPU Technology", "Cores", "ROPs / TMUs",
-                  "Memory Size", "Memory Type", "Memory Vendor", "Bus Width",
-                  "Resizable BAR", "Driver Version", "Driver Date")),
+    ("System", "Left", ("OS", "OS Version", "Platform")),
+    ("Processor", "Left", ("CPU", "CPU Package", "CPU Signature",
+                           "Code Name", "Vendor", "Technology",
+                           "Cores / Threads", "L3 Cache", "Microcode")),
+    ("Motherboard", "Left", ("Manufacturer", "Model", "Board Revision",
+                             "BIOS", "BIOS Date", "Chipset", "Southbridge",
+                             "LPCIO", "AGESA")),
+    ("Status", "Left", ("Status", "SMU Status", "Read Status",
+                        "Training Status", "Voltage Status", "Power Status")),
+    ("Clocks", "Right", ("BCLK", "MCLK", "FCLK", "UCLK", "DRAM Frequency",
+                         "UCLK:MCLK", "DRAM Ratio")),
+    (LIMITS_CATEGORY, "Right", ("Temp Limit", "PPT Limit", "TDC Limit",
+                                "EDC Limit", "Scalar")),
+    ("Graphics", "Right", ("GPU", "Board Manufacturer", "GPU Code Name",
+                           "GPU Revision", "GPU Technology", "Cores",
+                           "ROPs / TMUs", "Memory Size", "Memory Type",
+                           "Memory Vendor", "Bus Width", "Resizable BAR",
+                           "PCIe Link", "VBIOS",
+                           "Driver Version", "Driver Date")),
 )
 
 SECTION_OF = {
-    name: title for title, names in SYSTEM_INFO_SECTIONS for name in names
+    name: title for title, _column, names in SYSTEM_INFO_SECTIONS
+    for name in names
+}
+COLUMN_OF = {
+    name: column for _title, column, names in SYSTEM_INFO_SECTIONS
+    for name in names
 }
 
 
 def build_timings(runtime):
     """Build the AM5-only UI table; all hardware values remain lazy."""
     def info(name, value, **extra):
-        return _row(name, value, SECTION_OF[name], "System Info", **extra)
+        return _row(name, value, SECTION_OF[name], "System Info",
+                    COLUMN_OF[name], **extra)
 
     # Sectioned the way the Intel tab is: what the machine is, the board, the
     # clock chain, what is installed in it, how the controller is set, the
@@ -1832,7 +2124,8 @@ def build_timings(runtime):
     # headings with the same name.
     rows = [
         # System
-        info("OS", lambda: _identity("os_name")),
+        info("OS", lambda: _os_part(0)),
+        info("OS Version", lambda: _os_part(1)),
         info("Platform", "AM5"),
         # Processor
         info("CPU", _system_info_value("cpu")),
@@ -1845,10 +2138,15 @@ def build_timings(runtime):
         info("Vendor", _system_info_value("manufacturer")),
         info("Technology", _silicon_value(1)),
         info("Cores / Threads", _system_info_value("cores")),
+        # The X3D parts' headline figure: 96 MB on a 9850X3D.
+        info("L3 Cache", _system_info_value("l3_cache")),
         info("Microcode", lambda: _identity("microcode")),
         # Motherboard
         info("Manufacturer", _system_info_value("board_vendor")),
         info("Model", _system_info_value("board")),
+        # Blank where the firmware left a placeholder, as the X870 bench's
+        # does ("x.x").
+        info("Board Revision", _system_info_value("board_revision")),
         info("BIOS", _system_info_value("bios")),
         # Beside the firmware version it dates.
         info("BIOS Date", _system_info_value("bios_date")),
@@ -1856,6 +2154,20 @@ def build_timings(runtime):
         info("Southbridge", _southbridge),
         info("LPCIO", lambda: _identity("lpcio_name")),
         info("AGESA", _format(runtime, "agesa")),
+        # Status. Two rows covering every transport: the memory controller's
+        # reads, then the SMU's. The four rows they replace are kept below,
+        # marked diagnostic: the tab shows the summary, the dump keeps the
+        # full text including the APOB record addresses.
+        info("Status", _status_summary(runtime), live=True),
+        info("SMU Status", _smu_status_summary(runtime), live=True,
+             display_name="SMU"),
+        info("Read Status", lambda: _status(runtime), diagnostic=True),
+        info("Training Status", lambda: _training_status(runtime),
+             diagnostic=True),
+        info("Voltage Status", lambda: _voltage_status(runtime),
+             live=True, diagnostic=True),
+        info("Power Status", lambda: _power_status(runtime),
+             live=True, diagnostic=True),
         # Clocks
         info("BCLK", _system_info_value("bclk")),
         info("MCLK", _format(runtime, "mclk_mhz", " MHz")),
@@ -1871,17 +2183,20 @@ def build_timings(runtime):
              "FullWidth"),
         _row("Memory Capacity", _system_info_value("memory"), "System",
              "SPD", "FullWidth"),
-        # Status. One line covering every transport. The four it replaces are
-        # kept below, marked diagnostic: the tab shows the summary, the dump
-        # keeps the full text including the APOB record addresses.
-        info("Status", _status_summary(runtime), live=True),
-        info("Read Status", lambda: _status(runtime), diagnostic=True),
-        info("Training Status", lambda: _training_status(runtime),
-             diagnostic=True),
-        info("Voltage Status", lambda: _voltage_status(runtime),
-             live=True, diagnostic=True),
-        info("Power Status", lambda: _power_status(runtime),
-             live=True, diagnostic=True),
+        # What the processor was configured to allow, as opposed to what it
+        # is drawing. The live halves stay on Telemetry, which keeps a
+        # maximum and is where a limit is worth watching a load against;
+        # these are the settings. They were the last thing on the Misc tab
+        # once its per-channel rows moved to Training, and five rows did not
+        # earn a tab, so they sit under the clocks here. Live, because a
+        # tuning tool can move them without a reboot.
+        info("Temp Limit", _thermal_limit_only(runtime), live=True),
+        info("PPT Limit", _power_limit(runtime, "ppt"), live=True),
+        info("TDC Limit", _power_limit(runtime, "tdc"), live=True),
+        info("EDC Limit", _power_limit(runtime, "edc"), live=True),
+        # Scalar keeps its own name: it is one value either way, so there is
+        # no "limit" half to distinguish it from.
+        info("Scalar", _format_power(runtime, "scalar"), live=True),
         # Graphics is the final System Info block. The card's own name comes
         # from the display class key rather than WMI: it is the string the
         # driver registered, which is what GPU-Z and CPU-Z both show.
@@ -1902,63 +2217,67 @@ def build_timings(runtime):
         # size the BAR is programmed to. Nothing is written: the usual way to
         # size a BAR is to write all ones and read back the mask.
         info("Resizable BAR", _gpu_value("resizable_bar")),
+        # The slot's link at the root port, not the card's own, which on a
+        # Radeon is the link inside the card's PCIe switch.
+        info("PCIe Link", _gpu_value("pcie_link")),
+        info("VBIOS", _gpu_value("vbios")),
         info("Driver Version", _gpu_value("driver_version")),
         info("Driver Date", _gpu_value("driver_date")),
     ]
 
-    def misc(name, value, **extra):
-        category = ("Preamble / postamble" if "Preamble" in name or "Postamble" in name
-                    else "Refresh" if name in ("Refresh Mode", "FGR")
-                    else "Memory controller")
-        return _row(name, value, category, MISC_TAB, **extra)
+    def umc(key):
+        return lambda channel: runtime.channel_umc_value(key, channel)
 
-    # The controller settings, on their own page. They are neither identity
-    # nor timing: what the controller was configured to do, which is a third
-    # kind of thing and was the one section on System Info that did not
-    # describe a part of the machine.
-    rows.extend([
-        misc("Refresh Mode", _format(runtime, "refresh_mode")),
-        # The level behind the mode above. It sits here rather than among the
-        # timings because it is a controller setting, and beside the row it
-        # explains rather than in ZenTimings' position, which has no Misc tab
-        # to put it on.
-        misc("FGR", _format(runtime, "fgr")),
-        misc("Read Preamble", _misc_channels(runtime, "read_preamble")),
-        misc("Write Preamble", _misc_channels(runtime, "write_preamble")),
-        misc("Read Postamble", _misc_channels(runtime, "read_postamble")),
-        misc("Write Postamble", _misc_channels(runtime, "write_postamble")),
-        misc("ECC", _misc_channels(runtime, "ecc")),
-        misc("Gear Down Mode", _enabled(runtime, "gdm")),
-        misc("Power Down Mode", _enabled(runtime, "powerdown")),
-        misc("BGS", _enabled(runtime, "bgs")),
-        misc("BGS Alt", _enabled(runtime, "bgs_alt")),
-        misc("Nitro Rx/Tx/Ctrl", lambda: _nitro(runtime), display_name="Nitro"),
-    ])
+    def setting(label, read, formatter=None, **extra):
+        return _channel_setting_row(label, read, OTHER_SETTINGS_CATEGORY,
+                                    "Left", formatter, **extra)
 
-    rows.extend(_row(name, _misc_channels(runtime, name, training=True),
-                     "Raw training codes", MISC_TAB)
-                for name in RAW_TRAINING_FIELDS)
-
-    # What the processor was configured to allow, as opposed to what it is
-    # drawing. The live halves stay on Telemetry, which keeps a maximum and
-    # is where a limit is worth watching a load against; these are the
-    # settings themselves and do not move.
-    def limit(name, value):
-        # Its own section rather than filed under IMC: a power ceiling
-        # is not a setting the memory controller was given, and the two read
-        # as different kinds of thing on the same page.
-        return _row(name, value, LIMITS_CATEGORY, MISC_TAB, column="Left",
-                    live=True)
-
-    rows.extend([
-        limit("Temp Limit", _thermal_limit_only(runtime)),
-        limit("PPT Limit", _power_limit(runtime, "ppt")),
-        limit("TDC Limit", _power_limit(runtime, "tdc")),
-        limit("EDC Limit", _power_limit(runtime, "edc")),
-        # Scalar keeps its own name: it is one value either way, so there is
-        # no "limit" half to distinguish it from.
-        limit("Scalar", _format_power(runtime, "scalar")),
-    ])
+    # The controller settings. They are neither identity nor timing: what
+    # the controller was configured to do. Each channel's controller holds
+    # its own copy -- one BIOS setting normally writes both the same -- so
+    # they are read per channel, and Training is the page that shows a
+    # reading per channel. They had been on a Misc tab of their own, and
+    # before that under a Misc tab AM5 never drew, reaching only the Advanced
+    # window. Added after the drive strengths below, so Other Settings sits
+    # under ODT and the raw codes under Drive Strength. The section names are
+    # the ones ZenTimings users know.
+    channel_settings = [
+        setting("Refresh Mode", umc("refresh_mode")),
+        # The raw fine-granularity field behind the mode above. Refresh Mode
+        # already reads it -- Normal where it is zero, FGR or Mixed where it
+        # is not -- and what its non-zero values mean on DDR5 is not
+        # documented anywhere this project reads from; ZenStates-Core tests
+        # it only for zero too. So it stays in the Advanced window, as a
+        # number, and off the tab, where a bare "0" explained nothing.
+        setting("FGR", umc("fgr"), diagnostic=True),
+        setting("Read Preamble", umc("read_preamble"), _brief_read_preamble),
+        setting("Write Preamble", umc("write_preamble"), _brief_amble),
+        setting("Read Postamble", umc("read_postamble"), _brief_amble),
+        setting("Write Postamble", umc("write_postamble"), _brief_amble),
+        setting("ECC", umc("ecc")),
+        # Without "Mode", as the Summary labels them; the rows keep their
+        # full names, which is what the Summary finds them by.
+        setting("Gear Down Mode", umc("gdm"), _enabled_text,
+                display_name="Gear Down"),
+        setting("Power Down Mode", umc("powerdown"), _enabled_text,
+                display_name="Power Down"),
+        setting("BGS", umc("bgs"), _enabled_text),
+        setting("BGS Alt", umc("bgs_alt"), _enabled_text),
+        setting("Nitro Rx/Tx/Ctrl",
+                lambda channel: _nitro_channel(runtime, channel),
+                display_name="Nitro"),
+    ]
+    # The raw training codes, from each channel's own training record. Raw
+    # APOB bytes, not decoded levels -- see RAW_TRAINING_FIELDS -- so they
+    # are shown as numbers.
+    channel_settings.extend(
+        _channel_setting_row(
+            name,
+            lambda channel, name=name: runtime.channel_training_value(
+                name, channel),
+            RAW_TRAINING_CATEGORY, "Right")
+        for name in RAW_TRAINING_FIELDS
+    )
 
     # Clocks lead the window, the way they do on the Intel side: what the
     # machine is running at, before what that costs it in heat and power.
@@ -1967,8 +2286,10 @@ def build_timings(runtime):
     # reports about itself first, then what the board measures around it.
     rows.extend(_temperature_rows(runtime))
     rows.extend(_board_temperature_rows(runtime))
+    rows.extend(_board_monitor_temperature_rows(runtime))
     rows.extend(_power_rows(runtime))
     rows.extend(_voltage_rows(runtime))
+    rows.extend(_board_monitor_rows(runtime))
     rows.extend(_voltage_snapshot_rows(runtime))
     rows.extend(_graphics_rows())
     rows.extend(_error_rows())
@@ -2034,7 +2355,7 @@ def build_timings(runtime):
     )
     # The command rate closes the primary group. It reads as a timing -- 1T or
     # 2T is how long the controller holds a command -- so it belongs under tRC
-    # rather than among the settings on the Misc tab, and the Summary already
+    # rather than among the controller settings, and the Summary already
     # places it in the same spot.
     rows.append(_row("CR", _format(runtime, "cmd_rate"), "Primary",
                      column="Left"))
@@ -2114,24 +2435,43 @@ def build_timings(runtime):
         ("DRAM DQ DS Pu", "dram_dq_ds_pu"),
         ("DRAM DQ DS Pd", "dram_dq_ds_pd"),
     )
+    training_row = _training_row
+    if is_raphael_cpu(runtime.cpu_name()):
+        # Ryzen 7000's record has one processor ODT and one DRAM drive
+        # strength where Ryzen 9000's has a pull-up and a pull-down of each,
+        # so it gets those two rows in place of the four pairs.
+        drive_rows = (
+            ("Proc ODT", "proc_odt"),
+            ("Proc CA DS", "proc_ca_ds"), ("Proc CK DS", "proc_ck_ds"),
+            ("Proc CS DS", "proc_cs_ds"),
+            ("Proc DQ DS", "proc_dq_ds"),
+            ("DRAM DQ DS", "dram_dq_ds"),
+        )
+        # One record, not one per channel: the geometry that attributes a
+        # record to a channel is known only for Ryzen 9000. Plain rows show
+        # the record's value instead of two columns of dashes.
+        def training_row(runtime, label, key, category, column, tab):
+            return _row(label, _format(runtime, key), category, tab=tab,
+                        column=column)
     # Training, not Timings. These three groups are what memory training settled
     # on -- terminations, on-die termination and drive strengths -- rather
     # than intervals the controller was told to wait, and they filled the
     # Timings tab's right-hand column with twenty rows of a different kind of
     # thing. The Summary still gathers them by category, not by tab.
     rows.extend(
-        _training_row(runtime, label, key, "RTT", "Left", tab=SKEW_TAB)
+        training_row(runtime, label, key, "RTT", "Left", tab=SKEW_TAB)
         for label, key in rtt_rows
     )
     rows.extend(
-        _training_row(runtime, label, key, "ODT", "Left", tab=SKEW_TAB)
+        training_row(runtime, label, key, "ODT", "Left", tab=SKEW_TAB)
         for label, key in odt_rows
     )
     rows.extend(
-        _training_row(runtime, label, key, "Drive Strength", "Right",
-                      tab=SKEW_TAB)
+        training_row(runtime, label, key, "Drive Strength", "Right",
+                     tab=SKEW_TAB)
         for label, key in drive_rows
     )
+    rows.extend(channel_settings)
     rows.extend(tertiary_rows(tertiary_right, "Right"))
     return rows
 

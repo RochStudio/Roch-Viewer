@@ -62,6 +62,11 @@ class Jep106Test(unittest.TestCase):
         # Bank 4 (continuation count 3), Nanya.
         self.assertEqual(decode_jep106_id(0x03, 0x0B), "Nanya Technology")
 
+    def test_the_montage_spd_hub_is_named(self):
+        # 0x86: parity set, continuation count 6 -> bank 7, code 0x32. Read
+        # off the X870 bench kit's SPD5118 hub.
+        self.assertEqual(decode_jep106_id(0x86, 0x32), "Montage")
+
     def test_an_unlisted_vendor_reports_its_raw_id_rather_than_a_guess(self):
         self.assertEqual(decode_jep106_id(0x80, 0x11), "0x8011")
 
