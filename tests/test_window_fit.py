@@ -31,7 +31,7 @@ from rochviewer.ui.main import (
 
 
 def icon_widths():
-    """The sizes icon.ico actually stores, or [] when it is not there."""
+    """The sizes the application icon stores, or [] when it is not there."""
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "icon.ico")
     if not os.path.exists(path):
@@ -217,7 +217,7 @@ class ChromeTest(unittest.TestCase):
         self.assertLess(TimingGUI.LOGO_SIZE, TimingGUI.TITLE_BAR_HEIGHT)
         widths = icon_widths()
         if not widths:
-            self.skipTest("icon.ico is not beside the module")
+            self.skipTest("the application icon is not beside the module")
         self.assertIn(TimingGUI.LOGO_SIZE, widths)
         self.assertEqual(
             TimingGUI.choose_icon_size(widths, TimingGUI.LOGO_SIZE),
@@ -242,15 +242,13 @@ class ChromeTest(unittest.TestCase):
                 self.assertNotRegex(source, r'text_color=\("?#')
 
     def test_the_selected_tab_carries_readable_text_on_the_red(self):
-        # The strip went from blue to the app's red. TEXT_COLOR is near-black
-        # in light mode, which the old blue was light enough to carry and
-        # #B91C1C is not: it measured 2.8:1, under the 4.5:1 floor. White is
-        # 6.5:1 there, and 4.9:1 on the Refined dark red -- #E0383E, the
-        # mockup's, was 4.4:1 and is the hover colour instead.
+        # All Roch tools share the selected-tab red in both modes. White
+        # reaches 4.9:1 on #D0343A; the brighter #E0383E remains the hover
+        # colour. The ordinary near-black light-mode text would be unreadable.
         source = inspect.getsource(TimingGUI.setup_appearance)
         self.assertIn('self.TAB_SELECTED_TEXT_COLOR = ("#FFFFFF", "#FFFFFF")',
                       source)
-        self.assertIn('self.TAB_SELECTED_COLOR = ("#B91C1C", "#D0343A")',
+        self.assertIn('self.TAB_SELECTED_COLOR = ("#D0343A", "#D0343A")',
                       source)
 
     def test_title_bar_uses_clean_windows_style_symbols(self):
@@ -260,6 +258,26 @@ class ChromeTest(unittest.TestCase):
         self.assertNotIn('"✕"', source)
         self.assertNotIn('"–"', source)
 
+    def test_selected_tab_text_tracks_the_active_button(self):
+        gui = TimingGUI.__new__(TimingGUI)
+        gui.TEXT_COLOR = ("#000000", "#FFFFFF")
+        gui.TAB_SELECTED_TEXT_COLOR = ("#FFFFFF", "#FFFFFF")
+        gui.tabview = mock.Mock()
+        buttons = {name: mock.Mock() for name in ("Summary", "Timings")}
+        gui.tabview._segmented_button._buttons_dict = buttons
+
+        gui.tabview.get.return_value = "Summary"
+        gui._refresh_tab_text_colors()
+        buttons["Summary"].configure.assert_called_with(
+            text_color=gui.TAB_SELECTED_TEXT_COLOR)
+        buttons["Timings"].configure.assert_called_with(text_color=gui.TEXT_COLOR)
+
+        gui.tabview.get.return_value = "Timings"
+        gui._refresh_tab_text_colors()
+        buttons["Summary"].configure.assert_called_with(text_color=gui.TEXT_COLOR)
+        buttons["Timings"].configure.assert_called_with(
+            text_color=gui.TAB_SELECTED_TEXT_COLOR)
+
     def test_theme_toggle_is_an_icon_left_of_minimize(self):
         title = inspect.getsource(TimingGUI.build_title_bar)
         tools = inspect.getsource(TimingGUI.build_tab_strip_tools)
@@ -267,7 +285,7 @@ class ChromeTest(unittest.TestCase):
         self.assertIn("self.appearance_toggle_icon()", title)
         self.assertNotIn("self.appearance_button", tools)
         self.assertEqual(TimingGUI.LIGHT_MODE_ICON, "☀")
-        self.assertEqual(TimingGUI.DARK_MODE_ICON, "☾")
+        self.assertEqual(TimingGUI.DARK_MODE_IMAGE, "assets/moon-solid-black-18.png")
         self.assertGreater(
             title.index("self.appearance_button"),
             title.index("self.minimize_window"),
@@ -277,7 +295,6 @@ class ChromeTest(unittest.TestCase):
         # The title-bar theme icon and the two tab tools do not use the selected
         # red, so the active tab remains the only selected-colour background.
         source = inspect.getsource(TimingGUI.create_widgets)
-        self.assertEqual(source.count("_selected_text_color"), 1)
         tools = inspect.getsource(TimingGUI.build_tab_strip_tools)
         self.assertIn("fg_color=self.TAB_UNSELECTED_COLOR", tools)
         self.assertNotIn("TAB_SELECTED_COLOR", tools)

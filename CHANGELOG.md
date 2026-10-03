@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0 (Unreleased)
+
+- Summary: each existing column has its own rounded group, preserving all labels, values, order and placement.
+
 ## 1.0.9 (2026-09-28)
 
 Most of this is AMD AM5 (Ryzen 9000), tested on an X870 AORUS TACHYON ICE with DDR5-6000. Other platforms keep their readings and layout except where noted.

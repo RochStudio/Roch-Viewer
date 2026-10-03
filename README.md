@@ -1,4 +1,4 @@
-# Roch Viewer 1.0.9
+# Roch Viewer 1.1.0
 
 Version 1.0.9 is the current published release and is available from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/tag/v1.0.9).
 

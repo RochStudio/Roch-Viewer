@@ -16,6 +16,7 @@ datas = collect_data_files('customtkinter')
 # README's Prerequisites -- or beside main.py to run from source.
 datas += [
     ('icon.ico', '.'),
+    ('assets/moon-solid-black-18.png', 'assets'),
 ]
 
 hiddenimports = [

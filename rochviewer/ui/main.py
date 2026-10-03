@@ -16,7 +16,7 @@
 
 import customtkinter as ctk
 from rochviewer.paths import module_chain
-from rochviewer.ui.asset_path import find_icon
+from rochviewer.ui.asset_path import find_asset, find_icon
 from rochviewer.ui.lazy_read import read_timing
 from rochviewer.platform_profiles import AM5, LGA1700_DDR5
 from rochviewer.timings import ACTIVE_PLATFORM, TIMINGS, apply_formula
@@ -1031,7 +1031,7 @@ class TimingGUI:
     TITLE_THEME_FONT = ("Segoe UI Symbol", 18)
     TITLE_THEME_WIDTH = 36
     LIGHT_MODE_ICON = "☀"
-    DARK_MODE_ICON = "☾"
+    DARK_MODE_IMAGE = "assets/moon-solid-black-18.png"
     SCREENSHOT_ICON = "\U0001F4F7"
     TITLE_SCREENSHOT_FONT = ("Segoe UI Symbol", 14)
     SCREENSHOT_STATUS_MS = 4000
@@ -1090,6 +1090,7 @@ class TimingGUI:
         self.appearance_button = ctk.CTkButton(
             bar,
             text=self.appearance_toggle_icon(),
+            image=self.appearance_toggle_image(),
             command=self.toggle_appearance_mode,
             width=self.TITLE_THEME_WIDTH,
             height=self.TITLE_BAR_HEIGHT,
@@ -1408,64 +1409,35 @@ class TimingGUI:
 
         # Each tuple is (light mode, dark mode). CustomTkinter automatically
         # updates every widget using these colors when the mode changes.
-        # The dark surfaces sit lower than they did, twice now. Every one of
-        # them moved by the same six values the second time, so the steps
-        # between them -- and the shading step, widened by one earlier because
-        # the same lift reads as less separation the darker the pair gets --
-        # are exactly what they were. Only the floor moved. The light half is
-        # untouched: darkening a light theme changes what it is.
-        # Refined dark: the neutral black floor, with the Summary's blocks as
-        # bordered panels a step above it and a brighter red accent, so the
-        # active tab and the readings carry the colour and everything else
-        # steps back. Neutral greys throughout -- a blue-tinted black was
-        # tried and read as a different app.
-        self.BG_COLOR = ("#F1F5F9", "#101010")
-        self.BG_COLOR2 = ("#FFFFFF", "#161616")
-        self.SECTION_COLOR = ("#E2E8F0", "#161616")
-        self.ROW_COLOR = ("#F8FAFC", "#1A1A1A")
-        self.BORDER_COLOR = ("#CBD5E1", "#0A0A0A")
-        self.PANEL_BORDER_COLOR = ("#CBD5E1", "#2A2A2A")
-        # The Summary panels: a card one step above the floor, its border a
-        # step above that. The zebra band is one step above the card.
-        self.PANEL_COLOR = ("#FFFFFF", "#161616")
-        self.TEXT_COLOR = ("#0F172A", "#EDEDED")
+        # Pure shared surfaces and primary text in both modes. Advanced and
+        # Telemetry receive these same tuples; borders and hover states retain
+        # their separate neutral roles.
+        self.BG_COLOR = ("#FFFFFF", "#000000")
+        self.BG_COLOR2 = self.BG_COLOR
+        self.SECTION_COLOR = self.BG_COLOR
+        self.ROW_COLOR = self.BG_COLOR
+        self.BORDER_COLOR = ("#D0D0D0", "#383838")
+        self.PANEL_BORDER_COLOR = self.BORDER_COLOR
+        self.PANEL_COLOR = self.BG_COLOR
+        self.TEXT_COLOR = ("#000000", "#FFFFFF")
         self.VALUE_COLOR = ("#B91C1C", "#FF5A5F")
-        self.HIGHLIGHT_COLOR = ("#E8EEF5", "#1C1C1C")
+        self.HIGHLIGHT_COLOR = self.BG_COLOR
         # The tab strip follows the title bar and the footer link: the app's
-        # red rather than the theme's blue. Saturated in light, muted in dark,
-        # which is the pair the blue used and the reason a flat #B91C1C in
-        # both looked like a warning banner against the dark surfaces.
-        self.TAB_SELECTED_COLOR = ("#B91C1C", "#D0343A")
-        self.TAB_UNSELECTED_COLOR = ("#D7E1EC", "#222222")
-        self.TAB_HOVER_COLOR = ("#DC2626", "#E0383E")
-        # White on the selected tab in both modes. TEXT_COLOR is near-black
-        # in light mode, and near-black on a dark red is unreadable -- the
-        # blue it replaced was light enough to carry it.
+        # red rather than the toolkit's blue. The same selected-tab red is
+        # used by the CPU, GPU and NVRAM tools in both modes.
+        self.TAB_SELECTED_COLOR = ("#D0343A", "#D0343A")
+        self.TAB_UNSELECTED_COLOR = self.BG_COLOR
+        self.TAB_HOVER_COLOR = ("#E0383E", "#E0383E")
+        # White on the selected red tab in both modes.
         self.TAB_SELECTED_TEXT_COLOR = ("#FFFFFF", "#FFFFFF")
-        self.TAB_UNSELECTED_HOVER_COLOR = ("#C5D2E0", "#2E2E2E")
-        self.SUBTITLE_COLOR = ("#475569", "#8C8C8C")
-        # A rule between Summary blocks: visible against both backgrounds
-        # without competing with the values, which are the loudest thing on
-        # the tab and should stay that way.
-        # Every hairline in the window -- the two in the Summary and the one
-        # above the module strip -- in the brand red, matching the section
-        # headings they sit between. Its own name rather than a reuse of
-        # BRAND_COLOR, and this is why: the rules are muted where the text is
-        # not.
-        #
-        # They are already one pixel, which is the floor, so "thinner" has to
-        # come out of weight rather than height. Each is mixed a third of the
-        # way into the surface behind it -- 25% on dark, 15% on light -- which
-        # drops the dark rule from 5.5:1 to 3.6:1 against its ground and the
-        # light one from 5.9:1 to 4.8:1. Both stay well clear of the point a
-        # hairline starts disappearing, and a full-strength red on a one-pixel
-        # line was reading heavier than the line actually was.
-        self.HAIRLINE_COLOR = ("#C13D3D", "#B8363B")
-        # The app's own red, used for the title-bar name and the footer link.
-        # Same pair as VALUE_COLOR, named separately because these two follow
-        # the brand rather than the reading-is-red rule the tables use.
-        self.BRAND_COLOR = ("#B91C1C", "#FF5A5F")
-        self.BRAND_HOVER_COLOR = ("#DC2626", "#FF8A8D")
+        self.TAB_UNSELECTED_HOVER_COLOR = ("#E6E6E6", "#222222")
+        self.SUBTITLE_COLOR = self.TEXT_COLOR
+        self.DISABLED_TEXT_COLOR = ("#62666D", "#A0A0A0")
+        # Shared brand roles are distinct from live-reading red and error
+        # semantics. Ordinary labels and descriptions use the primary text.
+        self.HAIRLINE_COLOR = self.TAB_SELECTED_COLOR
+        self.BRAND_COLOR = self.TAB_SELECTED_COLOR
+        self.BRAND_HOVER_COLOR = self.TAB_HOVER_COLOR
         self.root.configure(fg_color=self.BG_COLOR)
 
     def settings_path(self):
@@ -1551,15 +1523,25 @@ class TimingGUI:
         """Swap Light for Dark and update the title-bar action icon."""
         self.change_appearance_mode(
             "Light" if self.appearance_mode == "Dark" else "Dark")
-        self.appearance_button.configure(text=self.appearance_toggle_icon())
+        self.appearance_button.configure(
+            text=self.appearance_toggle_icon(),
+            image=self.appearance_toggle_image(),
+        )
 
     def appearance_toggle_icon(self):
-        """Sun in dark mode, moon in light mode: the mode a click applies."""
-        return (
-            self.LIGHT_MODE_ICON
-            if self.appearance_mode == "Dark"
-            else self.DARK_MODE_ICON
-        )
+        """Use the white sun text in Dark; Light uses the filled moon image."""
+        return self.LIGHT_MODE_ICON if self.appearance_mode == "Dark" else ""
+
+    def appearance_toggle_image(self):
+        """The shared solid black crescent, without font or emoji fallback."""
+        if self.appearance_mode == "Dark":
+            return None
+        if not hasattr(self, "_solid_moon_image"):
+            path = find_asset(self.DARK_MODE_IMAGE)
+            if path is None:
+                raise FileNotFoundError(self.DARK_MODE_IMAGE)
+            self._solid_moon_image = tkinter.PhotoImage(file=path)
+        return self._solid_moon_image
 
     def change_appearance_mode(self, mode):
         """Apply and remember the selected Light or Dark appearance."""
@@ -1973,10 +1955,6 @@ class TimingGUI:
             text_color=self.TEXT_COLOR,
             font=self.TAB_FONT,
         )
-        self.tabview._segmented_button._text_color = self.TEXT_COLOR
-        self.tabview._segmented_button._selected_text_color = (
-            self.TAB_SELECTED_TEXT_COLOR
-        )
         self.tabview.pack(fill="both", expand=True, padx=2, pady=(2, 2))
         self.build_tab_strip_tools()
         self.tab_names = select_tab_names(TIMINGS)
@@ -2052,38 +2030,39 @@ class TimingGUI:
                 )
                 full_width_frame.grid_columnconfigure(0, weight=1)
 
-                # The three timing columns share one panel, the way the
-                # identity rows and the clock block above have one each.
-                columns_panel = self._summary_panel(frame)
-                columns_panel.grid(
+                # Each existing Summary column has its own rounded panel.
+                # The holder keeps their shared row and content-first widths.
+                columns_holder = ctk.CTkFrame(
+                    frame, corner_radius=0, fg_color="transparent"
+                )
+                columns_holder.grid(
                     row=1, column=0, columnspan=column_count, sticky="nsew"
                 )
-                columns_panel.grid_columnconfigure(0, weight=1)
-                # The inset lives on one frame around all three columns, the
-                # way the clock strip carries its own. Padding the outer
-                # columns instead put six pixels inside the first column's
-                # width, and the strip above came out six pixels right of it.
-                columns_inner = ctk.CTkFrame(
-                    columns_panel, corner_radius=0, fg_color="transparent"
-                )
-                columns_inner.grid(
-                    row=0, column=0, sticky="nsew",
-                    padx=self.PANEL_PADX, pady=self.PANEL_PADY,
-                )
                 for column in range(column_count):
-                    columns_inner.grid_columnconfigure(
+                    columns_holder.grid_columnconfigure(
                         column, weight=1 if column == column_count - 1 else 0
                     )
 
                 compact_columns = []
+                last = column_count - 1
                 for column in range(column_count):
-                    column_frame = ctk.CTkFrame(
-                        columns_inner, corner_radius=0, fg_color="transparent"
+                    panel = self._column_panel(columns_holder)
+                    panel.grid(
+                        row=0, column=column, sticky="nsew",
+                        padx=(0, 0 if column == last else self.PANEL_COLUMN_SPACING),
                     )
-                    # Columns touch so a shaded row remains continuous. The
-                    # layout pass reserves the 25px content gap inside each
-                    # leading column instead of cutting a hole between frames.
-                    column_frame.grid(row=0, column=column, sticky="nsew")
+                    column_frame = ctk.CTkFrame(
+                        columns_holder, corner_radius=0, fg_color=self.PANEL_COLOR
+                    )
+                    column_frame._panel = panel
+                    # Keep the same content gap: the two panel insets and
+                    # their spacing use the 25px already reserved by alignment.
+                    column_frame.grid(
+                        row=0, column=column, sticky="nsew",
+                        padx=(self.PANEL_PADX, self.PANEL_PADX + (
+                            0 if column == last else self.PANEL_COLUMN_SPACING)),
+                        pady=self.PANEL_PADY,
+                    )
                     column_frame.grid_columnconfigure(0, weight=1)
                     compact_columns.append(column_frame)
                 self.grid_frames[name] = {
@@ -2156,10 +2135,20 @@ class TimingGUI:
                     tab_page, name, row=1
                 )
         self.tabview.configure(command=self._on_tab_changed)
+        self._refresh_tab_text_colors()
+
+    def _refresh_tab_text_colors(self):
+        """Apply selected-tab contrast to the buttons the toolkit draws."""
+        selected = self.tabview.get()
+        for name, button in self.tabview._segmented_button._buttons_dict.items():
+            button.configure(text_color=(
+                self.TAB_SELECTED_TEXT_COLOR if name == selected else self.TEXT_COLOR
+            ))
 
     def _on_tab_changed(self):
         """Apply the active page's size and finish any empty table bands."""
         tab_name = self.tabview.get()
+        self._refresh_tab_text_colors()
         self._resize_for_tab(tab_name)
         if tab_name == "SPD":
             self._load_spd_tab_async()
@@ -3346,7 +3335,7 @@ class TimingGUI:
         dim = isinstance(timing, dict) and timing.get("dim")
         try:
             if dim and dim():
-                return self.SUBTITLE_COLOR
+                return self.DISABLED_TEXT_COLOR
         except Exception:
             pass
         return self.VALUE_COLOR
@@ -4287,7 +4276,7 @@ class TimingGUI:
         )
 
     def _column_panel(self, parent):
-        """A Summary panel drawn behind a detail column in its grid cell.
+        """A panel drawn behind a Summary or detail column in its grid cell.
 
         Asks for no size of its own -- an empty CTkFrame otherwise asks for
         200x200 -- so the column it frames decides the cell.
@@ -5715,8 +5704,8 @@ class TimingGUI:
         last = len(widths) - 1
         parent = columns[0].master
         for index, width in enumerate(widths):
-            # Reserve the inter-column gap inside the painted column so the
-            # zebra band stays continuous through the spacing.
+            # The column cell includes its panel insets and the gap to the
+            # next panel, keeping the overview and timing labels aligned.
             width = summary_column_width(
                 width, is_last=index == last, gap=self.DETAIL_COLUMN_GAP
             )
