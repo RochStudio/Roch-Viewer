@@ -32,3 +32,6 @@ nvram.txt
 # Fetch it yourself: see README, "Prerequisites".
 inpoutx64.dll
 inpoutx64.sys
+
+# Rust build output
+/target/

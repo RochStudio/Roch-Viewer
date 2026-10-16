@@ -1,0 +1,9 @@
+pub mod am5_board_rails;
+pub mod asus_ec;
+pub mod board_sensors;
+pub mod cpu_clocks;
+pub mod ite_superio;
+pub mod nct679x;
+pub mod superio_lpc;
+pub mod voltage_rails;
+pub mod whea_errors;

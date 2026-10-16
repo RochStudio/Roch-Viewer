@@ -1,0 +1,12 @@
+[package]
+name = "roch-viewer-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "RochViewer"
+path = "src/main.rs"
+
+[dependencies]
+rochviewer = { version = "1.1.0", path = "../rochviewer" }

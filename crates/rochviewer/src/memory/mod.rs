@@ -1,0 +1,9 @@
+pub mod ddr4_spd;
+pub mod ddr4_tsod;
+pub mod ddr5_pmic;
+pub mod ddr5_spd;
+pub mod ddr5_telemetry;
+pub mod ddr_generation;
+pub mod dimm_inventory;
+pub mod dram_ic;
+pub mod spd_profiles;
