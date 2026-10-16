@@ -35,6 +35,7 @@ use super::spd_tab::{self, SpdTab};
 use super::summary::{self, SummaryPlan};
 use super::tabs::{self, TabContext};
 use super::theme::{self, Palette};
+use super::timing;
 
 pub const TITLE_BAR_HEIGHT: f32 = 30.0;
 pub const TITLE_BUTTON_WIDTH: f32 = 44.0;
@@ -289,6 +290,10 @@ pub struct TimingApp {
     channel_labels: BTreeMap<String, String>,
     summary: SummaryPlan,
     spd: SpdTab,
+    first_frame_drawn: bool,
+    /// The module inventory being read; taken on the frame it finishes.
+    inventory: Option<std::thread::JoinHandle<(ModuleChoices, BTreeMap<String, String>)>>,
+    switched_at: Option<std::time::Instant>,
 }
 
 /// What a click asked for, carried out after the frame's layout so the
@@ -326,13 +331,15 @@ pub fn reread_rows(rows: &[rochviewer::row::Row], tab: &str) -> Vec<usize> {
 
 impl TimingApp {
     pub fn new(cc: &eframe::CreationContext<'_>, settings: Settings) -> Self {
-        theme::install_fonts(&cc.egui_ctx);
+        timing::mark("window created");
+        timing::span("install fonts", || theme::install_fonts(&cc.egui_ctx));
         let palette = Palette::new(settings.appearance_mode() == "Dark");
         theme::apply(&cc.egui_ctx, &palette);
 
-        let backend = Arc::new(fixture::backend_from_env().unwrap_or_else(load_active_backend));
+        let backend = Arc::new(timing::span("build the table", || fixture::backend_from_env().unwrap_or_else(load_active_backend)));
+        let summary = timing::span("summary plan", || summary::summary_plan(&backend.rows, backend.platform));
         let ctx = cc.egui_ctx.clone();
-        let reader = Reader::start(backend.clone(), move || ctx.request_repaint());
+        let reader = Reader::start(backend.clone(), summary.row_indices(), move || ctx.request_repaint());
         let tab_names = tab_names_for(&backend.rows);
 
         let driver_notice = driver_notice_text(hardware::driver_error().as_deref(), hardware::driver_path::find_driver().is_none());
@@ -347,13 +354,20 @@ impl TimingApp {
         // On a thread of its own: WMI wants COM in the multithreaded
         // apartment, and the window's thread is already a single-threaded
         // one (the windowing layer initialises OLE there).
-        let (choices, channel_labels) = std::thread::Builder::new()
+        //
+        // Read while the window opens rather than before it: the selector
+        // and the column headings take the answer on the frame it arrives.
+        let inventory_ctx = cc.egui_ctx.clone();
+        let inventory = std::thread::Builder::new()
             .name("module inventory".into())
-            .spawn(|| (ModuleChoices::from_modules(&read_modules_with_spd_ic(false)), channel_slot_labels(&read_modules(false))))
-            .ok()
-            .and_then(|thread| thread.join().ok())
-            .unwrap_or_else(|| (ModuleChoices::new(&[], &[]), BTreeMap::new()));
-        let summary = summary::summary_plan(&backend.rows, backend.platform);
+            .spawn(move || {
+                let started = std::time::Instant::now();
+                let found = (ModuleChoices::from_modules(&read_modules_with_spd_ic(false)), channel_slot_labels(&read_modules(false)));
+                timing::took("module inventory", started);
+                inventory_ctx.request_repaint();
+                found
+            })
+            .ok();
 
         TimingApp {
             backend,
@@ -371,10 +385,13 @@ impl TimingApp {
             started: false,
             pending: Vec::new(),
             selected: None,
-            choices,
-            channel_labels,
+            choices: ModuleChoices::new(&[], &[]),
+            channel_labels: BTreeMap::new(),
+            inventory,
             summary,
             spd: SpdTab::default(),
+            first_frame_drawn: false,
+            switched_at: None,
         }
     }
 
@@ -412,6 +429,7 @@ impl TimingApp {
             return;
         }
         self.current = index;
+        self.switched_at = Some(std::time::Instant::now());
         let tab = self.current_tab().to_string();
         if tab == "SPD" {
             self.spd.load(ctx);
@@ -671,7 +689,14 @@ fn tool_button(ui: &mut Ui, palette: &Palette, text: &str, right: &mut f32, top:
 
 impl eframe::App for TimingApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        let frame_started = std::time::Instant::now();
         let ctx = ui.ctx().clone();
+        if self.inventory.as_ref().is_some_and(|t| t.is_finished()) {
+            if let Some(Ok((choices, labels))) = self.inventory.take().map(|t| t.join()) {
+                self.choices = choices;
+                self.channel_labels = labels;
+            }
+        }
         self.resize_for_current_tab(&ctx);
         let palette = self.palette;
         egui::CentralPanel::default().frame(egui::Frame::new().fill(palette.bg)).show(ui, |ui| {
@@ -724,6 +749,13 @@ impl eframe::App for TimingApp {
             }
         }
         self.popouts.show(&ctx, &mut shared);
+        if !self.first_frame_drawn {
+            self.first_frame_drawn = true;
+            timing::took("first frame", frame_started);
+        }
+        if let Some(at) = self.switched_at.take() {
+            timing::took(&format!("switch to {current_tab} (frame {:.1} ms)", frame_started.elapsed().as_secs_f64() * 1000.0), at);
+        }
     }
 }
 

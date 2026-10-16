@@ -25,5 +25,6 @@
 mod ui;
 
 fn main() {
+    ui::timing::start();
     ui::run();
 }

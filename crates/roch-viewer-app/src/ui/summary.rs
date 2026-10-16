@@ -72,6 +72,23 @@ pub struct SummaryPlan {
     pub columns: Vec<Vec<Line>>,
 }
 
+impl SummaryPlan {
+    /// Every row the Summary shows, in the order it draws them.
+    pub fn row_indices(&self) -> Vec<usize> {
+        let mut out = Vec::new();
+        out.extend(self.identity.iter().flatten().map(|pair| pair.index));
+        out.extend(self.aligned.iter().flatten().flatten().map(|pair| pair.index));
+        for line in self.columns.iter().flatten() {
+            match line {
+                Line::Row { index, .. } => out.push(*index),
+                Line::Rows { first, second, .. } => out.extend(first.iter().chain(second.iter()).copied()),
+                Line::Sides { index, .. } => out.extend(index.iter().copied()),
+            }
+        }
+        out
+    }
+}
+
 /// The rows the About panel draws from, by name.
 ///
 /// The Telemetry copy of a row shares its name and is appended after it, so

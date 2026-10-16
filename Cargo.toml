@@ -9,7 +9,10 @@ license = "GPL-3.0-or-later"
 authors = ["Roch Studio"]
 
 [profile.release]
-opt-level = 3
-lto = "thin"
+# Built for size: the window draws in well under a millisecond a frame and
+# the readings are bound by the hardware, so speed-optimised code buys
+# nothing a user can see, and costs a third of the executable.
+opt-level = "s"
+lto = "fat"
 codegen-units = 1
 strip = true

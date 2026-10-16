@@ -672,6 +672,9 @@ struct Popout<T> {
     /// The mode last given to the native frame; per window, so a reopened
     /// one is told again.
     theme_sent: Arc<Mutex<Option<bool>>>,
+    /// When the window was asked for, until its first frame is drawn.
+    opened: Arc<Mutex<Option<Instant>>>,
+    name: String,
 }
 
 /// Something a pop-out draws in its own viewport.
@@ -712,6 +715,8 @@ impl<T: PopoutWindow> Popout<T> {
             builder,
             window: Arc::new(Mutex::new(window)),
             theme_sent: Arc::new(Mutex::new(None)),
+            opened: Arc::new(Mutex::new(None)),
+            name: name.to_string(),
         }
     }
 
@@ -741,7 +746,10 @@ impl<T: PopoutWindow> Popout<T> {
         }
         let window = self.window.clone();
         let theme_sent = self.theme_sent.clone();
+        let opened = self.opened.clone();
+        let name = self.name.clone();
         ctx.show_viewport_deferred(self.id, self.builder.clone(), move |ui, _class| {
+            let frame_started = Instant::now();
             let mut window = window.lock().unwrap_or_else(|e| e.into_inner());
             let palette = *window.palette_mut();
             ui.style_mut().visuals = popout_visuals(&palette);
@@ -755,6 +763,9 @@ impl<T: PopoutWindow> Popout<T> {
             }
             drop(sent);
             window.draw(ui);
+            if let Some(at) = opened.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                super::timing::took(&format!("{name} first frame (frame {:.1} ms)", frame_started.elapsed().as_secs_f64() * 1000.0), at);
+            }
             if !window.is_open() {
                 // The main window stops showing it on its next pass.
                 ui.ctx().request_repaint_of(ViewportId::ROOT);
@@ -801,6 +812,7 @@ impl Popouts {
 
     /// Open the searchable all-rows window, or focus the open one.
     pub fn open_advanced(&mut self, ctx: &egui::Context, shared: &mut Shared) {
+        let opened = Instant::now();
         if let Some(existing) = self.advanced.as_ref().filter(|p| p.is_open()) {
             existing.focus(ctx);
             return;
@@ -833,11 +845,14 @@ impl Popouts {
         let window = AdvancedWindow::new(entries, channels, *shared.palette);
         let position = position_beside(ctx, Side::Right, advanced_window::WINDOW_WIDTH, advanced_window::WINDOW_HEIGHT);
         self.advanced = Some(Popout::new("advanced", advanced_window::viewport_builder(position), window));
+        super::timing::took("open Advanced (prepare)", opened);
+        *self.advanced.as_ref().unwrap().opened.lock().unwrap() = Some(opened);
         ctx.request_repaint();
     }
 
     /// Open the telemetry window, or focus the open one.
     pub fn open_telemetry(&mut self, ctx: &egui::Context, shared: &mut Shared) {
+        let opened = Instant::now();
         if let Some(existing) = self.telemetry.as_ref().filter(|p| p.is_open()) {
             existing.focus(ctx);
             return;
@@ -853,6 +868,8 @@ impl Popouts {
         );
         let position = position_beside(ctx, Side::Left, dimm_telemetry_window::WINDOW_WIDTH, dimm_telemetry_window::WINDOW_HEIGHT);
         self.telemetry = Some(Popout::new("telemetry", dimm_telemetry_window::viewport_builder(position), window));
+        super::timing::took("open Telemetry (prepare)", opened);
+        *self.telemetry.as_ref().unwrap().opened.lock().unwrap() = Some(opened);
         ctx.request_repaint();
     }
 
@@ -1322,9 +1339,9 @@ mod tests {
         let folder = std::env::temp_dir().join(format!("rochviewer-shot-{}", std::process::id()));
         let (w, h, pixels) = screenshot::image_bgra(&image, None);
         let path = screenshot::save_png(&folder, "x.png", w, h, &pixels).unwrap();
-        let decoded = image::open(&path).unwrap().to_rgb8();
-        assert_eq!(decoded.dimensions(), (4, 3));
-        assert_eq!(decoded.get_pixel(0, 0).0, [10, 20, 30]);
+        let decoded = super::super::asset_path::decode_png(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!((decoded.width, decoded.height), (4, 3));
+        assert_eq!(decoded.pixels[..3], [10, 20, 30]);
         let _ = std::fs::remove_dir_all(&folder);
         popouts.show_screenshot_status("Screenshot failed");
         assert_eq!(popouts.screenshot_status(), Some("Screenshot failed"));

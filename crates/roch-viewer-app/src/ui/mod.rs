@@ -18,6 +18,7 @@ pub mod spd_tab;
 pub mod summary;
 pub mod tabs;
 pub mod theme;
+pub mod timing;
 #[cfg(test)]
 mod ui_tests;
 
@@ -32,7 +33,7 @@ pub fn run() {
     admin::claim_taskbar_identity();
 
     let settings = settings::Settings::load();
-    let platform = rochviewer::platform_profiles::active_platform();
+    let platform = timing::span("detect platform", rochviewer::platform_profiles::active_platform);
     let (width, height) = app::window_size_for_tab(platform, "Summary", None);
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_title(format!("{APP_NAME} {VERSION}"))
@@ -49,6 +50,7 @@ pub fn run() {
         persist_window: false,
         ..Default::default()
     };
+    timing::mark("opening the window");
     let result = eframe::run_native(
         APP_NAME,
         options,

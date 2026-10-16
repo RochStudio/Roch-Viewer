@@ -286,12 +286,26 @@ mod real {
     }
 
     fn run(connection: &mut Option<WMIConnection>, class_name: &str) -> Result<Vec<WmiObject>, String> {
+        let timing = std::env::var_os("ROCHVIEWER_TIMING").is_some();
+        let started = std::time::Instant::now();
         if connection.is_none() {
             *connection = Some(WMIConnection::new().map_err(|e| e.to_string())?);
+            if timing {
+                eprintln!("    wmi connect: {:.1} ms", started.elapsed().as_secs_f64() * 1000.0);
+            }
         }
+        let started = std::time::Instant::now();
+        let result = run_query(connection, class_name);
+        if timing {
+            eprintln!("    wmi {class_name}: {:.1} ms", started.elapsed().as_secs_f64() * 1000.0);
+        }
+        result
+    }
+
+    fn run_query(connection: &mut Option<WMIConnection>, class_name: &str) -> Result<Vec<WmiObject>, String> {
         let connection = connection.as_ref().expect("connection was just created");
         let rows: Vec<HashMap<String, Variant>> = connection
-            .raw_query(format!("SELECT * FROM {class_name}"))
+            .raw_query(format!("SELECT {} FROM {class_name}", select_list(class_name)))
             .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
@@ -299,6 +313,16 @@ mod real {
                 fields: row.into_iter().map(|(k, v)| (k, convert(v))).collect(),
             })
             .collect())
+    }
+
+    /// Every property of Win32_Processor but LoadPercentage. Asking for it
+    /// makes WMI sample the processor for a full second before answering,
+    /// and nothing here reads it: `SELECT *` cost a second of startup each
+    /// time the class was queried.
+    const PROCESSOR_PROPERTIES: &str = "AddressWidth, Architecture, AssetTag, Availability, Caption,         Characteristics, ConfigManagerErrorCode, ConfigManagerUserConfig, CpuStatus, CreationClassName,         CurrentClockSpeed, CurrentVoltage, DataWidth, Description, DeviceID, ErrorCleared, ErrorDescription,         ExtClock, Family, InstallDate, L2CacheSize, L2CacheSpeed, L3CacheSize, L3CacheSpeed, LastErrorCode,         Level, Manufacturer, MaxClockSpeed, Name, NumberOfCores, NumberOfEnabledCore,         NumberOfLogicalProcessors, OtherFamilyDescription, PartNumber, PNPDeviceID,         PowerManagementCapabilities, PowerManagementSupported, ProcessorId, ProcessorType, Revision, Role,         SecondLevelAddressTranslationExtensions, SerialNumber, SocketDesignation, Status, StatusInfo,         Stepping, SystemCreationClassName, SystemName, ThreadCount, UniqueId, UpgradeMethod, Version,         VirtualizationFirmwareEnabled, VMMonitorModeExtensions, VoltageCaps";
+
+    fn select_list(class_name: &str) -> &'static str {
+        if class_name.eq_ignore_ascii_case("Win32_Processor") { PROCESSOR_PROPERTIES } else { "*" }
     }
 
     pub fn query(class_name: &str) -> Result<Vec<WmiObject>, String> {

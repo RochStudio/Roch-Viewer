@@ -46,10 +46,29 @@ pub fn choose_icon_size(widths: &[u32], size: u32) -> Option<u32> {
         .or_else(|| widths.iter().copied().max())
 }
 
-fn decode_png(blob: &[u8]) -> Option<image::RgbaImage> {
-    image::load_from_memory_with_format(blob, image::ImageFormat::Png)
-        .ok()
-        .map(|img| img.to_rgba8())
+/// An 8-bit RGBA picture.
+pub struct Rgba {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+}
+
+/// Decode a PNG of any colour type to 8-bit RGBA.
+pub fn decode_png(blob: &[u8]) -> Option<Rgba> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(blob));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder.read_info().ok()?;
+    let mut buffer = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buffer).ok()?;
+    buffer.truncate(info.buffer_size());
+    let pixels = match info.color_type {
+        png::ColorType::Rgba => buffer,
+        png::ColorType::Rgb => buffer.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
+        png::ColorType::GrayscaleAlpha => buffer.chunks_exact(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
+        png::ColorType::Grayscale => buffer.iter().flat_map(|&g| [g, g, g, 255]).collect(),
+        png::ColorType::Indexed => return None,
+    };
+    Some(Rgba { width: info.width, height: info.height, pixels })
 }
 
 /// The app icon at roughly `size` px.
@@ -59,8 +78,7 @@ pub fn logo_image(size: u32) -> Option<ColorImage> {
     let chosen = choose_icon_size(&widths, size)?;
     let blob = entries.iter().find(|(w, _)| *w == chosen)?.1;
     let rgba = decode_png(blob)?;
-    let size = [rgba.width() as usize, rgba.height() as usize];
-    Some(ColorImage::from_rgba_unmultiplied(size, rgba.as_raw()))
+    Some(ColorImage::from_rgba_unmultiplied([rgba.width as usize, rgba.height as usize], &rgba.pixels))
 }
 
 /// The window and taskbar icon.
@@ -69,14 +87,13 @@ pub fn window_icon() -> Option<IconData> {
     let widths: Vec<u32> = entries.iter().map(|(w, _)| *w).collect();
     let chosen = choose_icon_size(&widths, 64)?;
     let rgba = decode_png(entries.iter().find(|(w, _)| *w == chosen)?.1)?;
-    Some(IconData { width: rgba.width(), height: rgba.height(), rgba: rgba.into_raw() })
+    Some(IconData { width: rgba.width, height: rgba.height, rgba: rgba.pixels })
 }
 
 /// The solid black crescent the Light-mode toggle shows.
 pub fn moon_image() -> Option<ColorImage> {
     let rgba = decode_png(MOON_PNG)?;
-    let size = [rgba.width() as usize, rgba.height() as usize];
-    Some(ColorImage::from_rgba_unmultiplied(size, rgba.as_raw()))
+    Some(ColorImage::from_rgba_unmultiplied([rgba.width as usize, rgba.height as usize], &rgba.pixels))
 }
 
 #[cfg(test)]

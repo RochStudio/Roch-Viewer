@@ -170,19 +170,19 @@ fn is_truthy(value: &WmiValue) -> bool {
 
 /// The current platform, using only WMI/SMBIOS metadata.
 pub fn detect_current_platform() -> Platform {
-    let (Ok(processors), Ok(memories), Ok(boards)) = (
-        wmi_util::query("Win32_Processor"),
-        wmi_util::query("Win32_PhysicalMemory"),
-        wmi_util::query("Win32_BaseBoard"),
-    ) else {
-        return Platform::Unsupported;
-    };
+    // The process-wide cached copies: these classes describe installed
+    // hardware, and the table builders ask for the same three moments later.
+    // An unreachable WMI reads as empty, which classifies as unsupported --
+    // the answer the Python gave when the query raised.
+    let processors = wmi_util::static_class("Win32_Processor");
+    let memories = wmi_util::static_class("Win32_PhysicalMemory");
+    let boards = wmi_util::static_class("Win32_BaseBoard");
     let processor = processors.first();
     let board = boards.first();
     // `SMBIOSMemoryType or MemoryType`: a zero SMBIOS type falls through. One
     // value that is not a number voids the whole set, as int() raising did.
     let mut types = Vec::new();
-    for memory in &memories {
+    for memory in memories.iter() {
         let raw = memory
             .get("SMBIOSMemoryType")
             .filter(|v| is_truthy(v))

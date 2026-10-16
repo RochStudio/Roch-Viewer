@@ -154,15 +154,14 @@ fn system_font(name: &str) -> Option<Vec<u8>> {
 }
 
 /// Consolas for everything, as the Python build used it for timing-tool
-/// alignment, with Segoe UI Symbol for the title-bar glyphs. When a font is
-/// missing the family falls back to egui's own, so the window still draws.
+/// alignment, with Segoe UI Symbol for the title-bar glyphs (the camera,
+/// sun, minus and cross are all in it). Every font comes from the Windows
+/// fonts folder rather than the executable; when Consolas is missing the
+/// family falls back to Courier New, then Arial, so the window still draws.
 pub fn install_fonts(ctx: &egui::Context) {
-    let mut fonts = FontDefinitions::default();
-    let fallback_mono = fonts.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
-    let fallback_prop = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
-
-    let mut add = |key: &str, file: &str| -> bool {
-        match system_font(file) {
+    let mut fonts = FontDefinitions::empty();
+    let mut add = |key: &str, files: &[&str]| -> bool {
+        match files.iter().find_map(|file| system_font(file)) {
             Some(bytes) => {
                 fonts.font_data.insert(key.to_string(), Arc::new(FontData::from_owned(bytes)));
                 true
@@ -170,36 +169,22 @@ pub fn install_fonts(ctx: &egui::Context) {
             None => false,
         }
     };
-    let have_regular = add("Consolas", "consola.ttf");
-    let have_bold = add("Consolas Bold", "consolab.ttf");
-    let have_symbol = add("Segoe UI Symbol", "seguisym.ttf");
-    let have_emoji = add("Segoe UI Emoji", "seguiemj.ttf");
+    let have_regular = add("Consolas", &["consola.ttf", "cour.ttf", "arial.ttf"]);
+    let have_bold = add("Consolas Bold", &["consolab.ttf", "courbd.ttf", "arialbd.ttf"]);
+    let have_symbol = add("Segoe UI Symbol", &["seguisym.ttf", "segoeui.ttf"]);
 
-    let mut family = |name: &str, primary: &[(&str, bool)], fallback: &[String]| {
-        let mut list: Vec<String> = primary
-            .iter()
-            .filter(|(_, present)| *present)
-            .map(|(font, _)| font.to_string())
-            .collect();
-        list.extend(fallback.iter().cloned());
-        if have_symbol {
-            list.push("Segoe UI Symbol".into());
-        }
-        if have_emoji {
-            list.push("Segoe UI Emoji".into());
-        }
-        fonts.families.insert(FontFamily::Name(name.into()), list);
+    let present = |list: &[(&str, bool)]| -> Vec<String> {
+        list.iter().filter(|(_, present)| *present).map(|(font, _)| font.to_string()).collect()
     };
-    family(CONSOLAS, &[("Consolas", have_regular)], &fallback_mono);
-    family(CONSOLAS_BOLD, &[("Consolas Bold", have_bold), ("Consolas", have_regular)], &fallback_mono);
-    family(SYMBOL, &[("Segoe UI Symbol", have_symbol), ("Segoe UI Emoji", have_emoji)], &fallback_prop);
-
+    let regular = present(&[("Consolas", have_regular), ("Segoe UI Symbol", have_symbol)]);
+    let bold = present(&[("Consolas Bold", have_bold), ("Consolas", have_regular), ("Segoe UI Symbol", have_symbol)]);
+    let symbol = present(&[("Segoe UI Symbol", have_symbol), ("Consolas", have_regular)]);
+    fonts.families.insert(FontFamily::Name(CONSOLAS.into()), regular.clone());
+    fonts.families.insert(FontFamily::Name(CONSOLAS_BOLD.into()), bold);
+    fonts.families.insert(FontFamily::Name(SYMBOL.into()), symbol);
     // The default families too, so stray widgets match.
-    if have_regular {
-        for fam in [FontFamily::Monospace, FontFamily::Proportional] {
-            fonts.families.entry(fam).or_default().insert(0, "Consolas".into());
-        }
-    }
+    fonts.families.insert(FontFamily::Monospace, regular.clone());
+    fonts.families.insert(FontFamily::Proportional, regular);
     ctx.set_fonts(fonts);
 }
 

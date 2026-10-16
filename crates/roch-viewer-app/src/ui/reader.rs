@@ -18,7 +18,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use rochviewer::display_values::{EM_DASH, module_pair_text, read_side, summary_compact_ohm};
+use rochviewer::display_values::{EM_DASH, WINDOWED_TABS, module_pair_text, read_side, summary_compact_ohm};
 use rochviewer::row::{Channel, Row};
 use rochviewer::timings::Backend;
 
@@ -128,13 +128,16 @@ pub struct Reader {
 
 impl Reader {
     /// Start the worker. `repaint` is called whenever a value changes.
-    pub fn start(backend: Arc<Backend>, repaint: impl Fn() + Send + 'static) -> Self {
+    ///
+    /// `first` is read before anything else -- what the opening page shows --
+    /// so it fills in while the rest of the table is still being read.
+    pub fn start(backend: Arc<Backend>, first: Vec<usize>, repaint: impl Fn() + Send + Sync + 'static) -> Self {
         let values = Values::default();
         let (sender, receiver) = mpsc::channel();
         let worker_values = values.clone();
         std::thread::Builder::new()
             .name("row-reader".into())
-            .spawn(move || worker(backend, worker_values, receiver, repaint))
+            .spawn(move || worker(backend, first, worker_values, receiver, repaint))
             .expect("spawning the reader thread");
         Reader { values, sender }
     }
@@ -173,20 +176,59 @@ pub fn read_row(backend: &Backend, row: &Row, channel: Option<Channel>) -> RowVa
     .unwrap_or_else(|_| RowValue { text: EM_DASH.to_string(), sides: None, dimmed: false })
 }
 
-fn worker(backend: Arc<Backend>, values: Values, receiver: Receiver<Request>, repaint: impl Fn()) {
+/// Whether the main window draws this row at all. The Sensors rows are the
+/// Telemetry window's, which reads them itself while it is open; the Python
+/// main window never read them, and polling them here every second cost a
+/// processor sample, the event log and the Super I/O for nothing.
+pub fn shown_in_main_window(row: &Row) -> bool {
+    !WINDOWED_TABS.contains(&row.tab.as_str())
+}
+
+/// How often values read in a long pass are handed to the window.
+const PASS_REPAINT: Duration = Duration::from_millis(30);
+
+fn worker(backend: Arc<Backend>, first: Vec<usize>, values: Values, receiver: Receiver<Request>, repaint: impl Fn() + Sync) {
     let mut channel: Option<Channel> = None;
     let read_all = |rows: &mut dyn Iterator<Item = usize>, channel: Option<Channel>| {
         let mut changed = false;
+        let mut last_repaint = Instant::now();
         for index in rows {
+            if changed && last_repaint.elapsed() >= PASS_REPAINT {
+                repaint();
+                changed = false;
+                last_repaint = Instant::now();
+            }
+            let started = Instant::now();
             changed |= values.set(index, read_row(&backend, &backend.rows[index], channel));
+            if super::timing::enabled() && started.elapsed().as_secs_f64() > 0.004 {
+                super::timing::took(&format!("  slow row {} / {}", backend.rows[index].tab, backend.rows[index].name), started);
+            }
         }
         changed
     };
 
-    if read_all(&mut (0..backend.rows.len()), channel) {
+    let first_pass = Instant::now();
+    let shown: Vec<usize> = (0..backend.rows.len()).filter(|&i| shown_in_main_window(&backend.rows[i])).collect();
+    let mut order: Vec<usize> = first.into_iter().filter(|i| shown.contains(i)).collect();
+    let mut queued = vec![false; backend.rows.len()];
+    order.retain(|&i| !std::mem::replace(&mut queued[i], true));
+    order.extend(shown.iter().copied().filter(|&i| !queued[i]));
+    // The voltage snapshot is one long read -- every board rail through the
+    // Super I/O and both PMICs over SMBus -- that the rest of the table does
+    // not wait on. It runs beside the other rows rather than in front of
+    // them; each transport takes its own lock, and the snapshot is computed
+    // once whichever row asks first.
+    let (slow, quick): (Vec<usize>, Vec<usize>) = order.into_iter().partition(|&i| backend.rows[i].tab == "Voltages");
+    let changed = std::thread::scope(|scope| {
+        let beside = scope.spawn(|| read_all(&mut slow.into_iter(), channel));
+        let here = read_all(&mut quick.into_iter(), channel);
+        here | beside.join().unwrap_or(true)
+    });
+    if changed {
         repaint();
     }
-    let live: Vec<usize> = (0..backend.rows.len()).filter(|&i| backend.rows[i].live).collect();
+    super::timing::took("first read of every row", first_pass);
+    let live: Vec<usize> = shown.iter().copied().filter(|&i| backend.rows[i].live).collect();
     let started = Instant::now();
     let mut retried_blanks = false;
     let mut next_live = Instant::now() + LIVE_REFRESH;
@@ -218,7 +260,7 @@ fn worker(backend: Arc<Backend>, values: Values, receiver: Receiver<Request>, re
             }
             Ok(Request::Select(selected)) => {
                 channel = selected;
-                let dual: Vec<usize> = (0..backend.rows.len()).filter(|&i| backend.rows[i].is_dual()).collect();
+                let dual: Vec<usize> = shown.iter().copied().filter(|&i| backend.rows[i].is_dual()).collect();
                 if read_all(&mut dual.into_iter(), channel) {
                     repaint();
                 }
@@ -322,7 +364,7 @@ mod tests {
             // Blank the first time, as a lost race does.
             if counter.fetch_add(1, Ordering::SeqCst) == 0 { None } else { Some("1:2".into()) }
         });
-        let reader = Reader::start(Arc::new(Backend { platform: Platform::Unsupported, rows: vec![fixed], unavailable: EM_DASH }), || {});
+        let reader = Reader::start(Arc::new(Backend { platform: Platform::Unsupported, rows: vec![fixed], unavailable: EM_DASH }), Vec::new(), || {});
         let deadline = Instant::now() + Duration::from_secs(5);
         while reader.values.get(0).as_deref() != Some("1:2") && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(50));
@@ -345,7 +387,7 @@ mod tests {
         first.refresh = Some(refresh.clone());
         let mut second = Row::new("b", "c", "Voltages", "Left").with_value("2");
         second.refresh = Some(refresh);
-        let reader = Reader::start(Arc::new(backend(vec![first, second])), || {});
+        let reader = Reader::start(Arc::new(backend(vec![first, second])), Vec::new(), || {});
         reader.reread(vec![0, 1]);
         let deadline = Instant::now() + Duration::from_secs(5);
         while refreshed.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
