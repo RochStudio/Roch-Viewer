@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Hardware access, decoders and platform tables for Roch Viewer"
 
+[features]
+# Per-thread caches for crates whose tests build tables against fakes.
+testing = []
+
 [dependencies]
 libloading = "0.9.0"
 regex = "1.13.1"

@@ -1081,7 +1081,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "needs table port"]
     fn the_real_table_produces_rows() {
         let backend = Arc::new(rochviewer::timings::load_timing_backend(Platform::Lga1700Ddr5));
         let entries = advanced_entries(&backend, named());

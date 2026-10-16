@@ -385,7 +385,6 @@ fn plain(entries: &[SummaryEntry]) -> Vec<String> {
 }
 
 #[test]
-#[ignore = "needs intel_timings port"]
 fn summary_drops_the_rows_that_restate_a_row_it_already_lists() {
     // tWR_MR restates tWR and tRTP_MR restates tRTP. On Timings each sits
     // directly under the row it refers to and the pairing is the point; on
@@ -402,7 +401,6 @@ fn summary_drops_the_rows_that_restate_a_row_it_already_lists() {
 }
 
 #[test]
-#[ignore = "needs intel_timings port"]
 fn summary_leaves_tcpded_on_the_timings_tab() {
     let rows = intel_table(Platform::Lga1700Ddr4);
     let (primary, tertiary) = intel_summary_timing_columns(&rows, &[], &[]);
@@ -411,7 +409,6 @@ fn summary_leaves_tcpded_on_the_timings_tab() {
 }
 
 #[test]
-#[ignore = "needs intel_timings port"]
 fn the_refresh_cycle_rows_follow_the_write_recovery() {
     for platform in [Platform::Lga1700Ddr4, Platform::Lga1700Ddr5] {
         let rows = intel_table(platform);
@@ -433,7 +430,6 @@ fn the_refresh_cycle_rows_follow_the_write_recovery() {
 }
 
 #[test]
-#[ignore = "needs intel_timings port"]
 fn tmod_follows_the_last_write_turnaround() {
     let rows = intel_table(Platform::Lga1700Ddr4);
     let (primary, tertiary) = intel_summary_timing_columns(&rows, &[], &[]);
@@ -444,7 +440,6 @@ fn tmod_follows_the_last_write_turnaround() {
 }
 
 #[test]
-#[ignore = "needs intel_timings port"]
 fn tcke_follows_trefix9_and_other_power_down_rows_are_omitted() {
     let rows = intel_table(Platform::Lga1700Ddr4);
     let (primary, tertiary) = intel_summary_timing_columns(&rows, &[], &[]);
@@ -458,7 +453,6 @@ fn tcke_follows_trefix9_and_other_power_down_rows_are_omitted() {
 }
 
 #[test]
-#[ignore = "needs intel_timings port"]
 fn only_the_spelling_this_platform_uses_is_listed() {
     // Both spellings are offered and the one that does not exist here
     // resolves to nothing, so the column never carries a name with no row
@@ -476,7 +470,6 @@ fn only_the_spelling_this_platform_uses_is_listed() {
 }
 
 #[test]
-#[ignore = "needs intel_timings port"]
 fn the_exclusion_list_governs_both_summary_columns() {
     // tREFI is the exception and is meant to be: the Tertiary column pins it
     // at its head deliberately.
@@ -489,20 +482,21 @@ fn the_exclusion_list_governs_both_summary_columns() {
 }
 
 #[test]
-#[ignore = "needs intel_timings port and the AM5 table"]
 fn every_excluded_name_is_a_row_that_exists() {
     // An excluded name with no row behind it excludes nothing. The list is
     // shared, so every platform's table counts.
-    let mut present = names(&intel_table(Platform::Lga1700Ddr4));
-    present.extend(names(&intel_table(Platform::Lga1700Ddr5)));
-    present.extend(names(&rochviewer::amd::profile::build_timings()));
+    // Each table on a thread of its own, so one platform's cached identity
+    // cannot leak into the next build.
+    let build = |f: fn() -> Vec<Row>| std::thread::spawn(move || names(&f())).join().unwrap();
+    let mut present = build(|| intel_table(Platform::Lga1700Ddr4));
+    present.extend(build(|| intel_table(Platform::Lga1700Ddr5)));
+    present.extend(build(rochviewer::amd::profile::build_timings));
     for name in SUMMARY_EXCLUDED_TIMING_NAMES {
         assert!(present.contains(*name), "{name}");
     }
 }
 
 #[test]
-#[ignore = "needs intel_timings port"]
 fn the_signal_tail_is_not_a_vref_row_and_names_rows_that_exist() {
     let rows = intel_table(Platform::Lga1700Ddr4);
     let vref = summary_vref_row_names(&rows);
@@ -516,7 +510,6 @@ fn the_signal_tail_is_not_a_vref_row_and_names_rows_that_exist() {
 }
 
 #[test]
-#[ignore = "needs intel_timings port"]
 fn summary_keeps_the_compact_rtl_rows() {
     let rows = intel_table(Platform::Lga1700Ddr5);
     let (primary, tertiary) = intel_summary_timing_columns(&rows, &[], &[]);
@@ -528,7 +521,6 @@ fn summary_keeps_the_compact_rtl_rows() {
 // test_misc_tab.py, the window's half: what the tabs make of the table.
 
 #[test]
-#[ignore = "needs intel_timings port"]
 fn training_sections_are_drawn_in_the_declared_order() {
     for platform in [Platform::Lga1700Ddr4, Platform::Lga1700Ddr5] {
         let rows = intel_table(platform);
@@ -549,7 +541,6 @@ fn training_sections_are_drawn_in_the_declared_order() {
 }
 
 #[test]
-#[ignore = "needs intel_timings port"]
 fn the_imc_columns_hold_the_signal_groups_and_power_down() {
     let rows = intel_table(Platform::Lga1700Ddr4);
     let column = |category: &str| rows.iter().find(|r| r.tab == "IMC" && r.category == category).map(|r| r.column.clone());
@@ -562,7 +553,6 @@ fn the_imc_columns_hold_the_signal_groups_and_power_down() {
 }
 
 #[test]
-#[ignore = "needs intel_timings port"]
 fn the_reading_tabs_are_offered_and_rtl_has_two_channel_columns() {
     let rows = intel_table(Platform::Lga1700Ddr5);
     let tabs = tab_names_for(&rows);
@@ -585,7 +575,6 @@ fn the_reading_tabs_are_offered_and_rtl_has_two_channel_columns() {
 }
 
 #[test]
-#[ignore = "needs intel_timings port"]
 fn each_reading_tab_section_draws_as_one_block() {
     // A category whose rows are not contiguous renders as two headings with
     // the same name -- the trap the Timings tab hit.
@@ -603,7 +592,6 @@ fn each_reading_tab_section_draws_as_one_block() {
 }
 
 #[test]
-#[ignore = "needs intel_timings port"]
 fn system_info_columns_follow_the_requested_section_order() {
     let rows = intel_table(Platform::Lga1700Ddr5);
     let layout = detail_layout(&rows, "System Info");
@@ -616,7 +604,6 @@ fn system_info_columns_follow_the_requested_section_order() {
 }
 
 #[test]
-#[ignore = "needs intel_timings port"]
 fn every_sensor_category_has_a_place_in_the_window() {
     // The Telemetry window orders its groups by SENSOR_GROUP_ORDER, and a
     // category absent from it sorts to the end with no heading of its own.

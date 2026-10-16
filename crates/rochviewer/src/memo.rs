@@ -7,22 +7,23 @@
 //! test's stubbed hardware into another. Under `cfg(test)` every cache here
 //! is keyed by the calling thread, which gives each test its own empty cache
 //! without anyone remembering to clear it; in a real build it is one shared
-//! value.
+//! value. The `testing` feature turns the per-thread behaviour on for
+//! crates that test against this one (the window's tests).
 
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Mutex;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 type Scope = std::thread::ThreadId;
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "testing")))]
 type Scope = ();
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 fn scope() -> Scope {
     std::thread::current().id()
 }
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "testing")))]
 fn scope() -> Scope {}
 
 /// A value computed once (per test thread under `cfg(test)`).
@@ -117,12 +118,12 @@ impl<K: Eq + Hash + Clone, V: Clone> MemoMap<K, V> {
     pub fn clear(&self) {
         let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(map) = slots.as_mut() {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "testing"))]
             {
                 let mine = scope();
                 map.retain(|(owner, _), _| *owner != mine);
             }
-            #[cfg(not(test))]
+            #[cfg(not(any(test, feature = "testing")))]
             map.clear();
         }
     }
