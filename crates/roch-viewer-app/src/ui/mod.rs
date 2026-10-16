@@ -4,11 +4,19 @@
 pub mod admin;
 pub mod app;
 pub mod asset_path;
+pub mod draw;
+pub mod fixture;
+pub mod layout;
 pub mod popouts;
 pub mod reader;
+pub mod selector;
 pub mod settings;
+pub mod spd_tab;
+pub mod summary;
 pub mod tabs;
 pub mod theme;
+#[cfg(test)]
+mod ui_tests;
 
 use rochviewer::version::{APP_NAME, VERSION};
 

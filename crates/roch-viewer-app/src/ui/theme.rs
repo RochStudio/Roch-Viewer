@@ -4,24 +4,72 @@
 //! shared surfaces and primary text in both modes, the brand red for what is
 //! selected or what a block is, and a separate red for live readings.
 
+use eframe::egui::text::{LayoutJob, TextFormat};
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId};
 use std::sync::Arc;
 
-/// Tk measured fonts in points at 96 DPI; egui measures in logical pixels.
-pub const fn pt(points: f32) -> f32 {
-    points * 96.0 / 72.0
-}
+use rochviewer::platform_profiles::Platform;
 
-pub const FONT_SIZE: f32 = pt(12.0);
-pub const TAB_FONT_SIZE: f32 = pt(13.0);
-pub const IMC_FONT_SIZE: f32 = pt(11.0);
-pub const TITLE_CLOSE_SIZE: f32 = pt(20.0);
-pub const TITLE_MINIMIZE_SIZE: f32 = pt(18.0);
-pub const TITLE_THEME_SIZE: f32 = pt(18.0);
-pub const TITLE_SCREENSHOT_SIZE: f32 = pt(14.0);
+// CustomTkinter gives font sizes in pixels, not points: ("Consolas", 12) is a
+// 12px em. egui's sizes are pixels too (one em), so the numbers carry over.
+pub const FONT_SIZE: f32 = 12.0;
+pub const TAB_FONT_SIZE: f32 = 13.0;
+pub const IMC_FONT_SIZE: f32 = 11.0;
+pub const TITLE_CLOSE_SIZE: f32 = 20.0;
+pub const TITLE_MINIMIZE_SIZE: f32 = 18.0;
+pub const TITLE_THEME_SIZE: f32 = 18.0;
+pub const TITLE_SCREENSHOT_SIZE: f32 = 14.0;
 
 pub const ROW_HEIGHT: f32 = 20.0;
+/// The gap under a blocked section. Every tab is continuous now, so none
+/// draws it; kept as the Python's constant.
+#[allow(dead_code)]
 pub const SECTION_GAP: f32 = 3.0;
+
+/// Consolas' advance, as a fraction of the em (1126 of 2048 units).
+const CONSOLAS_ADVANCE: f32 = 1126.0 / 2048.0;
+
+/// What a Tk window drew each Consolas character as: GDI hints the advance
+/// to a whole pixel, so a 12px Consolas steps 7px a character where the
+/// outline says 6.6. Every column in the window was measured in those 7px
+/// characters, so the text is laid out on them here too.
+pub fn gdi_letter_spacing(size: f32) -> f32 {
+    let advance = size * CONSOLAS_ADVANCE;
+    advance.round() - advance
+}
+
+/// 18 on LGA1700 DDR5, whose Training is 43 lines to a column: at 19 it
+/// needed more height than a 1080p screen leaves. Consolas at 12 stays clear
+/// inside 18; it clipped at IMC's 17.
+pub fn training_row_height(platform: Platform) -> f32 {
+    if platform == Platform::Lga1700Ddr5 { 18.0 } else { 19.0 }
+}
+
+/// IMC carries the controller's full register set elsewhere, so it uses a
+/// 17-pixel row pitch and a dedicated 11px face that keeps Consolas clear
+/// inside it. On LGA1700 DDR5 the per-module rows moved to Training, and the
+/// rest reads in the same face and pitch as every other tab.
+pub fn imc_row_height(platform: Platform) -> f32 {
+    if platform == Platform::Lga1700Ddr5 { ROW_HEIGHT } else { 17.0 }
+}
+
+pub fn imc_font_size(platform: Platform) -> f32 {
+    if platform == Platform::Lga1700Ddr5 { FONT_SIZE } else { IMC_FONT_SIZE }
+}
+
+/// The compact table-row height used by a detail tab.
+pub fn row_height_for_tab(platform: Platform, tab: &str) -> f32 {
+    match tab {
+        "Training" => training_row_height(platform),
+        "IMC" => imc_row_height(platform),
+        _ => ROW_HEIGHT,
+    }
+}
+
+/// The text face a detail tab's rows use.
+pub fn font_size_for_tab(platform: Platform, tab: &str) -> f32 {
+    if tab == "IMC" { imc_font_size(platform) } else { FONT_SIZE }
+}
 
 pub const CONSOLAS: &str = "consolas";
 pub const CONSOLAS_BOLD: &str = "consolas-bold";
@@ -47,6 +95,7 @@ pub struct Palette {
     /// Odd-row band. The same as the background since 1.1.0 aligned the
     /// shared theme; kept as its own role so a tab can still band.
     pub band: Color32,
+    #[allow(dead_code)]
     pub hairline: Color32,
     pub brand: Color32,
     pub brand_hover: Color32,
@@ -87,6 +136,16 @@ pub fn bold(size: f32) -> FontId {
 
 pub fn symbol(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(SYMBOL.into()))
+}
+
+/// One run of text in a Consolas face, spaced the way the Tk window spaced
+/// it (see [`gdi_letter_spacing`]).
+pub fn job(text: impl Into<String>, font_id: FontId, color: Color32) -> LayoutJob {
+    let extra_letter_spacing = match &font_id.family {
+        FontFamily::Name(name) if &**name == CONSOLAS || &**name == CONSOLAS_BOLD => gdi_letter_spacing(font_id.size),
+        _ => 0.0,
+    };
+    LayoutJob::single_section(text.into(), TextFormat { font_id, color, extra_letter_spacing, ..Default::default() })
 }
 
 fn system_font(name: &str) -> Option<Vec<u8>> {
