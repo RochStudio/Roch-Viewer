@@ -652,7 +652,8 @@ fn title_glyph(painter: &egui::Painter, rect: Rect, response: &egui::Response, h
     if response.hovered() {
         painter.rect_filled(rect, 0.0, hover);
     }
-    painter.text(rect.center(), egui::Align2::CENTER_CENTER, text, theme::symbol(size), color);
+    // A pixel below centre, where Tk's button set the glyph.
+    painter.text(rect.center() + vec2(0.0, 1.0), egui::Align2::CENTER_CENTER, text, theme::symbol(size), color);
 }
 
 /// One of the two tools on the tab strip, laid right to left from `right`.
