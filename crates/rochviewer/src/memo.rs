@@ -117,8 +117,13 @@ impl<K: Eq + Hash + Clone, V: Clone> MemoMap<K, V> {
     pub fn clear(&self) {
         let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(map) = slots.as_mut() {
-            let mine = scope();
-            map.retain(|(owner, _), _| *owner != mine);
+            #[cfg(test)]
+            {
+                let mine = scope();
+                map.retain(|(owner, _), _| *owner != mine);
+            }
+            #[cfg(not(test))]
+            map.clear();
         }
     }
 }
