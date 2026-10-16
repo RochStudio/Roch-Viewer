@@ -76,16 +76,15 @@ Intel LGA1700/LGA1851 and supported AMD AM5/Granite Ridge systems. Readings depe
 
 ## Build from source
 
-Install **Python 3.12 or 3.13 (x64)** with Tkinter, then run:
+Roch Viewer is written in Rust. Install the stable toolchain with [rustup](https://rustup.rs) (x86_64-pc-windows-msvc, which needs the Visual Studio C++ Build Tools), then run:
 
 ```powershell
-py -3.12 -m pip install -r requirements.txt
-py -3.12 -m PyInstaller -y RochViewer.spec
+cargo build --release
 ```
 
-Output: `dist\RochViewer.exe`. Put the separately obtained `inpoutx64.dll` beside it. To run from source, put the DLL beside `run_viewer.py` and use `pyw -3.12 run_viewer.py`.
+Output: `target\release\RochViewer.exe`. Put the separately obtained `inpoutx64.dll` beside it. To run from a checkout, put the DLL in the project folder and use `cargo run --release`; the program looks in its own folder and in the folders above it.
 
-Tests: `py -3.12 -m unittest discover -s tests -t .`
+Tests: `cargo test --workspace`
 
 ## Credits
 

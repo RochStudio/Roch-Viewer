@@ -71,7 +71,7 @@ GPL-3.0, which is why this project is GPL-3.0 too. See
 - Administrator rights. Low-level register access requires them.
 - **`inpoutx64.dll`**, which is not distributed here. Get it from
   Highresolution Enterprises (www.highrez.co.uk) and put it beside
-  `RochViewer.exe`, or beside `run_viewer.py` to run from source. See
+  `RochViewer.exe`, or in the project folder to run from source. See
   `THIRD_PARTY_NOTICES.txt` for why it is not bundled.
 
   That one file is all you need — the "Binaries only" archive on the
@@ -231,12 +231,9 @@ step 2 or 3 did not take. The strip names the folders it looked in.
 
 ### From source
 
-1. **Install Python 3.13, 64-bit**, from
-   [python.org](https://www.python.org/downloads/windows/). Take the
-   *Windows installer (64-bit)*, and during setup leave **tcl/tk and IDLE**
-   ticked — the interface is Tkinter and will not start without it. Ticking
-   *Add python.exe to PATH* is convenient but not required; the commands below
-   use the `py` launcher, which the installer always provides.
+1. **Install Rust** with [rustup](https://rustup.rs), taking the default
+   `x86_64-pc-windows-msvc` toolchain. It needs the Visual Studio C++ Build
+   Tools; the rustup installer offers to fetch them if they are missing.
 
 2. **Get the code.**
 
@@ -247,59 +244,41 @@ step 2 or 3 did not take. The strip names the folders it looked in.
 
    Or download the ZIP from the repository page and extract it.
 
-3. **Install the four dependencies.**
+3. **Put `inpoutx64.dll` in the project folder.** Same file, same source as
+   step 2 of the quick way, and the same caveat about the service it installs.
+   The program looks in its own folder and the folders above it, so the
+   project folder is found from `target\release`.
+
+4. **Run it.**
 
    ```
-   py -V:3.13 -m pip install -r requirements.txt
+   cargo run --release
    ```
 
-   That is `customtkinter` for the interface, `wmi` and `pywin32` for the
-   Windows queries, and `pyinstaller` only if you want to build an EXE.
+   Accept the administrator prompt. The first build takes a few minutes.
 
-4. **Put `inpoutx64.dll` in the project folder**, beside `run_viewer.py`.
-   Same file, same source as step 2 of the quick way, and the same caveat
-   about the service it installs.
+The executable is `target\release\RochViewer.exe`. To hand it to someone
+else, copy it and put the driver beside *that* copy -- building does not move
+it.
 
-5. **Run it.**
+### Console output
 
-   ```
-   pyw -V:3.13 run_viewer.py
-   ```
-
-   Accept the administrator prompt. If you started from an ordinary,
-   non-elevated prompt, that prompt is where the elevation happens.
-
-To build your own EXE instead:
-
-```
-py -V:3.13 -m PyInstaller --clean -y RochViewer.spec
-```
-
-It lands in `dist\RochViewer.exe`. The driver has to sit beside *that* copy
-too — building does not move it.
-
-### Which launcher, and why
-
-`pyw` is the windowed launcher, so the viewer comes up without a console
-behind it — the same as the built EXE, which is already windowed. Starting
-with `py` from an ordinary prompt gets you there too: accepting the
-administrator prompt starts a fresh process, and that one is windowed
-whichever launcher you used.
-
-Use `py` from an **already elevated** prompt when you want the console. There
-is no elevation step to pass through, so the process keeps the one it was
-given, and the diagnostics the tool prints when a register or a transport does
-not answer have somewhere to land. Under a windowed launcher they go nowhere.
+A release build is a windowed executable, so the diagnostics the tool prints
+when a register or a transport does not answer go nowhere. A debug build
+(`cargo run`, without `--release`) keeps its console. Start it from an
+**already elevated** prompt to keep that console: elevating from an ordinary
+prompt starts a fresh process.
 
 ### Running the tests
 
 ```
-py -V:3.13 -m unittest discover -s tests -t .
+cargo test --workspace
 ```
 
-A handful skip where they need hardware, a platform or a display the running
-machine does not have — a test gated to AM5 skips on an Intel bench, and the
-reverse. GitHub Actions runs the whole suite on Windows for every push.
+The tests fake the hardware and WMI, so they run anywhere. The few that need a
+real bench are `#[ignore]`d; `cargo test --workspace -- --ignored` runs them
+on an elevated machine with the driver present. GitHub Actions runs the suite
+on Windows for every push.
 
 ## Licence
 

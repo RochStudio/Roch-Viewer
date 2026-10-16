@@ -1,8 +1,10 @@
 """Dump the Python AM5 table under stubs, for the Rust parity test.
 
-Run from the repository root:
+The Python it builds is the 1.1.0 release, which the Rust replaced; it is
+no longer on this branch. To regenerate the fixture, check out the v1.1.0
+tag beside this repository and run this from that checkout's root:
 
-    python crates/rochviewer/src/amd/profile/parity/dump_python_profile.py
+    python <this repository>/crates/rochviewer/src/amd/profile/parity/dump_python_profile.py
 
 It builds rochviewer/amd/profile.py's table three times with nothing real
 underneath -- WMI, the SMN reader, the APOB reader, every live source and
@@ -24,7 +26,8 @@ import time
 import types
 from unittest import mock
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[".."] * 6))
+# The v1.1.0 checkout this is run from, which holds the rochviewer package.
+ROOT = os.getcwd()
 sys.path.insert(0, ROOT)
 OUT = os.path.join(os.path.dirname(__file__), "am5_profile_parity.json")
 

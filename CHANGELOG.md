@@ -2,6 +2,8 @@
 
 ## 1.1.0 (Unreleased)
 
+- Rewritten in Rust. The window is egui instead of customtkinter, and `RochViewer.exe` is built with `cargo build --release` instead of PyInstaller. Every tab, the Advanced and Telemetry windows and the screenshot button carry over with the same rows, values, sizes and colours, and settings are read from the same file, so the chosen appearance survives the upgrade. Rows are read on background threads, so the window never waits on a register. Checked against the Python 1.1.0 row by row on an LGA1700 DDR5 bench, and against its tables built on stubs for LGA1700 DDR4, LGA1851 and AM5 (all platforms).
+
 - Summary: each existing column has its own rounded group, preserving all labels, values, order and placement.
 
 ## 1.0.9 (2026-09-28)

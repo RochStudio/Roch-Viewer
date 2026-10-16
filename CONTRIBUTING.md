@@ -27,12 +27,13 @@ prevent.
 ## Running the tests
 
 ```
-py -m pip install -r requirements.txt
-py -m unittest discover -s tests -t .
+cargo test --workspace
 ```
 
-Three or so will skip without hardware or a display. On an Intel DDR5 bench
-with the driver present, everything runs.
+The tests never touch the machine they run on: hardware and WMI are faked per
+test. The handful that need a real bench are `#[ignore]`d; on an elevated
+Intel DDR5 bench with the driver present, `cargo test --workspace -- --ignored`
+runs those too.
 
 ## Running the viewer
 
@@ -41,7 +42,10 @@ README. They are not distributed with this project.
 
 ## Layout
 
-Modules are grouped by what they talk to, under `rochviewer/`:
+A Cargo workspace of two crates. `crates/rochviewer` is everything that reads
+and decodes; `crates/roch-viewer-app` is the window, built as
+`RochViewer.exe`. Inside the library, modules are grouped by what they talk
+to:
 
 | folder | what is in it |
 | --- | --- |
@@ -50,11 +54,15 @@ Modules are grouped by what they talk to, under `rochviewer/`:
 | `memory` | SPD identity, the DIMM thermal sensors and PMICs, the inventory |
 | `sensors` | Super I/O chips, the EC, CPU clocks, rails, Windows error log |
 | `gpu` | the graphics card |
-| `ui` | the window, the searchable list, the telemetry pop-out |
+| `amd` | UMC timings, the APOB, the SMU, the FCH SMBus, AMD graphics |
 
-The dispatcher and the platform profile sit at the package root, because they
-decide which of the rest is allowed to run at all. `run_viewer.py` at the
-repository root is the entry point, and the one PyInstaller is pointed at.
+The window, the searchable list and the telemetry pop-out are
+`crates/roch-viewer-app/src/ui`. The dispatcher (`timings.rs`) and the
+platform profile (`platform_profiles.rs`) sit at the library root, because
+they decide which of the rest is allowed to run at all.
+[docs/rust-port.md](docs/rust-port.md) describes the conventions the code
+follows -- the row model, the hardware and WMI seams, and how tests fake
+them.
 
 ## Scope
 

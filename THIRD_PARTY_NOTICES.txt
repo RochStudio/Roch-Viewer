@@ -38,20 +38,37 @@ remains with its authors.
 
 The files concerned:
 
-  rochviewer/amd/agesa.py           rochviewer/amd/apob.py
-  rochviewer/amd/fch_smbus.py       rochviewer/amd/power_metrics.py
-  rochviewer/amd/profile.py         rochviewer/amd/smu_clocks.py
-  rochviewer/amd/smu_power.py       rochviewer/amd/smu_voltages.py
-  rochviewer/amd/timings.py         rochviewer/memory/ddr5_pmic.py
-  rochviewer/memory/ddr5_telemetry.py
+  crates/rochviewer/src/amd/agesa.rs
+  crates/rochviewer/src/amd/apob.rs
+  crates/rochviewer/src/amd/fch_smbus.rs
+  crates/rochviewer/src/amd/power_metrics.rs
+  crates/rochviewer/src/amd/profile/
+  crates/rochviewer/src/amd/smu_clocks.rs
+  crates/rochviewer/src/amd/smu_power.rs
+  crates/rochviewer/src/amd/smu_voltages.rs
+  crates/rochviewer/src/amd/timings.rs
+  crates/rochviewer/src/memory/ddr5_pmic.rs
+  crates/rochviewer/src/memory/ddr5_telemetry.rs
 
-Three other files mention those projects without following them, and carry the
-plain notice instead: ddr5_spd.py checks JESD400-5 offsets against them,
-dimm_inventory.py borrows a label format, and ui/main.py a visual convention.
+Three other places mention those projects without following them, and carry
+the plain notice instead: ddr5_spd.rs checks JESD400-5 offsets against them,
+dimm_inventory.rs borrows a label format, and the window a visual convention.
 
 The MIT-licensed gnr-smu research project by Zorko was consulted for
 independent Granite Ridge RSMU mailbox-address provenance. No gnr-smu source
 is bundled, and the diagnostics that used it are not in this repository.
+
+Rust crates  (compiled in)
+--------------------------
+The executable is built from crates published on crates.io, each under a
+licence compatible with GPL-3.0: eframe and egui (MIT OR Apache-2.0), windows
+(MIT OR Apache-2.0), wmi (MIT OR Apache-2.0), libloading (ISC), regex, serde,
+serde_json, image, png and arboard (MIT OR Apache-2.0), and winresource (MIT)
+at build time, with their own dependencies. `cargo tree` lists the full set
+for any build; each crate's licence text ships in its source package.
+
+Fonts are not bundled: Consolas, Segoe UI Symbol and Segoe UI Emoji are read
+from the Windows fonts folder at run time.
 
 Reference tools
 ---------------

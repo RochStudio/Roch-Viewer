@@ -1,8 +1,10 @@
-# Rust port: conventions
+# Rust conventions
 
-Roch Viewer is being rewritten from Python to Rust on the `rust` branch.
-This page is the contract every ported module follows, so modules written
-separately fit together without edits to each other.
+Roch Viewer was rewritten from Python to Rust for 1.1.0. This page is the
+contract the modules follow, so modules written separately fit together
+without edits to each other. Module names follow the Python ones they
+replaced, so the tables below double as a map from the Python source (tag
+`v1.0.9` and earlier) to this one.
 
 ## Layout
 
