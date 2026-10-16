@@ -6,8 +6,9 @@
 //! field and a null field both read as `None`, and numbers that WMI hands
 //! back as strings (every `uint64`, such as `Capacity`) parse as numbers.
 //!
-//! COM requires a connection per thread, so the real source keeps one in a
-//! thread-local. Tests replace the source for their own thread with
+//! COM ties a connection to the thread that made it, so the real source
+//! keeps one connection on a dedicated thread and every query is run there.
+//! Tests replace the source for their own thread with
 //! [`set_thread_source`], which is how the Python tests' `FakeWMI` is ported.
 
 use std::cell::RefCell;
@@ -236,13 +237,9 @@ pub fn clear_static_cache() {
 
 mod real {
     use super::{WmiObject, WmiValue};
-    use std::cell::RefCell;
     use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock, mpsc};
     use wmi::{Variant, WMIConnection};
-
-    thread_local! {
-        static CONNECTION: RefCell<Option<WMIConnection>> = const { RefCell::new(None) };
-    }
 
     fn convert(value: Variant) -> WmiValue {
         match value {
@@ -264,26 +261,57 @@ mod real {
         }
     }
 
+    type Reply = mpsc::Sender<Result<Vec<WmiObject>, String>>;
+
+    /// WMI runs on one thread of its own. COM fixes a thread's apartment the
+    /// first time it is initialised there, and the window's thread is set up
+    /// single-threaded by the windowing library, where the WMI connection
+    /// refuses to work (RPC_E_WRONG_THREAD). A dedicated thread owns the one
+    /// connection for the process, whichever thread asks.
+    fn worker() -> &'static Mutex<mpsc::Sender<(String, Reply)>> {
+        static WORKER: OnceLock<Mutex<mpsc::Sender<(String, Reply)>>> = OnceLock::new();
+        WORKER.get_or_init(|| {
+            let (sender, receiver) = mpsc::channel::<(String, Reply)>();
+            std::thread::Builder::new()
+                .name("wmi".into())
+                .spawn(move || {
+                    let mut connection: Option<WMIConnection> = None;
+                    for (class_name, reply) in receiver {
+                        let _ = reply.send(run(&mut connection, &class_name));
+                    }
+                })
+                .expect("spawning the WMI thread");
+            Mutex::new(sender)
+        })
+    }
+
+    fn run(connection: &mut Option<WMIConnection>, class_name: &str) -> Result<Vec<WmiObject>, String> {
+        if connection.is_none() {
+            *connection = Some(WMIConnection::new().map_err(|e| e.to_string())?);
+        }
+        let connection = connection.as_ref().expect("connection was just created");
+        let rows: Vec<HashMap<String, Variant>> = connection
+            .raw_query(format!("SELECT * FROM {class_name}"))
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|row| WmiObject {
+                fields: row.into_iter().map(|(k, v)| (k, convert(v))).collect(),
+            })
+            .collect())
+    }
+
     pub fn query(class_name: &str) -> Result<Vec<WmiObject>, String> {
         if !class_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return Err(format!("invalid WMI class name {class_name:?}"));
         }
-        CONNECTION.with(|slot| {
-            let mut slot = slot.borrow_mut();
-            if slot.is_none() {
-                *slot = Some(WMIConnection::new().map_err(|e| e.to_string())?);
-            }
-            let connection = slot.as_ref().expect("connection was just created");
-            let rows: Vec<HashMap<String, Variant>> = connection
-                .raw_query(format!("SELECT * FROM {class_name}"))
-                .map_err(|e| e.to_string())?;
-            Ok(rows
-                .into_iter()
-                .map(|row| WmiObject {
-                    fields: row.into_iter().map(|(k, v)| (k, convert(v))).collect(),
-                })
-                .collect())
-        })
+        let (reply, answer) = mpsc::channel();
+        worker()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .send((class_name.to_string(), reply))
+            .map_err(|_| "the WMI thread has stopped".to_string())?;
+        answer.recv().map_err(|_| "the WMI thread has stopped".to_string())?
     }
 }
 
