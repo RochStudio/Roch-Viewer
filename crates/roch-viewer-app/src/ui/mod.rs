@@ -2,10 +2,13 @@
 //! Telemetry pop-out.
 
 pub mod admin;
+pub mod advanced_window;
 pub mod app;
 pub mod asset_path;
+pub mod dimm_telemetry_window;
 pub mod popouts;
 pub mod reader;
+pub mod screenshot;
 pub mod settings;
 pub mod tabs;
 pub mod theme;
