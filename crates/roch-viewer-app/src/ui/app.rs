@@ -17,6 +17,7 @@ use rochviewer::version::{APP_NAME, VERSION};
 
 use super::admin;
 use super::asset_path;
+use super::popouts::{Popouts, Shared};
 use super::reader::Reader;
 use super::settings::Settings;
 use super::tabs::{self, TabContext};
@@ -147,6 +148,19 @@ pub struct TimingApp {
     moon: Option<TextureHandle>,
     driver_notice: Option<String>,
     sized_for: Option<usize>,
+    popouts: Popouts,
+    started: bool,
+    pending: Vec<Action>,
+}
+
+/// What a click asked for, carried out after the frame's layout so the
+/// windows can borrow the whole app.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Action {
+    Advanced,
+    Telemetry,
+    Screenshot,
+    OpenScreenshotFolder,
 }
 
 impl TimingApp {
@@ -188,6 +202,9 @@ impl TimingApp {
             moon,
             driver_notice,
             sized_for: None,
+            popouts: Popouts::new(),
+            started: false,
+            pending: Vec::new(),
         }
     }
 
@@ -240,7 +257,20 @@ impl TimingApp {
                         self.set_appearance(&ctx, !palette.dark);
                     }
                     // A picture of the window, saved and put on the clipboard.
-                    let _ = title_button(ui, &palette, SCREENSHOT_ICON, theme::TITLE_SCREENSHOT_SIZE, TITLE_THEME_WIDTH, palette.tab_unselected_hover);
+                    if title_button(ui, &palette, SCREENSHOT_ICON, theme::TITLE_SCREENSHOT_SIZE, TITLE_THEME_WIDTH, palette.tab_unselected_hover).clicked() {
+                        self.pending.push(Action::Screenshot);
+                    }
+                    // Where the last picture went, for a few seconds; a click
+                    // opens the folder.
+                    if let Some(status) = self.popouts.screenshot_status() {
+                        let response = ui
+                            .add(egui::Label::new(RichText::new(status).font(theme::font(theme::FONT_SIZE)).color(palette.text)).sense(Sense::click()))
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if response.clicked() {
+                            self.pending.push(Action::OpenScreenshotFolder);
+                        }
+                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+                    }
                 });
             },
         );
@@ -281,9 +311,17 @@ impl TimingApp {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(4.0);
-                let _advanced = tool_button(ui, &palette, "Advanced");
+                // Every row from the reading tabs in one searchable list.
+                if tool_button(ui, &palette, "Advanced").clicked() {
+                    self.pending.push(Action::Advanced);
+                }
                 ui.add_space(TOOL_BUTTON_GAP);
-                let _telemetry = tool_button(ui, &palette, "Telemetry");
+                // Everything that moves, in its own window: it polls and
+                // keeps min/max/average, which does not belong on a tab that
+                // reads settings.
+                if tool_button(ui, &palette, "Telemetry").clicked() {
+                    self.pending.push(Action::Telemetry);
+                }
             });
         });
     }
@@ -393,6 +431,30 @@ impl eframe::App for TimingApp {
                 let context = TabContext { rows: &self.backend.rows, values: &self.reader.values, palette: &self.palette };
                 tabs::show_generic(ui, &context, &tab);
             });
+
+        let actions: Vec<Action> = self.pending.drain(..).collect();
+        let current_tab = self.tab_names[self.current].clone();
+        let mut shared = Shared {
+            backend: &self.backend,
+            values: &self.reader.values,
+            palette: &self.palette,
+            settings: &mut self.settings,
+            tab_names: &self.tab_names,
+            current_tab: &current_tab,
+        };
+        if !self.started {
+            self.started = true;
+            self.popouts.startup(&ctx, &mut shared);
+        }
+        for action in actions {
+            match action {
+                Action::Advanced => self.popouts.open_advanced(&ctx, &mut shared),
+                Action::Telemetry => self.popouts.open_telemetry(&ctx, &mut shared),
+                Action::Screenshot => self.popouts.take_screenshot(&ctx, &mut shared),
+                Action::OpenScreenshotFolder => self.popouts.open_screenshot_folder(),
+            }
+        }
+        self.popouts.show(&ctx, &mut shared);
     }
 }
 

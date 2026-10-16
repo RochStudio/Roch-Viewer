@@ -4,6 +4,7 @@
 pub mod admin;
 pub mod app;
 pub mod asset_path;
+pub mod popouts;
 pub mod reader;
 pub mod settings;
 pub mod tabs;
