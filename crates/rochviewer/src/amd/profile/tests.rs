@@ -266,7 +266,9 @@ fn default_transport_is_mcfg_ecam() {
     // closure cannot be compared, so the default is read where it is set.
     let source = include_str!("mod.rs");
     let start = source.find("impl Default for Am5RuntimeOptions").unwrap();
-    let block = &source[start..start + source[start..].find("\n}\n").unwrap()];
+    // The impl's closing brace is the first line that is only "}"; "\n}"
+    // finds it whether the checkout ends lines in LF or CRLF.
+    let block = &source[start..start + source[start..].find("\n}").unwrap()];
     assert!(block.contains("McfgSmnReader::new()"), "{block}");
 }
 
