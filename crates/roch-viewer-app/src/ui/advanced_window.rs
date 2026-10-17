@@ -308,7 +308,7 @@ pub struct AdvancedWindow {
     entries: Arc<Vec<Entry>>,
     /// The two channel headings, filled in off the UI thread once the
     /// installed modules are known.
-    channel_labels: ChannelLabels,
+    pub(crate) channel_labels: ChannelLabels,
     rows: Vec<RowInfo>,
     /// Which sections have a row that reads two channels. A section of
     /// single-channel rows carrying A1/B1 labels names two columns that

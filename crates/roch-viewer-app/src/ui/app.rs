@@ -442,7 +442,7 @@ impl TimingApp {
         self.switched_at = Some(std::time::Instant::now());
         let tab = self.current_tab().to_string();
         if tab == "SPD" {
-            self.spd.load(ctx);
+            self.spd.load(ctx, self.backend.clone());
         }
         // A row may carry `refresh`, which drops its cached reading; every
         // such row on the tab is refreshed and re-read each time the tab is
@@ -656,7 +656,7 @@ impl TimingApp {
         let tab = self.current_tab().to_string();
         let area = chrome.content(&tab);
         if tab == "SPD" {
-            spd_tab::show(ui, &mut self.spd, &self.backend.rows, &self.reader.values, &self.palette, self.backend.platform, area);
+            spd_tab::show(ui, &mut self.spd, &self.palette, self.backend.platform, area);
             return;
         }
         let context = TabContext {
@@ -737,7 +737,7 @@ impl eframe::App for TimingApp {
         if actions.contains(&Action::Advanced) && self.tab_names.iter().any(|t| t == "SPD") {
             // The SPD rows in Advanced fill in from the SPD tab's read; start
             // it if the tab has not been opened yet.
-            self.spd.load(&ctx);
+            self.spd.load(&ctx, self.backend.clone());
         }
         let mut shared = Shared {
             backend: &self.backend,
@@ -746,6 +746,8 @@ impl eframe::App for TimingApp {
             settings: &mut self.settings,
             tab_names: &self.tab_names,
             current_tab: &current_tab,
+            spd: self.spd.source(),
+            channel_labels: &self.channel_labels,
         };
         if !self.started {
             self.started = true;

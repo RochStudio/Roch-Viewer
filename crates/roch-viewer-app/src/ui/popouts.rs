@@ -43,6 +43,10 @@ pub struct Shared<'a> {
     pub settings: &'a mut Settings,
     pub tab_names: &'a [String],
     pub current_tab: &'a str,
+    /// The SPD read the SPD tab owns, which Advanced lists too.
+    pub spd: &'a SpdSource,
+    /// The slot each channel holds, once the main window has read them.
+    pub channel_labels: &'a BTreeMap<String, String>,
 }
 
 /// How long the screenshot status stays beside the button.
@@ -399,7 +403,22 @@ impl SpdSource {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Read SPD once off the UI thread, if it has not been.
+    /// Whether a read is running, and whether one has finished.
+    pub fn status(&self) -> (bool, bool) {
+        let state = self.state();
+        (state.loading, state.loaded)
+    }
+
+    /// The modules the read found, and the system-wide values it resolved.
+    pub fn snapshot(&self) -> (Vec<SpdRecord>, HashMap<String, String>) {
+        let state = self.state();
+        (state.modules.clone(), state.system_values.clone())
+    }
+
+    /// Read SPD once off the UI thread, if it has not been. The SPD tab and
+    /// Advanced share this one read, as the Python's page and window shared
+    /// `_spd_modules`: two SMBus walks at once could disagree, and a page
+    /// already read left Advanced waiting on a read of its own.
     pub fn load_async(&self, backend: Arc<Backend>, repaint: impl Fn() + Send + 'static) {
         {
             let mut state = self.state();
@@ -411,18 +430,19 @@ impl SpdSource {
         let source = self.clone();
         let spawned = std::thread::Builder::new().name("SPD reader".into()).spawn(move || {
             let read = std::panic::catch_unwind(|| rochviewer::memory::spd_profiles::read_spd_modules(None, false));
-            let modules = match read {
-                Ok(Ok(modules)) => modules,
+            // A read that fails drops the system values with the modules,
+            // as the Python's worker did: the page shows dashes throughout.
+            let (modules, system_values) = match read {
+                Ok(Ok(modules)) => (modules, read_spd_system_values(&backend)),
                 Ok(Err(error)) => {
                     eprintln!("SPD tab unavailable: {error}");
-                    Vec::new()
+                    (Vec::new(), HashMap::new())
                 }
                 Err(_) => {
                     eprintln!("SPD tab unavailable: the reader panicked");
-                    Vec::new()
+                    (Vec::new(), HashMap::new())
                 }
             };
-            let system_values = read_spd_system_values(&backend);
             {
                 let mut state = source.state();
                 state.modules = modules;
@@ -936,7 +956,6 @@ pub struct Popouts {
     advanced: Option<Popout<AdvancedWindow>>,
     telemetry: Option<Popout<DimmTelemetryWindow>>,
     capture: Arc<Mutex<Option<Capture>>>,
-    spd: SpdSource,
     auto_open_at: Option<Instant>,
 }
 
@@ -948,7 +967,6 @@ impl Default for Popouts {
             advanced: None,
             telemetry: None,
             capture: Arc::new(Mutex::new(None)),
-            spd: SpdSource::default(),
             auto_open_at: None,
         }
     }
@@ -968,8 +986,12 @@ impl Popouts {
         }
         let backend = shared.backend.clone();
         let id = ViewportId::from_hash_of("advanced");
-        let channels = channel_labels("A1", "B1");
-        {
+        // Named for the slots from the first frame when the main window
+        // already knows them, as the Python passed its own headings in.
+        let known: HashMap<String, String> = shared.channel_labels.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let (a, b) = channel_headers(&known, "A1", "B1");
+        let channels = channel_labels(&a, &b);
+        if known.is_empty() {
             // Named for the slots once the inventory is read. Never on this
             // thread: WMI refuses a call from the window's thread
             // (RPC_E_WRONG_THREAD), and the inventory would cache the
@@ -987,9 +1009,12 @@ impl Popouts {
             // The SPD rows fill in from an SPD read; start it if it has not
             // been.
             let repaint_ctx = ctx.clone();
-            self.spd.load_async(backend.clone(), move || repaint_ctx.request_repaint_of(id));
+            shared.spd.load_async(backend.clone(), move || {
+                repaint_ctx.request_repaint();
+                repaint_ctx.request_repaint_of(id);
+            });
             let (fields, profile_fields) = spd_tab_fields(backend.platform);
-            entries.extend(advanced_spd_entries(&self.spd, fields, profile_fields, channels.clone()));
+            entries.extend(advanced_spd_entries(shared.spd, fields, profile_fields, channels.clone()));
         }
         let window = AdvancedWindow::new(entries, channels, *shared.palette);
         let position = position_beside(ctx, Side::Right, advanced_window::WINDOW_WIDTH, advanced_window::WINDOW_HEIGHT);
@@ -1141,6 +1166,34 @@ mod tests {
 
     fn backend(rows: Vec<Row>) -> Arc<Backend> {
         Arc::new(Backend { platform: Platform::Unsupported, rows, unavailable: EM_DASH })
+    }
+
+    #[test]
+    fn advanced_opens_with_the_slot_names_the_main_window_knows() {
+        // The Python passed its own channel headings in when it opened the
+        // window; the port started at A1/B1 and renamed them later.
+        let ctx = egui::Context::default();
+        let backend = backend(vec![Row::new("tCL", "Primary", "Timings", "Left").with_value("38")]);
+        let palette = Palette::new(true);
+        let mut settings = Settings::default();
+        let spd = SpdSource::with(Vec::new(), HashMap::new());
+        let labels = BTreeMap::from([("a".to_string(), "A2".to_string()), ("b".to_string(), "B2".to_string())]);
+        let values = Values::default();
+        let tab_names: Vec<String> = vec!["Summary".into(), "Timings".into()];
+        let mut shared = Shared {
+            backend: &backend,
+            values: &values,
+            palette: &palette,
+            settings: &mut settings,
+            tab_names: &tab_names,
+            current_tab: "Summary",
+            spd: &spd,
+            channel_labels: &labels,
+        };
+        let mut popouts = Popouts::new();
+        popouts.open_advanced(&ctx, &mut shared);
+        let window = popouts.advanced.as_ref().expect("opened").lock();
+        assert_eq!(*window.channel_labels.lock().unwrap(), ("A2".to_string(), "B2".to_string()));
     }
 
     #[test]

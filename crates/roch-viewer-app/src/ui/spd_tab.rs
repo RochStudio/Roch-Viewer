@@ -6,17 +6,21 @@
 //! labels with dashes, and the selector says what it is waiting for.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use eframe::egui::{self, Id, Rect, Ui, pos2};
 
 use rochviewer::display_values::EM_DASH;
-use rochviewer::memory::spd_profiles::{SpdRecord, SpdValue, read_spd_modules};
+use rochviewer::memory::spd_profiles::{SpdRecord, SpdValue};
 use rochviewer::platform_profiles::Platform;
+#[cfg(test)]
 use rochviewer::row::Row;
+use rochviewer::timings::Backend;
 
 use super::draw::{self, COLUMN_GAP, Edge, PANEL_COLUMN_SPACING, PANEL_GAP, PANEL_PADX, PANEL_PADY};
 use super::layout::{spd_tab_fields, spd_tab_profile_fields};
+use super::popouts::SpdSource;
+#[cfg(test)]
 use super::reader::Values;
 use super::selector::{self, SELECTOR_HEIGHT};
 use super::theme::{self, Palette};
@@ -30,10 +34,11 @@ pub enum SpdState {
     Loaded(Vec<SpdRecord>),
 }
 
-/// The SPD page's state, shared with the thread that reads it.
+/// The SPD page's state: the read it shares with Advanced, and which of
+/// its modules the page shows.
 #[derive(Clone, Default)]
 pub struct SpdTab {
-    state: Arc<Mutex<SpdState>>,
+    source: SpdSource,
     /// The module the page's own selector shows.
     selected: usize,
 }
@@ -49,7 +54,16 @@ pub const SPD_NONE: &str = "No readable SPD modules";
 
 impl SpdTab {
     pub fn state(&self) -> SpdState {
-        self.state.lock().map(|s| s.clone()).unwrap_or_default()
+        match self.source.status() {
+            (_, true) => SpdState::Loaded(self.source.snapshot().0),
+            (true, false) => SpdState::Loading,
+            (false, false) => SpdState::NotStarted,
+        }
+    }
+
+    /// The read itself, for Advanced to list from.
+    pub fn source(&self) -> &SpdSource {
+        &self.source
     }
 
     /// The modules once read, for anything else that lists them: the
@@ -62,51 +76,42 @@ impl SpdTab {
         }
     }
 
-    /// Read SPD once off the UI thread; later calls do nothing.
-    pub fn load(&self, ctx: &egui::Context) {
-        {
-            let Ok(mut state) = self.state.lock() else { return };
-            if !matches!(*state, SpdState::NotStarted) {
-                return;
-            }
-            *state = SpdState::Loading;
-        }
-        let state = self.state.clone();
+    /// Read SPD once off the UI thread; later calls, from here or from
+    /// Advanced, do nothing.
+    pub fn load(&self, ctx: &egui::Context, backend: Arc<Backend>) {
         let ctx = ctx.clone();
-        let spawned = std::thread::Builder::new().name("SPD reader".into()).spawn(move || {
-            let modules = std::panic::catch_unwind(|| read_spd_modules(None, false))
-                .unwrap_or_else(|_| Ok(Vec::new()))
-                .unwrap_or_else(|error| {
-                    eprintln!("SPD tab unavailable: {error}");
-                    Vec::new()
-                });
-            if let Ok(mut state) = state.lock() {
-                *state = SpdState::Loaded(modules);
-            }
+        self.source.load_async(backend, move || {
             ctx.request_repaint();
+            ctx.request_repaint_of(egui::ViewportId::from_hash_of("advanced"));
         });
-        if spawned.is_err() {
-            if let Ok(mut state) = self.state.lock() {
-                *state = SpdState::Loaded(Vec::new());
-            }
-        }
     }
 
     /// The selector's choices: "slot: part" per module.
+    #[cfg(test)]
     pub fn choices(modules: &[SpdRecord]) -> Vec<String> {
-        modules
-            .iter()
-            .enumerate()
-            .map(|(index, module)| {
-                let slot = module.text("slot").filter(|s| !s.is_empty()).unwrap_or_else(|| format!("DIMM {}", index + 1));
-                let part = module.text("part_number").filter(|s| !s.is_empty()).unwrap_or_else(|| "Unknown module".into());
-                format!("{slot}: {part}")
-            })
-            .collect()
+        Self::picks(modules).into_iter().map(|(choice, _)| choice).collect()
+    }
+
+    /// Each choice with the module it shows. Keyed by the text, as the
+    /// Python's dict of them was: two modules that read alike are one
+    /// choice, in the first one's place, showing the second.
+    pub fn picks(modules: &[SpdRecord]) -> Vec<(String, usize)> {
+        let mut picks: Vec<(String, usize)> = Vec::new();
+        for (index, module) in modules.iter().enumerate() {
+            let slot = module.text("slot").filter(|s| !s.is_empty()).unwrap_or_else(|| format!("DIMM {}", index + 1));
+            let part = module.text("part_number").filter(|s| !s.is_empty()).unwrap_or_else(|| "Unknown module".into());
+            let choice = format!("{slot}: {part}");
+            match picks.iter_mut().find(|(existing, _)| *existing == choice) {
+                Some(existing) => existing.1 = index,
+                None => picks.push((choice, index)),
+            }
+        }
+        picks
     }
 }
 
 /// The system-wide values the SPD page shows, from their rows.
+#[cfg(test)]
 pub fn spd_system_values(rows: &[Row], values: &Values) -> BTreeMap<&'static str, String> {
     let mut found = BTreeMap::new();
     for (index, row) in rows.iter().enumerate() {
@@ -142,7 +147,7 @@ pub fn spd_profile_text(module: &SpdRecord, profile: usize, key: &str) -> String
 
 /// Draw the page into `area` (the content frame; its selector sits at the
 /// foot of it).
-pub fn show(ui: &mut Ui, spd: &mut SpdTab, rows: &[Row], values: &Values, palette: &Palette, platform: Platform, area: Rect) {
+pub fn show(ui: &mut Ui, spd: &mut SpdTab, palette: &Palette, platform: Platform, area: Rect) {
     let state = spd.state();
     let fields = spd_tab_fields(platform);
     let profile_fields = spd_tab_profile_fields(platform);
@@ -156,13 +161,16 @@ pub fn show(ui: &mut Ui, spd: &mut SpdTab, rows: &[Row], values: &Values, palett
         SpdState::Loaded(modules) => modules.clone(),
         _ => Vec::new(),
     };
-    if spd.selected >= modules.len() {
+    let picks = SpdTab::picks(&modules);
+    if spd.selected >= picks.len() {
         spd.selected = 0;
     }
-    let module = modules.get(spd.selected);
+    let module = picks.get(spd.selected).map(|(_, index)| &modules[*index]);
     // Before the read every value is a dash; after it, the system values
-    // fill in even when no module answered.
-    let system = if matches!(state, SpdState::Loaded(_)) { spd_system_values(rows, values) } else { BTreeMap::new() };
+    // the read resolved fill in even when no module answered.
+    let resolved = spd.source.snapshot().1;
+    let system: BTreeMap<&'static str, String> =
+        SPD_SYSTEM_ROWS.iter().filter_map(|(_, key)| resolved.get(*key).map(|value| (*key, value.clone()))).collect();
     let field_text = |key: &str| match module {
         Some(module) => spd_field_text(module, key, &system),
         None => system.get(key).filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| EM_DASH.to_string()),
@@ -244,13 +252,13 @@ pub fn show(ui: &mut Ui, spd: &mut SpdTab, rows: &[Row], values: &Values, palett
         SpdState::NotStarted => (SPD_NOT_READ.to_string(), vec![SPD_NOT_READ.to_string()]),
         SpdState::Loading => (SPD_READING.to_string(), vec![SPD_READING.to_string()]),
         SpdState::Loaded(modules) if modules.is_empty() => (SPD_NONE.to_string(), vec![SPD_NONE.to_string()]),
-        SpdState::Loaded(modules) => {
-            let choices = SpdTab::choices(modules);
+        SpdState::Loaded(_) => {
+            let choices: Vec<String> = picks.iter().map(|(choice, _)| choice.clone()).collect();
             (choices[spd.selected].clone(), choices)
         }
     };
     if let Some(index) = selector::selector(ui, Id::unique("spd-selector"), selector_rect, palette, &display, &choices) {
-        if index < modules.len() {
+        if index < picks.len() {
             spd.selected = index;
         }
     }
@@ -302,6 +310,26 @@ mod tests {
         let mut unnamed = SpdRecord::default();
         unnamed.set("part_number", "");
         assert_eq!(SpdTab::choices(&[module(), unnamed]), vec!["A1: TMXFL1680838KWK", "DIMM 2: Unknown module"]);
+    }
+
+    #[test]
+    fn modules_that_read_alike_are_one_choice_showing_the_last() {
+        let mut second = module();
+        second.set("address", 0x52i64);
+        assert_eq!(SpdTab::picks(&[module(), second]), vec![("A1: TMXFL1680838KWK".to_string(), 1)]);
+    }
+
+    #[test]
+    fn the_page_and_advanced_share_one_read() {
+        // The Python's page and window both listed `_spd_modules`; the port
+        // started a second SMBus walk for Advanced.
+        let tab = SpdTab::default();
+        let advanced = tab.source().clone();
+        assert_eq!(advanced.status(), (false, false));
+        let source = super::super::popouts::SpdSource::with(vec![module()], Default::default());
+        let tab = SpdTab { source: source.clone(), selected: 0 };
+        assert!(matches!(tab.state(), SpdState::Loaded(ref m) if m.len() == 1));
+        assert_eq!(tab.source().snapshot().0.len(), 1);
     }
 
     // --- tests/test_window_fit.py: test_spd_resolves_the_moved_system_memory_values
