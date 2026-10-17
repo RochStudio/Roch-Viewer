@@ -287,7 +287,13 @@ pub fn get_cpu_name() -> String {
                 for mark in ["(R)", "(TM)", "Processor"] {
                     cpu_name = cpu_name.replace(mark, "");
                 }
-                cpu_name.split_whitespace().collect::<Vec<_>>().join(" ")
+                // str.split() also splits on \x1c-\x1f, which Rust's
+                // whitespace does not include.
+                cpu_name
+                    .split(|c: char| c.is_whitespace() || ('\x1c'..='\x1f').contains(&c))
+                    .filter(|part| !part.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ")
             }
             None => {
                 eprintln!("Error retrieving CPU name: list index out of range");
@@ -630,9 +636,27 @@ fn windows_version_value(name: &str) -> Option<RegValue> {
 /// say. The revision that follows it is what moves with each cumulative
 /// update, and it lives in the registry.
 pub fn get_windows_update_revision() -> Option<i64> {
-    match windows_version_value("UBR")? {
+    update_revision_from(windows_version_value("UBR"))
+}
+
+/// Python's `int(value)` over what `winreg` returned for UBR.
+pub(super) fn update_revision_from(value: Option<RegValue>) -> Option<i64> {
+    match value? {
         RegValue::Int(value) => i64::try_from(value).ok(),
         RegValue::Text(text) => py_int(&text, 10),
+        // int() takes bytes too: ASCII digits, with only ASCII whitespace
+        // around them.
+        RegValue::Bytes(bytes) => {
+            let text = std::str::from_utf8(&bytes).ok().filter(|text| text.is_ascii())?;
+            let text = text.trim_matches(|c: char| matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c'));
+            // py_int would also strip \x1c-\x1f, which int() of a str does
+            // and int() of bytes does not.
+            let separator = |c: char| ('\x1c'..='\x1f').contains(&c);
+            if text.starts_with(separator) || text.ends_with(separator) {
+                return None;
+            }
+            py_int(text, 10)
+        }
         _ => None,
     }
 }
@@ -645,7 +669,20 @@ pub fn get_windows_update_revision() -> Option<i64> {
 /// where DisplayVersion does not exist, which is the era when it was still
 /// the accurate one.
 pub fn get_windows_display_version() -> Option<String> {
-    let version = windows_version_value("DisplayVersion").or_else(|| windows_version_value("ReleaseId"));
+    display_version_from(windows_version_value("DisplayVersion"), || windows_version_value("ReleaseId"))
+}
+
+/// The display version from DisplayVersion, or ReleaseId where DisplayVersion
+/// is None to `winreg` -- absent, or an empty value of a type it returns as
+/// bytes, which it gives as None too.
+pub(super) fn display_version_from(
+    display_version: Option<RegValue>,
+    release_id: impl FnOnce() -> Option<RegValue>,
+) -> Option<String> {
+    let version = match display_version {
+        None | Some(RegValue::None) => release_id(),
+        found => found,
+    };
     let text = match version {
         Some(value) if value.is_truthy() => value.py_str(),
         _ => String::new(),
@@ -1032,15 +1069,31 @@ pub fn detect_dual_channel_memory(platform: Platform) -> Option<String> {
 static LOCATOR_CHANNEL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)(?:CHANNEL|CH|DIMM)[ _-]?([A-H])").expect("valid pattern"));
 
+/// Whether Python's `[A-Z]` under `re.I` matches `c`: an ASCII letter, or
+/// one of the four characters whose simple case mapping is one -- the long s
+/// and the Kelvin sign, and the Turkish dotless and dotted I.
+fn is_ascii_letter_ignoring_case(c: char) -> bool {
+    c.is_ascii_alphabetic() || matches!(c, '\u{17F}' | '\u{212A}' | '\u{131}' | '\u{130}')
+}
+
 /// The first match of the locator pattern, with Python's `(?![A-Z])`
 /// lookahead (case-insensitively) applied by hand, since `regex` has none.
-fn locator_channel(locator: &str) -> Option<char> {
+pub(super) fn locator_channel(locator: &str) -> Option<char> {
+    // Python's re.I also lets the dotless and dotted I stand for the I of
+    // "DIMM"; Unicode case folding, which `regex` uses, does not.
+    let normalised;
+    let locator = if locator.contains(['\u{131}', '\u{130}']) {
+        normalised = locator.replace(['\u{131}', '\u{130}'], "I");
+        normalised.as_str()
+    } else {
+        locator
+    };
     let mut start = 0;
     while start <= locator.len() {
         let captures = LOCATOR_CHANNEL.captures_at(locator, start)?;
         let letter = captures.get(1).expect("one group");
         let next = locator[letter.end()..].chars().next();
-        if !next.is_some_and(|c| c.is_ascii_alphabetic()) {
+        if !next.is_some_and(is_ascii_letter_ignoring_case) {
             return letter.as_str().chars().next().map(|c| c.to_ascii_uppercase());
         }
         // No match here once the lookahead fails; try from the next position.
@@ -1085,7 +1138,7 @@ pub fn channels_from_locators(modules: &[WmiObject]) -> Vec<char> {
 /// A board whose sockets say nothing is now reported as unread rather than
 /// called Dual. Two slots stays a real answer either way: two populated
 /// sockets cannot be more than two channels.
-fn channel_layout_from_slot_tags(platform: Platform) -> Option<String> {
+pub(super) fn channel_layout_from_slot_tags(platform: Platform) -> Option<String> {
     let modules = static_class("Win32_PhysicalMemory");
     if let Some(named) = channel_layout_name(channels_from_locators(&modules).len(), Some(platform)) {
         return Some(named);
@@ -1108,7 +1161,14 @@ fn channel_layout_from_slot_tags(platform: Platform) -> Option<String> {
     if used_slots.len() <= 1 {
         return Some("Single Channel".into());
     }
-    if num_slots.to_i64() == Some(2) {
+    // Python's `num_slots == 2`: a number equal to two, not a string.
+    let two = match num_slots {
+        WmiValue::Int(value) => value == 2,
+        WmiValue::UInt(value) => value == 2,
+        WmiValue::Float(value) => value == 2.0,
+        _ => false,
+    };
+    if two {
         return Some("Dual Channel".into());
     }
     Some(format!(

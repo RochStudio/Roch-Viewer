@@ -39,9 +39,19 @@ fn ddr5_rows(platform: Platform) -> bool {
 // dropping what it added keeps a real fraction like 4987.5 and loses the ".0".
 pub const MHZ_DECIMALS: usize = 3;
 
+/// Python's `round(x, ndigits)` for a float and `ndigits >= 1`.
+///
+/// Python rounds the float's exact binary value half to even, which is what
+/// Rust's `{:.N}` does when it formats; scaling first, as
+/// `pyfmt::round_half_even` does, turns 99.65 (stored a hair above) into an
+/// exact tie at 996.5 and rounds it down, where Python gives 99.7.
+fn py_round(value: f64, ndigits: usize) -> f64 {
+    format!("{value:.ndigits$}").parse().unwrap_or(value)
+}
+
 /// A megahertz reading, written the way the rest of the column is.
 pub fn mhz(value: f64, decimals: usize) -> String {
-    let rounded = round_half_even(value, decimals as i32);
+    let rounded = py_round(value, decimals);
     let text = format!("{rounded:.decimals$}");
     let text = text.trim_end_matches('0');
     format!("{} MHz", text.trim_end_matches('.'))
@@ -1179,7 +1189,7 @@ pub(crate) fn speed_from(bclk: f64, ratio: u64, raw_multiplier: u64, raw_gear: u
     // is DDR5-8000 reading as 7998 one moment and 8000 the next. Rounded
     // to 0.1 MHz the wander goes and a real BCLK change -- 102.5 MHz, say
     // -- still shows in full.
-    let bclk = round_half_even(bclk, 1);
+    let bclk = py_round(bclk, 1);
     let qclk_ratio = match raw_multiplier {
         0 => 133.333333,
         1 => 100.0,
