@@ -86,6 +86,10 @@ impl PopoutStyle {
             handle_min_length: 24.0,
             bar_inner_margin: 6.0,
             bar_outer_margin: 4.0,
+            // A CTkScrollableFrame cuts its last row off at the edge; egui
+            // otherwise washes the rows at either end into the background,
+            // which drew the row under the footer as a faded ghost.
+            fade: egui::style::ScrollFadeStyle { strength: 0.0, ..Default::default() },
             ..egui::style::ScrollStyle::solid()
         };
         let widgets = &mut style.visuals.widgets;
@@ -669,9 +673,9 @@ struct Popout<T> {
     id: ViewportId,
     builder: ViewportBuilder,
     window: Arc<Mutex<T>>,
-    /// The mode last given to the native frame; per window, so a reopened
-    /// one is told again.
-    theme_sent: Arc<Mutex<Option<bool>>>,
+    /// The native window, once it has been found; per window, so a
+    /// reopened one is looked up again.
+    hwnd: Arc<Mutex<Option<isize>>>,
     /// When the window was asked for, until its first frame is drawn.
     opened: Arc<Mutex<Option<Instant>>>,
     name: String,
@@ -708,13 +712,67 @@ impl PopoutWindow for DimmTelemetryWindow {
     }
 }
 
+/// This process's visible top-level window with exactly this title.
+pub fn own_window_titled(title: &str) -> Option<windows::Win32::Foundation::HWND> {
+    use windows::Win32::Foundation::{HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible};
+    use windows::core::BOOL;
+
+    struct Search {
+        pid: u32,
+        title: Vec<u16>,
+        found: Option<HWND>,
+    }
+    unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        // SAFETY: lparam is the &mut Search passed below, alive for the call.
+        let search = unsafe { &mut *(lparam.0 as *mut Search) };
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        if pid != search.pid || !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+            return BOOL(1);
+        }
+        let mut buffer = [0u16; 256];
+        let length = unsafe { GetWindowTextW(hwnd, &mut buffer) }.max(0) as usize;
+        if buffer[..length] == search.title[..] {
+            search.found = Some(hwnd);
+            return BOOL(0);
+        }
+        BOOL(1)
+    }
+    let mut search = Search { pid: std::process::id(), title: title.encode_utf16().collect(), found: None };
+    // SAFETY: the callback only touches `search` for the length of the call.
+    let _ = unsafe { EnumWindows(Some(visit), LPARAM(&mut search as *mut Search as isize)) };
+    search.found
+}
+
+/// Whether a window's native title bar is drawn dark.
+pub fn title_bar_dark(hwnd: windows::Win32::Foundation::HWND) -> Option<bool> {
+    use windows::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmGetWindowAttribute};
+    let mut value: i32 = 0;
+    // SAFETY: a 4-byte BOOL out-parameter, as the attribute takes.
+    unsafe { DwmGetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &mut value as *mut i32 as *mut _, 4) }.ok()?;
+    Some(value != 0)
+}
+
+/// Give a native title bar the app's mode, as customtkinter did with
+/// DWMWA_USE_IMMERSIVE_DARK_MODE. True when it had to be changed.
+pub fn sync_title_bar(hwnd: windows::Win32::Foundation::HWND, dark: bool) -> bool {
+    use windows::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute};
+    if title_bar_dark(hwnd) == Some(dark) {
+        return false;
+    }
+    let value: i32 = dark.into();
+    // SAFETY: a 4-byte BOOL, as the attribute takes; a stale handle fails.
+    unsafe { DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &value as *const i32 as *const _, 4) }.is_ok()
+}
+
 impl<T: PopoutWindow> Popout<T> {
     fn new(name: &str, builder: ViewportBuilder, window: T) -> Self {
         Popout {
             id: ViewportId::from_hash_of(name),
             builder,
             window: Arc::new(Mutex::new(window)),
-            theme_sent: Arc::new(Mutex::new(None)),
+            hwnd: Arc::new(Mutex::new(None)),
             opened: Arc::new(Mutex::new(None)),
             name: name.to_string(),
         }
@@ -745,23 +803,32 @@ impl<T: PopoutWindow> Popout<T> {
             }
         }
         let window = self.window.clone();
-        let theme_sent = self.theme_sent.clone();
+        let hwnd = self.hwnd.clone();
         let opened = self.opened.clone();
         let name = self.name.clone();
+        let title = self.builder.title.clone().unwrap_or_default();
         ctx.show_viewport_deferred(self.id, self.builder.clone(), move |ui, _class| {
             let frame_started = Instant::now();
             let mut window = window.lock().unwrap_or_else(|e| e.into_inner());
             let palette = *window.palette_mut();
             ui.style_mut().visuals = popout_visuals(&palette);
             // The native frame follows the app's mode, as customtkinter
-            // darkened the pop-outs' title bars.
-            let theme = if palette.dark { egui::SystemTheme::Dark } else { egui::SystemTheme::Light };
-            let mut sent = theme_sent.lock().unwrap_or_else(|e| e.into_inner());
-            if *sent != Some(palette.dark) {
-                ui.ctx().send_viewport_cmd(ViewportCommand::SetTheme(theme));
-                *sent = Some(palette.dark);
+            // darkened (or lightened) the pop-outs' title bars by setting
+            // DWMWA_USE_IMMERSIVE_DARK_MODE. winit's SetTheme did not reach
+            // the caption, and Windows puts the system's dark caption back
+            // when the window is first shown, so it is checked every frame
+            // and set again whenever it has drifted.
+            let mut found = hwnd.lock().unwrap_or_else(|e| e.into_inner());
+            if found.is_none() {
+                *found = own_window_titled(&title).map(|h| h.0 as isize);
             }
-            drop(sent);
+            if let Some(h) = *found
+                && sync_title_bar(windows::Win32::Foundation::HWND(h as *mut _), palette.dark)
+            {
+                // Look again shortly: the first show can undo it once more.
+                ui.ctx().request_repaint_after(Duration::from_millis(100));
+            }
+            drop(found);
             window.draw(ui);
             if let Some(at) = opened.lock().unwrap_or_else(|e| e.into_inner()).take() {
                 super::timing::took(&format!("{name} first frame (frame {:.1} ms)", frame_started.elapsed().as_secs_f64() * 1000.0), at);
@@ -992,6 +1059,42 @@ mod tests {
 
     fn backend(rows: Vec<Row>) -> Arc<Backend> {
         Arc::new(Backend { platform: Platform::Unsupported, rows, unavailable: EM_DASH })
+    }
+
+    #[test]
+    fn a_pop_out_list_is_cut_at_its_edge_not_faded() {
+        // CTkScrollableFrame clips its last row; egui's default fade drew it
+        // as a washed-out ghost above the footer.
+        let style = PopoutStyle::new(&Palette::new(false));
+        super::super::ui_tests::with_ui(|ui| {
+            style.apply_scrollbar(ui);
+            assert_eq!(ui.spacing().scroll.fade.strength, 0.0);
+            assert!(!ui.spacing().scroll.floating);
+        });
+    }
+
+    #[test]
+    fn a_pop_out_title_bar_takes_the_apps_mode_and_keeps_it() {
+        // A Light pop-out wore the system's black caption: winit's SetTheme
+        // never reached it. The bar is set the way customtkinter set it, on
+        // our own window found by its title, and set again if it drifts.
+        use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW, WS_VISIBLE};
+        use windows::core::w;
+        let title = "RochViewer title bar test";
+        // SAFETY: a plain STATIC window, off screen, destroyed below.
+        let hwnd = unsafe {
+            CreateWindowExW(WS_EX_TOOLWINDOW, w!("STATIC"), w!("RochViewer title bar test"), WS_OVERLAPPEDWINDOW | WS_VISIBLE, -3000, -3000, 200, 100, None, None, None, None)
+        }
+        .expect("a test window");
+        assert_eq!(own_window_titled(title), Some(hwnd));
+        assert_eq!(own_window_titled("RochViewer title bar"), None, "the whole title, not a prefix");
+        for dark in [true, false, true] {
+            sync_title_bar(hwnd, dark);
+            assert_eq!(title_bar_dark(hwnd), Some(dark));
+            assert!(!sync_title_bar(hwnd, dark), "already in that mode: nothing to change");
+        }
+        // SAFETY: the window made above, on this thread.
+        let _ = unsafe { DestroyWindow(hwnd) };
     }
 
     /// The stand-in reader the Python tests gave the builder.

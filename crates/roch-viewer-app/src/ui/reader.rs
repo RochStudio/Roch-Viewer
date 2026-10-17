@@ -208,7 +208,13 @@ fn worker(backend: Arc<Backend>, first: Vec<usize>, values: Values, receiver: Re
     };
 
     let first_pass = Instant::now();
-    let shown: Vec<usize> = (0..backend.rows.len()).filter(|&i| shown_in_main_window(&backend.rows[i])).collect();
+    // `first` is what the opening page draws, and every row of it is read
+    // whatever tab it belongs to: the Summary looks its clocks up by name,
+    // the last row of a name wins as it did in the Python's dict, and for
+    // MCLK and UCLK that is the Telemetry copy -- which the Python Summary
+    // read, live, like any other label it drew.
+    let shown: Vec<usize> =
+        (0..backend.rows.len()).filter(|i| shown_in_main_window(&backend.rows[*i]) || first.contains(i)).collect();
     let mut order: Vec<usize> = first.into_iter().filter(|i| shown.contains(i)).collect();
     let mut queued = vec![false; backend.rows.len()];
     order.retain(|&i| !std::mem::replace(&mut queued[i], true));
@@ -373,6 +379,38 @@ mod tests {
         // Read twice: the first pass and the one retry, never on the tick.
         std::thread::sleep(LIVE_REFRESH + Duration::from_millis(200));
         assert_eq!(fixed_reads.load(Ordering::SeqCst), 2);
+    }
+
+    fn wait_for(reader: &Reader, index: usize, want: &str) -> Option<String> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while reader.values.get(index).as_deref() != Some(want) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        reader.values.get(index)
+    }
+
+    #[test]
+    fn a_telemetry_row_the_summary_draws_is_read_and_kept_live() {
+        // The Summary's MCLK and UCLK are the Sensors copies (the last row
+        // of the name), so leaving every Sensors row to the Telemetry window
+        // left them as dashes. The rows the opening page asks for are read
+        // whatever their tab, and a live one stays on the tick.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counter = reads.clone();
+        let fixed = Row::new("MCLK", "Clocks", "System Info", "Left").with_value("4000 MHz");
+        let mut sensor = Row::new("MCLK", "Clocks", "Sensors", "Left").with_lazy(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Some("4000 MHz".into())
+        });
+        sensor.live = true;
+        let unasked = Row::new("Fan", "Fans", "Sensors", "Left").with_value("900 RPM");
+        let reader = Reader::start(Arc::new(backend(vec![fixed, sensor, unasked])), vec![1], || {});
+        assert_eq!(wait_for(&reader, 1, "4000 MHz").as_deref(), Some("4000 MHz"));
+        std::thread::sleep(LIVE_REFRESH + Duration::from_millis(300));
+        assert!(reads.load(Ordering::SeqCst) >= 2, "the live copy is re-read on the tick");
+        // A Sensors row nothing on the page asked for is still left alone.
+        assert_eq!(reader.values.get(2), None);
     }
 
     #[test]

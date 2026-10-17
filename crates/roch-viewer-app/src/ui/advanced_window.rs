@@ -93,6 +93,14 @@ const CONTROL_HEIGHT: f32 = 24.0;
 const SEARCH_LABEL_WIDTH: f32 = 54.0;
 const DUMP_WIDTH: f32 = 62.0;
 const COUNT_HEIGHT: f32 = 28.0;
+
+/// Where egui centres a 12.75px line against where Tk set the same label,
+/// measured off the two windows side by side: the names sat a pixel low,
+/// and the values, headings, search label and count line a pixel high.
+const NAME_NUDGE: f32 = -1.0;
+const VALUE_NUDGE: f32 = 1.0;
+const HEADING_NUDGE: f32 = 1.0;
+const HEADER_TEXT_NUDGE: f32 = 1.0;
 const BODY_PAD: f32 = 4.0;
 
 /// What one row read: one displayed value, or both channels of a row that
@@ -456,7 +464,7 @@ impl AdvancedWindow {
                 pos2(full.left() + 8.0, full.top() + HEADER_PAD + HEADER_HEIGHT + 4.0),
                 vec2(full.width() - 16.0, COUNT_HEIGHT),
             );
-            ui.painter().text(count_rect.left_center(), egui::Align2::LEFT_CENTER, &self.count, style.font.clone(), palette.text);
+            ui.painter().text(count_rect.left_center() + vec2(0.0, HEADER_TEXT_NUDGE), egui::Align2::LEFT_CENTER, &self.count, style.font.clone(), palette.text);
             let body = Rect::from_min_max(
                 pos2(full.left() + BODY_PAD, count_rect.bottom() + 2.0),
                 pos2(full.right() - BODY_PAD, full.bottom() - 6.0),
@@ -471,7 +479,7 @@ impl AdvancedWindow {
         let left = full.left() + HEADER_PAD;
         let right = full.right() - HEADER_PAD;
         let label_rect = Rect::from_min_size(pos2(left, top), vec2(SEARCH_LABEL_WIDTH, HEADER_HEIGHT));
-        ui.painter().text(label_rect.left_center(), egui::Align2::LEFT_CENTER, "Search:", style.font.clone(), palette.text);
+        ui.painter().text(label_rect.left_center() + vec2(0.0, HEADER_TEXT_NUDGE), egui::Align2::LEFT_CENTER, "Search:", style.font.clone(), palette.text);
 
         let control_top = top + (HEADER_HEIGHT - CONTROL_HEIGHT) / 2.0;
         let dump_rect = Rect::from_min_max(pos2(right - DUMP_WIDTH, control_top), pos2(right, control_top + CONTROL_HEIGHT));
@@ -558,7 +566,8 @@ impl AdvancedWindow {
         let painter = ui.painter();
         painter.rect_filled(rect, CornerRadius::ZERO, band(&palette, line));
         let text = format!("{tab} — {title}").to_uppercase();
-        painter.text(pos2(rect.left() + 6.0, rect.center().y), egui::Align2::LEFT_CENTER, text, style.bold.clone(), palette.value);
+        let y = rect.center().y + HEADING_NUDGE;
+        painter.text(pos2(rect.left() + 6.0, y), egui::Align2::LEFT_CENTER, text, style.bold.clone(), palette.value);
         // The channel names ride on the section heading rather than taking a
         // row of their own, which would break the band and cost a line per
         // section. Only where the section has a row to put under them.
@@ -566,8 +575,8 @@ impl AdvancedWindow {
             let (a, b) = &*self.channel_labels.lock().unwrap_or_else(|e| e.into_inner());
             let a_right = rect.right() - CHANNEL_WIDTH - 4.0;
             let b_right = rect.right() - 8.0;
-            painter.text(pos2(a_right, rect.center().y), egui::Align2::RIGHT_CENTER, a, style.bold.clone(), palette.text);
-            painter.text(pos2(b_right, rect.center().y), egui::Align2::RIGHT_CENTER, b, style.bold.clone(), palette.text);
+            painter.text(pos2(a_right, y), egui::Align2::RIGHT_CENTER, a, style.bold.clone(), palette.text);
+            painter.text(pos2(b_right, y), egui::Align2::RIGHT_CENTER, b, style.bold.clone(), palette.text);
         }
     }
 }
@@ -610,13 +619,10 @@ fn draw_row(ui: &mut Ui, style: &PopoutStyle, palette: &Palette, width: f32, lin
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::ZERO, band(palette, line));
     // The name keeps the top line, which keeps every row at the same pitch.
-    painter.text(pos2(rect.left() + 6.0, rect.top() + ROW_HEIGHT / 2.0), egui::Align2::LEFT_CENTER, label, font.clone(), palette.text);
+    painter.text(pos2(rect.left() + 6.0, rect.top() + ROW_HEIGHT / 2.0 + NAME_NUDGE), egui::Align2::LEFT_CENTER, label, font.clone(), palette.text);
     let place = |galley: Arc<egui::Galley>, right_edge: f32| {
-        let y = if paired {
-            rect.top() + (ROW_HEIGHT - WRAPPED_LINE_HEIGHT) / 2.0
-        } else {
-            rect.center().y - galley.size().y / 2.0
-        };
+        let y = VALUE_NUDGE
+            + if paired { rect.top() + (ROW_HEIGHT - WRAPPED_LINE_HEIGHT) / 2.0 } else { rect.center().y - galley.size().y / 2.0 };
         painter.galley(pos2(right_edge, y), galley, palette.value);
     };
     match b {
