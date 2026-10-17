@@ -745,6 +745,56 @@ pub fn own_window_titled(title: &str) -> Option<windows::Win32::Foundation::HWND
     search.found
 }
 
+/// The window procedure each width-capped window had before ours.
+static PREVIOUS_PROCS: Mutex<Vec<(isize, isize)>> = Mutex::new(Vec::new());
+
+unsafe extern "system" fn capped_width_proc(
+    hwnd: windows::Win32::Foundation::HWND,
+    message: u32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::{CallWindowProcW, DefWindowProcW, MINMAXINFO, WM_GETMINMAXINFO, WM_NCDESTROY, WNDPROC};
+    let key = hwnd.0 as isize;
+    let previous = PREVIOUS_PROCS.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(h, _)| *h == key).map(|(_, p)| *p);
+    let Some(previous) = previous else {
+        // SAFETY: the default procedure, for a window we no longer track.
+        return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
+    };
+    // SAFETY: `previous` is the WNDPROC SetWindowLongPtrW handed back.
+    let previous: WNDPROC = unsafe { std::mem::transmute::<isize, WNDPROC>(previous) };
+    let result = unsafe { CallWindowProcW(previous, hwnd, message, wparam, lparam) };
+    if message == WM_GETMINMAXINFO && lparam.0 != 0 {
+        // SAFETY: WM_GETMINMAXINFO's lparam is the MINMAXINFO to fill in.
+        let info = unsafe { &mut *(lparam.0 as *mut MINMAXINFO) };
+        if info.ptMaxTrackSize.x > 0 && info.ptMaxTrackSize.x < info.ptMaxSize.x {
+            info.ptMaxSize.x = info.ptMaxTrackSize.x;
+        }
+    } else if message == WM_NCDESTROY {
+        PREVIOUS_PROCS.lock().unwrap_or_else(|e| e.into_inner()).retain(|(h, _)| *h != key);
+    }
+    result
+}
+
+/// Make maximizing keep the window's maximum width, as Tk's
+/// `resizable(False, True)` did: the window takes the screen's full height
+/// at the left edge rather than the whole screen. winit hands Windows the
+/// width cap only as the largest size a drag can reach.
+pub fn cap_maximized_width(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::{GWLP_WNDPROC, SetWindowLongPtrW};
+    let key = hwnd.0 as isize;
+    if PREVIOUS_PROCS.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|(h, _)| *h == key) {
+        return;
+    }
+    // SAFETY: our own window, on the thread that owns it, so no message
+    // reaches the new procedure before its predecessor is recorded; every
+    // message is passed on to that predecessor.
+    let previous = unsafe { SetWindowLongPtrW(hwnd, GWLP_WNDPROC, capped_width_proc as *const () as isize) };
+    if previous != 0 {
+        PREVIOUS_PROCS.lock().unwrap_or_else(|e| e.into_inner()).push((key, previous));
+    }
+}
+
 /// Whether a window's native title bar is drawn dark.
 pub fn title_bar_dark(hwnd: windows::Win32::Foundation::HWND) -> Option<bool> {
     use windows::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmGetWindowAttribute};
@@ -807,6 +857,8 @@ impl<T: PopoutWindow> Popout<T> {
         let opened = self.opened.clone();
         let name = self.name.clone();
         let title = self.builder.title.clone().unwrap_or_default();
+        let capped_width = self.builder.maximize_button == Some(true)
+            && self.builder.max_inner_size.is_some_and(|size| size.x.is_finite());
         ctx.show_viewport_deferred(self.id, self.builder.clone(), move |ui, _class| {
             let frame_started = Instant::now();
             let mut window = window.lock().unwrap_or_else(|e| e.into_inner());
@@ -821,6 +873,11 @@ impl<T: PopoutWindow> Popout<T> {
             let mut found = hwnd.lock().unwrap_or_else(|e| e.into_inner());
             if found.is_none() {
                 *found = own_window_titled(&title).map(|h| h.0 as isize);
+                if let Some(h) = *found
+                    && capped_width
+                {
+                    cap_maximized_width(windows::Win32::Foundation::HWND(h as *mut _));
+                }
             }
             if let Some(h) = *found
                 && sync_title_bar(windows::Win32::Foundation::HWND(h as *mut _), palette.dark)
@@ -1095,6 +1152,36 @@ mod tests {
         }
         // SAFETY: the window made above, on this thread.
         let _ = unsafe { DestroyWindow(hwnd) };
+    }
+
+    #[test]
+    fn maximizing_the_advanced_window_keeps_its_width() {
+        // Tk's resizable(False, True) left the maximize button working, and
+        // it took the window to the screen's height at its fixed width. The
+        // port had switched the button off.
+        let builder = advanced_window::viewport_builder(None);
+        assert_eq!(builder.maximize_button, Some(true));
+        assert_eq!(builder.max_inner_size.map(|s| s.x), Some(advanced_window::WINDOW_WIDTH));
+
+        use windows::Win32::Foundation::{LPARAM, POINT, WPARAM};
+        use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, MINMAXINFO, SendMessageW, WM_GETMINMAXINFO, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW};
+        use windows::core::w;
+        // SAFETY: a plain STATIC window, never shown, destroyed below.
+        let hwnd = unsafe { CreateWindowExW(WS_EX_TOOLWINDOW, w!("STATIC"), w!("cap test"), WS_OVERLAPPEDWINDOW, 0, 0, 200, 100, None, None, None, None) }
+            .expect("a test window");
+        cap_maximized_width(hwnd);
+        cap_maximized_width(hwnd); // a second call does not wrap it twice
+        let ask = |track: i32| {
+            let mut info = MINMAXINFO { ptMaxSize: POINT { x: 2576, y: 1456 }, ptMaxTrackSize: POINT { x: track, y: 99999 }, ..Default::default() };
+            // SAFETY: the MINMAXINFO outlives the synchronous call.
+            unsafe { SendMessageW(hwnd, WM_GETMINMAXINFO, Some(WPARAM(0)), Some(LPARAM(&mut info as *mut MINMAXINFO as isize))) };
+            info.ptMaxSize
+        };
+        assert_eq!(ask(576), POINT { x: 576, y: 1456 }, "maximized at the capped width, full height");
+        assert_eq!(ask(9999), POINT { x: 2576, y: 1456 }, "no cap narrower than the screen: left alone");
+        // SAFETY: the window made above, on this thread.
+        let _ = unsafe { DestroyWindow(hwnd) };
+        assert!(PREVIOUS_PROCS.lock().unwrap().iter().all(|(h, _)| *h != hwnd.0 as isize), "forgotten once destroyed");
     }
 
     /// The stand-in reader the Python tests gave the builder.

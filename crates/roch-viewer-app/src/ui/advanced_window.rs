@@ -638,12 +638,14 @@ fn draw_row(ui: &mut Ui, style: &PopoutStyle, palette: &Palette, width: f32, lin
 pub fn viewport_builder(position: Option<(f32, f32)>) -> egui::ViewportBuilder {
     // Width fixed, height not: the list is long and worth resizing
     // vertically, while the columns are laid out against a known width.
+    // Tk's resizable(False, True) kept the maximize button, which takes the
+    // window to the screen's full height at its fixed width; so does this.
     let builder = egui::ViewportBuilder::default()
         .with_title("Advanced")
         .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
         .with_min_inner_size([WINDOW_WIDTH, 200.0])
         .with_max_inner_size([WINDOW_WIDTH, f32::INFINITY])
-        .with_maximize_button(false)
+        .with_maximize_button(true)
         .with_resizable(true);
     popouts::finish_builder(builder, position)
 }
