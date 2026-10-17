@@ -304,9 +304,17 @@ mod real {
 
     fn run_query(connection: &mut Option<WMIConnection>, class_name: &str) -> Result<Vec<WmiObject>, String> {
         let connection = connection.as_ref().expect("connection was just created");
-        let rows: Vec<HashMap<String, Variant>> = connection
-            .raw_query(format!("SELECT {} FROM {class_name}", select_list(class_name)))
-            .map_err(|e| e.to_string())?;
+        let select = select_list(class_name);
+        let rows: Vec<HashMap<String, Variant>> = match connection.raw_query(format!("SELECT {select} FROM {class_name}")) {
+            Ok(rows) => rows,
+            // A Windows that lacks one of the named properties rejects the
+            // whole list; every property, slow sample and all, is better
+            // than none.
+            Err(_) if select != "*" => {
+                connection.raw_query(format!("SELECT * FROM {class_name}")).map_err(|e| e.to_string())?
+            }
+            Err(error) => return Err(error.to_string()),
+        };
         Ok(rows
             .into_iter()
             .map(|row| WmiObject {

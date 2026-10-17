@@ -31,16 +31,27 @@ pub fn float_str(value: f64) -> String {
     }
 }
 
-/// Python's `round(x, ndigits)` for a float: half to even on the scaled value.
+/// Python's `round(x, ndigits)` for a float.
+///
+/// Python rounds the float's exact binary value, half to even only on a true
+/// tie: 99.65 is stored a hair above 99.65, so it becomes 99.7. Scaling by
+/// ten first (996.5, an exact tie after the multiply) and rounding that gave
+/// 99.6 -- which is how BCLK 99.65 MHz once made DDR5-7976 read 7968. Rust's
+/// fixed-precision formatting works from the exact value with the same tie
+/// rule, so the digits come from there.
 pub fn round_half_even(value: f64, ndigits: i32) -> f64 {
-    let factor = 10f64.powi(ndigits);
-    let scaled = value * factor;
-    let result = if (scaled - scaled.trunc()).abs() == 0.5 {
-        2.0 * (scaled / 2.0).round()
-    } else {
-        scaled.round()
-    };
-    result / factor
+    if !value.is_finite() {
+        return value;
+    }
+    if ndigits >= 0 {
+        let digits = ndigits as usize;
+        return format!("{value:.digits$}").parse().unwrap_or(value);
+    }
+    // Negative ndigits (round to tens, hundreds): scale down, round, scale up.
+    let factor = 10f64.powi(-ndigits);
+    let scaled = value / factor;
+    let result = if (scaled - scaled.trunc()).abs() == 0.5 { 2.0 * (scaled / 2.0).round() } else { scaled.round() };
+    result * factor
 }
 
 /// Python's `round(x)` with no digits: an integer, half to even.
@@ -74,6 +85,13 @@ mod tests {
         assert_eq!(round_half_even(2.5, 0), 2.0);
         assert_eq!(round_half_even(3.5, 0), 4.0);
         assert_eq!(round_half_even(1.234, 2), 1.23);
+        // Stored above the tie, as Python sees it: round(99.65, 1) == 99.7,
+        // round(2.675, 2) == 2.67 (stored below), round(0.125, 2) == 0.12.
+        assert_eq!(round_half_even(99.65, 1), 99.7);
+        assert_eq!(round_half_even(2.675, 2), 2.67);
+        assert_eq!(round_half_even(0.125, 2), 0.12);
+        assert_eq!(round_half_even(972.5435, 3), 972.543);
+        assert_eq!(round_half_even(1250.0, -2), 1200.0);
         assert_eq!(round_int(0.5), 0);
         assert_eq!(round_int(1.5), 2);
     }
