@@ -140,18 +140,12 @@ pub fn get_mcfg_table() -> Result<Vec<u8>, String> {
     unsafe {
         let size = GetSystemFirmwareTable(provider, MCFG_TABLE_ID, None);
         if size == 0 {
-            return Err(format!(
-                "GetSystemFirmwareTable(MCFG) failed: {}",
-                windows::core::Error::from_thread()
-            ));
+            return Err(super::os_error(super::last_win32_error(), "GetSystemFirmwareTable(MCFG) failed"));
         }
         let mut buffer = vec![0u8; size as usize];
         let actual = GetSystemFirmwareTable(provider, MCFG_TABLE_ID, Some(&mut buffer));
         if actual == 0 || actual > size {
-            return Err(format!(
-                "Reading the MCFG table failed: {}",
-                windows::core::Error::from_thread()
-            ));
+            return Err(super::os_error(super::last_win32_error(), "Reading the MCFG table failed"));
         }
         buffer.truncate(actual as usize);
         Ok(buffer)

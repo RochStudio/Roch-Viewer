@@ -44,6 +44,24 @@ impl std::error::Error for HwError {}
 
 pub type HwResult<T> = Result<T, HwError>;
 
+/// Python's `str(OSError(errno, message))`: "[Errno 5] CreateMutexW failed".
+/// The readers' status lines carried this text, so it is kept word for word.
+pub fn os_error(code: u32, message: &str) -> String {
+    format!("[Errno {code}] {message}")
+}
+
+/// The calling thread's last Win32 error, as ctypes.get_last_error() gave it.
+pub fn last_win32_error() -> u32 {
+    // SAFETY: reads a thread-local value.
+    unsafe { windows::Win32::Foundation::GetLastError().0 }
+}
+
+/// The Win32 code inside a windows-crate error (HRESULT_FROM_WIN32 undone).
+pub fn win32_code(error: &windows::core::Error) -> u32 {
+    let hresult = error.code().0 as u32;
+    if hresult & 0xFFFF_0000 == 0x8007_0000 { hresult & 0xFFFF } else { hresult }
+}
+
 /// The privileged primitives the readers are built from.
 pub trait Hardware: Send + Sync {
     /// `size` bytes of physical memory (MMIO included), little-endian as laid
@@ -135,4 +153,21 @@ pub fn driver_error() -> Option<String> {
         return None;
     }
     inpout::InpOut::load_error()
+}
+
+#[cfg(test)]
+mod error_text_tests {
+    use super::*;
+
+    #[test]
+    fn os_errors_read_as_python_printed_them() {
+        assert_eq!(os_error(5, "CreateMutexW failed"), "[Errno 5] CreateMutexW failed");
+        assert_eq!(os_error(0, "Reading the MCFG table failed"), "[Errno 0] Reading the MCFG table failed");
+    }
+
+    #[test]
+    fn win32_codes_come_out_of_hresults() {
+        let denied = windows::core::Error::from_hresult(windows::core::HRESULT(0x8007_0005u32 as i32));
+        assert_eq!(win32_code(&denied), 5);
+    }
 }

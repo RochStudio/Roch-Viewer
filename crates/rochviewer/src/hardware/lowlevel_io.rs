@@ -69,7 +69,7 @@ impl NamedMutex {
         // SAFETY: plain Win32 calls on a handle this function owns.
         unsafe {
             let handle = CreateMutexW(None, false, &HSTRING::from(name))
-                .map_err(|e| HwError(format!("CreateMutexW failed: {e}")))?;
+                .map_err(|e| HwError(super::os_error(super::win32_code(&e), "CreateMutexW failed")))?;
             let wait = WaitForSingleObject(handle, timeout_ms);
             if wait == WAIT_OBJECT_0 || wait == WAIT_ABANDONED {
                 return Ok(NamedMutex { handle });
@@ -78,10 +78,7 @@ impl NamedMutex {
             if wait == WAIT_TIMEOUT {
                 Err(HwError("Timed out waiting for PCI configuration mutex".into()))
             } else {
-                Err(HwError(format!(
-                    "WaitForSingleObject failed: {}",
-                    windows::core::Error::from_thread()
-                )))
+                Err(HwError(super::os_error(super::last_win32_error(), "WaitForSingleObject failed")))
             }
         }
     }
