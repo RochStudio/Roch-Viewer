@@ -5,7 +5,7 @@
 //! channels as one value when they match and an A1/B1 slash pair when they
 //! do not; a single module collapses every table to that module.
 
-use eframe::egui::{self, Color32, CursorIcon, Id, Popup, PopupCloseBehavior, Rect, Sense, Stroke, Ui, pos2, vec2};
+use eframe::egui::{self, Color32, CursorIcon, Id, Rect, Sense, Stroke, Ui, pos2, vec2};
 
 use rochviewer::display_values::NOT_AVAILABLE;
 use rochviewer::memory::dimm_inventory::{DimmModule, channel_of, rank_numeric, split_ic};
@@ -90,7 +90,14 @@ impl ModuleChoices {
         let mut choices = vec![("All modules".to_string(), None)];
         for (channel, modules) in [(Channel::A, channel_a), (Channel::B, channel_b)] {
             for (slot, detail) in modules {
-                choices.push((format!("{slot}: {detail}"), Some(channel)));
+                // Keyed by the text, as the Python's dict was: a second
+                // module that reads the same keeps the first one's place
+                // and takes over its channel.
+                let name = format!("{slot}: {detail}");
+                match choices.iter_mut().find(|(existing, _)| *existing == name) {
+                    Some(existing) => existing.1 = Some(channel),
+                    None => choices.push((name, Some(channel))),
+                }
             }
         }
         ModuleChoices { choices, all_display: all_modules_label(channel_a, channel_b) }
@@ -109,22 +116,74 @@ impl ModuleChoices {
         self.choices.iter().find(|(name, _)| name == choice).map(|(_, channel)| *channel)
     }
 
-    /// What the selector shows for a selection.
-    pub fn display(&self, selected: Option<Channel>) -> String {
-        match selected {
-            None => self.all_display.clone(),
-            Some(channel) => self
-                .choices
-                .iter()
-                .find(|(_, c)| *c == Some(channel))
-                .map(|(name, _)| name.clone())
-                .unwrap_or_else(|| self.all_display.clone()),
+    /// What the selector shows once `choice` was picked: the choice itself,
+    /// as Tk set the option menu to the text clicked -- so picking A2 on a
+    /// board with two modules on channel A shows A2, not the first module
+    /// of that channel -- and the all-modules text for "All modules".
+    pub fn shown(&self, choice: Option<&str>) -> String {
+        match choice {
+            Some(name) if name != "All modules" && self.choices.iter().any(|(n, _)| n == name) => name.to_string(),
+            _ => self.all_display.clone(),
         }
     }
 
     pub fn names(&self) -> Vec<String> {
         self.choices.iter().map(|(name, _)| name.clone()).collect()
     }
+}
+
+/// One menu item's height, and the raised frame around the items.
+const MENU_ITEM_HEIGHT: f32 = 24.0;
+const MENU_FRAME: f32 = 3.0;
+/// Between the selector's foot and the menu, as the Tk menu opened.
+const MENU_GAP: f32 = 2.0;
+/// A click that lands just after the menu closed itself (it lost focus to
+/// that very click) closes it rather than opening it again.
+const REOPEN_GUARD: f64 = 0.3;
+/// The menu window's title: never shown, but how it is found to be squared.
+const MENU_TITLE: &str = "Roch Viewer menu";
+
+/// The drop-down's size for these choices: as wide as its longest choice
+/// past the check column, 24px an item, inside the raised frame.
+pub fn menu_size(text_width: f32, choices: usize) -> egui::Vec2 {
+    vec2((text_width + 53.0).ceil(), choices as f32 * MENU_ITEM_HEIGHT + 2.0 * MENU_FRAME)
+}
+
+/// Where the menu window goes, in screen points: under the selector, as the
+/// native menu the Tk option menu opened did -- outside the window when the
+/// selector is at its foot -- or above it when the screen ends first.
+pub fn menu_position(window_origin: egui::Pos2, selector: Rect, menu: egui::Vec2, screen_height: f32) -> egui::Pos2 {
+    let below = window_origin + vec2(selector.left() + 1.0, selector.bottom() + MENU_GAP);
+    if below.y + menu.y <= screen_height {
+        below
+    } else {
+        window_origin + vec2(selector.left() + 1.0, selector.top() - MENU_GAP - menu.y)
+    }
+}
+
+/// Paint the menu's items into `menu` and return the one clicked.
+fn menu_items(ui: &mut Ui, id: Id, menu: Rect, palette: &Palette, font: &egui::FontId, choices: &[String]) -> Option<usize> {
+    let painter = ui.painter().clone();
+    painter.rect_filled(menu, 0.0, palette.bg);
+    // The raised frame of a native menu: a grey outer line, a light inner.
+    painter.rect_stroke(menu, 0.0, Stroke::new(1.0, Color32::from_gray(160)), egui::StrokeKind::Inside);
+    painter.rect_stroke(menu.shrink(1.0), 0.0, Stroke::new(2.0, Color32::from_gray(240)), egui::StrokeKind::Inside);
+    let mut chosen = None;
+    for (index, choice) in choices.iter().enumerate() {
+        let row = Rect::from_min_size(
+            pos2(menu.left() + MENU_FRAME, menu.top() + MENU_FRAME + MENU_ITEM_HEIGHT * index as f32),
+            vec2(menu.width() - 2.0 * MENU_FRAME, MENU_ITEM_HEIGHT),
+        );
+        let item = ui.interact(row, id.with(("item", index)), Sense::click());
+        if item.hovered() {
+            painter.rect_filled(row, 0.0, palette.tab_unselected_hover);
+        }
+        draw::text_in_row(&painter, row, row.left() + 21.0, Edge::Left, choice, font, palette.text);
+        if item.clicked() {
+            chosen = Some(index);
+        }
+    }
+    chosen
 }
 
 /// Draw a drop-down selector in `rect` (its brand-red border included) and
@@ -144,33 +203,84 @@ pub fn selector(ui: &mut Ui, id: Id, rect: Rect, palette: &Palette, display: &st
     draw::text_in_row(&text_painter, inner, inner.left() + 4.0, Edge::Left, display, &font, palette.text);
     chevron(painter, arrow.center(), palette.text);
 
-    // Drawn like the native menu the Tk option menu opened: a raised
-    // three-pixel frame, 24px items with the text set in past the check
-    // column, as wide as its longest choice. Below the selector when it
-    // fits, above it otherwise -- a window cannot draw past its own edge.
+    // The Tk option menu opened a native menu: its own window, so it drops
+    // below the selector and past the window's foot. A borderless viewport
+    // of its own does the same; it closes on a choice, on Escape, or when
+    // it loses focus to a click anywhere else.
     let text_width = choices.iter().map(|c| draw::text_width(painter, c, &font)).fold(0.0, f32::max);
-    let menu_width = (text_width + 53.0).ceil();
+    let size = menu_size(text_width, choices.len());
+    let ctx = ui.ctx().clone();
+    let now = ctx.input(|i| i.time);
+    let open_id = id.with("open");
+    let closed_id = id.with("closed-at");
+    let mut open = ctx.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+    let closed_at = ctx.data(|d| d.get_temp::<f64>(closed_id)).unwrap_or(f64::NEG_INFINITY);
+    if response.clicked() {
+        open = !open && now - closed_at > REOPEN_GUARD;
+    }
     let mut chosen = None;
-    Popup::menu(&response)
-        .id(id.with("popup"))
-        .gap(2.0)
-        .close_behavior(PopupCloseBehavior::CloseOnClick)
-        .frame(egui::Frame::new().fill(palette.bg).stroke(Stroke::new(1.0, Color32::from_gray(160))).inner_margin(1))
-        .show(|ui| {
-            let (menu, _) = ui.allocate_exact_size(vec2(menu_width - 2.0, choices.len() as f32 * 24.0 + 4.0), Sense::hover());
-            ui.painter().rect_stroke(menu, 0.0, Stroke::new(2.0, Color32::from_gray(240)), egui::StrokeKind::Inside);
-            for (index, choice) in choices.iter().enumerate() {
-                let row = Rect::from_min_size(pos2(menu.left() + 2.0, menu.top() + 2.0 + 24.0 * index as f32), vec2(menu.width() - 4.0, 24.0));
-                let item = ui.interact(row, id.with(("item", index)), Sense::click());
-                if item.hovered() {
-                    ui.painter().rect_filled(row, 0.0, palette.tab_unselected_hover);
+    let (origin, screen) = ctx.input(|i| (i.viewport().inner_rect.map(|r| r.min), i.viewport().monitor_size));
+    if open && let Some(origin) = origin {
+        let position = menu_position(origin, rect, size, screen.map_or(f32::INFINITY, |s| s.y));
+        let builder = egui::ViewportBuilder::default()
+            .with_title(MENU_TITLE)
+            .with_decorations(false)
+            .with_resizable(false)
+            .with_taskbar(false)
+            .with_always_on_top()
+            .with_position(position)
+            .with_inner_size(size);
+        let menu_id = id.with("menu");
+        let palette = *palette;
+        let owner_title = format!("{} {}", rochviewer::version::APP_NAME, rochviewer::version::VERSION);
+        let (picked, close) = ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(menu_id), builder, |ui, _class| {
+            let full = ui.max_rect();
+            let picked = menu_items(ui, menu_id, Rect::from_min_size(full.min, size), &palette, &font, choices);
+            let (escape, focused) = ui.input(|i| (i.key_pressed(egui::Key::Escape), i.viewport().focused));
+            let squared = menu_id.with("squared");
+            if !ui.data(|d| d.get_temp::<bool>(squared)).unwrap_or(false)
+                && let Some(hwnd) = super::popouts::own_window_titled(MENU_TITLE)
+            {
+                super::popouts::square_menu_window(hwnd);
+                // Owned by the main window, as a menu is: when it closes,
+                // Windows hands the focus back to the window it came from
+                // rather than to whatever was behind it.
+                if let Some(owner) = super::popouts::own_window_titled(&owner_title) {
+                    super::popouts::set_owner(hwnd, owner);
                 }
-                draw::text_in_row(ui.painter(), row, row.left() + 22.0, Edge::Left, choice, &font, palette.text);
-                if item.clicked() {
-                    chosen = Some(index);
-                }
+                ui.data_mut(|d| d.insert_temp(squared, true));
             }
+            let seen = menu_id.with("focused-once");
+            let was_focused = ui.data(|d| d.get_temp::<bool>(seen)).unwrap_or(false);
+            if focused == Some(true) && !was_focused {
+                ui.data_mut(|d| d.insert_temp(seen, true));
+            }
+            (picked, escape || (was_focused && focused == Some(false)))
         });
+        if picked.is_some() || close {
+            open = false;
+            ctx.data_mut(|d| {
+                d.insert_temp(closed_id, now);
+                d.remove::<bool>(menu_id.with("focused-once"));
+                d.remove::<bool>(menu_id.with("squared"));
+            });
+            ctx.request_repaint();
+        }
+        chosen = picked;
+    } else if open {
+        // No window position to place it by: fall back on a menu inside the
+        // window.
+        let mut close = false;
+        egui::Area::new(id.with("menu-area")).order(egui::Order::Foreground).fixed_pos(pos2(rect.left() + 1.0, rect.top() - MENU_GAP - size.y)).show(&ctx, |ui| {
+            let (menu, _) = ui.allocate_exact_size(size, Sense::hover());
+            chosen = menu_items(ui, id.with("menu"), menu, palette, &font, choices);
+            close = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        });
+        if chosen.is_some() || close {
+            open = false;
+        }
+    }
+    ctx.data_mut(|d| d.insert_temp(open_id, open));
     chosen
 }
 
@@ -194,6 +304,26 @@ mod tests {
             ic: "SK hynix A-die".into(),
             ..DimmModule::default()
         }
+    }
+
+    #[test]
+    fn the_menu_drops_below_the_selector_past_the_windows_foot() {
+        // Measured off the Tk window: the selector at y 680..710 of a window
+        // at (930, 245) opened its menu at (943, 957), 382 x 78 with three
+        // choices. Inside the window there was no room below, so the egui
+        // popup had opened above the selector instead.
+        let selector = Rect::from_min_max(pos2(12.0, 680.0), pos2(688.0, 710.0));
+        let size = menu_size(329.0, 3);
+        assert_eq!(size, vec2(382.0, 78.0));
+        assert_eq!(menu_position(pos2(930.0, 245.0), selector, size, 1440.0), pos2(943.0, 957.0));
+    }
+
+    #[test]
+    fn the_menu_opens_upward_only_when_the_screen_ends() {
+        let selector = Rect::from_min_max(pos2(12.0, 680.0), pos2(688.0, 710.0));
+        let size = menu_size(329.0, 3);
+        let at = menu_position(pos2(930.0, 400.0), selector, size, 1080.0);
+        assert_eq!(at, pos2(943.0, 400.0 + 680.0 - 2.0 - 78.0));
     }
 
     // --- tests/test_module_selector.py
@@ -223,8 +353,30 @@ mod tests {
         // The combined display text is "All modules" too.
         assert_eq!(choices.select(&choices.all_display), Some(None));
         assert_eq!(choices.select("unknown"), None);
-        assert_eq!(choices.display(None), "A1:stick | B1:stick");
-        assert_eq!(choices.display(Some(Channel::B)), "B1: stick");
+        assert_eq!(choices.shown(None), "A1:stick | B1:stick");
+        assert_eq!(choices.shown(Some("All modules")), "A1:stick | B1:stick");
+        assert_eq!(choices.shown(Some("B1: stick")), "B1: stick");
+        assert_eq!(choices.shown(Some("gone")), "A1:stick | B1:stick");
+    }
+
+    #[test]
+    fn the_selector_shows_the_module_picked_not_the_first_on_its_channel() {
+        // Two modules on channel A: picking A2 showed "A1: ..." because the
+        // text was looked up from the channel. Tk showed the choice clicked.
+        let choices = ModuleChoices::new(
+            &[("A1".into(), "first".into()), ("A2".into(), "second".into())],
+            &[("B1".into(), "third".into())],
+        );
+        assert_eq!(choices.select("A2: second"), Some(Some(Channel::A)));
+        assert_eq!(choices.shown(Some("A2: second")), "A2: second");
+    }
+
+    #[test]
+    fn two_modules_that_read_alike_are_one_choice() {
+        // The Python keyed its choices by their text.
+        let choices = ModuleChoices::new(&[("A1".into(), "stick".into())], &[("A1".into(), "stick".into())]);
+        assert_eq!(choices.names(), vec!["All modules", "A1: stick"]);
+        assert_eq!(choices.select("A1: stick"), Some(Some(Channel::B)));
     }
 
     #[test]

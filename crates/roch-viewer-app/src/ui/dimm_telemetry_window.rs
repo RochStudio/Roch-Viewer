@@ -100,6 +100,10 @@ const TABLE_GAP: f32 = 10.0;
 const NAME_MIN_WIDTH: f32 = 150.0;
 const CELL_PAD: f32 = 6.0;
 const FOOTER_HEIGHT: f32 = 28.0;
+/// Where egui centres a 12.75px line in a 28px row against where Tk set the
+/// same label: every line of the tables sat a pixel high, measured off the
+/// two windows side by side. The footer already matched.
+const TEXT_NUDGE: f32 = 1.0;
 const RESET_WIDTH: f32 = 90.0;
 const RESET_HEIGHT: f32 = 22.0;
 const SWITCH_WIDTH: f32 = 32.0;
@@ -897,7 +901,7 @@ impl DimmTelemetryWindow {
                 (starts[2], right_label, palette.text, CELL_PAD),
                 (starts[3], right_value, palette.text, 2.0),
             ] {
-                painter.text(pos2(rect.left() + start + pad, y), egui::Align2::LEFT_CENTER, text, style.font.clone(), color);
+                painter.text(pos2(rect.left() + start + pad, y + TEXT_NUDGE), egui::Align2::LEFT_CENTER, text, style.font.clone(), color);
             }
         }
         ui.add_space(4.0);
@@ -979,7 +983,7 @@ struct TableLine {
 fn heading_line(ui: &mut Ui, style: &PopoutStyle, palette: &Palette, width: f32, text: &str) {
     let (rect, _) = ui.allocate_exact_size(vec2(width, LINE_HEIGHT), Sense::hover());
     ui.painter().rect_filled(rect, CornerRadius::ZERO, palette.bg);
-    ui.painter().text(pos2(rect.left() + CELL_PAD, rect.center().y), egui::Align2::LEFT_CENTER, text, style.bold.clone(), palette.text);
+    ui.painter().text(pos2(rect.left() + CELL_PAD, rect.center().y + TEXT_NUDGE), egui::Align2::LEFT_CENTER, text, style.bold.clone(), palette.text);
 }
 
 /// Draw one table and return the parent label clicked this frame, if any.
@@ -1022,7 +1026,7 @@ fn draw_table(
 
     let (rect, _) = ui.allocate_exact_size(vec2(width, LINE_HEIGHT), Sense::hover());
     for (c, name) in COLUMNS.iter().enumerate() {
-        ui.painter().text(pos2(rect.left() + start(c) + CELL_PAD, rect.center().y), egui::Align2::LEFT_CENTER, *name, style.bold.clone(), palette.text);
+        ui.painter().text(pos2(rect.left() + start(c) + CELL_PAD, rect.center().y + TEXT_NUDGE), egui::Align2::LEFT_CENTER, *name, style.bold.clone(), palette.text);
     }
 
     let mut toggled = None;
@@ -1035,7 +1039,7 @@ fn draw_table(
         if let Some(fill) = fill {
             ui.painter().rect_filled(rect, CornerRadius::ZERO, fill);
         }
-        let y = rect.center().y;
+        let y = rect.center().y + TEXT_NUDGE;
         let name_pos = pos2(rect.left() + CELL_PAD, y);
         let name_rect = ui.painter().text(name_pos, egui::Align2::LEFT_CENTER, &line.name, style.font.clone(), palette.text);
         if let Some(parent) = &line.toggle {

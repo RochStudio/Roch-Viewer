@@ -179,6 +179,13 @@ pub fn tab_window_sizes(platform: Platform) -> Vec<(&'static str, (f32, f32))> {
 
 /// The requested size of one main tab on `platform`, capped to what the
 /// screen leaves. An unknown tab takes the Summary's size.
+/// Where the driver notice breaks its line: the Python label's wraplength,
+/// the Summary's width less 40 whatever tab is showing -- so the wide tabs
+/// break it where the Summary does, rather than running it out to one line.
+pub fn notice_wrap_width(platform: Platform) -> f32 {
+    window_size_for_tab(platform, "Summary", None).0 - 40.0
+}
+
 pub fn window_size_for_tab(platform: Platform, tab: &str, screen_height: Option<f32>) -> (f32, f32) {
     let sizes = tab_window_sizes(platform);
     let summary = sizes.iter().find(|(t, _)| *t == "Summary").map(|(_, s)| *s).unwrap_or((775.0, 775.0));
@@ -286,6 +293,8 @@ pub struct TimingApp {
     pending: Vec<Action>,
     /// The module selection every module-aware tab shows.
     selected: Option<Channel>,
+    /// The choice picked, as its text: what every selector shows.
+    selected_choice: Option<String>,
     choices: ModuleChoices,
     channel_labels: BTreeMap<String, String>,
     summary: SummaryPlan,
@@ -385,6 +394,7 @@ impl TimingApp {
             started: false,
             pending: Vec::new(),
             selected: None,
+            selected_choice: None,
             choices: ModuleChoices::new(&[], &[]),
             channel_labels: BTreeMap::new(),
             inventory,
@@ -432,7 +442,7 @@ impl TimingApp {
         self.switched_at = Some(std::time::Instant::now());
         let tab = self.current_tab().to_string();
         if tab == "SPD" {
-            self.spd.load(ctx);
+            self.spd.load(ctx, self.backend.clone());
         }
         // A row may carry `refresh`, which drops its cached reading; every
         // such row on the tab is refreshed and re-read each time the tab is
@@ -621,7 +631,7 @@ impl TimingApp {
         painter.rect(rect, CornerRadius::same(6), palette.bg, Stroke::new(1.0, palette.brand), egui::StrokeKind::Inside);
         let job = {
             let mut job = theme::job(text.clone(), theme::bold(theme::FONT_SIZE), palette.brand);
-            job.wrap.max_width = rect.width() - 16.0;
+            job.wrap.max_width = notice_wrap_width(self.backend.platform).min(rect.width() - 16.0);
             job
         };
         let galley = painter.layout_job(job);
@@ -632,11 +642,12 @@ impl TimingApp {
     /// The module selector at the foot of Summary, Timings and Training.
     fn module_selector(&mut self, ui: &mut Ui, chrome: &Chrome) {
         let tab = self.current_tab().to_string();
-        let display = self.choices.display(self.selected);
+        let display = self.choices.shown(self.selected_choice.as_deref());
         let names = self.choices.names();
         if let Some(index) = selector::selector(ui, Id::unique(("module-selector", tab)), chrome.selector(), &self.palette, &display, &names)
             && let Some(channel) = self.choices.select(&names[index])
         {
+            self.selected_choice = Some(names[index].clone());
             self.select_module(channel);
         }
     }
@@ -645,7 +656,7 @@ impl TimingApp {
         let tab = self.current_tab().to_string();
         let area = chrome.content(&tab);
         if tab == "SPD" {
-            spd_tab::show(ui, &mut self.spd, &self.backend.rows, &self.reader.values, &self.palette, self.backend.platform, area);
+            spd_tab::show(ui, &mut self.spd, &self.palette, self.backend.platform, area);
             return;
         }
         let context = TabContext {
@@ -726,7 +737,7 @@ impl eframe::App for TimingApp {
         if actions.contains(&Action::Advanced) && self.tab_names.iter().any(|t| t == "SPD") {
             // The SPD rows in Advanced fill in from the SPD tab's read; start
             // it if the tab has not been opened yet.
-            self.spd.load(&ctx);
+            self.spd.load(&ctx, self.backend.clone());
         }
         let mut shared = Shared {
             backend: &self.backend,
@@ -735,6 +746,8 @@ impl eframe::App for TimingApp {
             settings: &mut self.settings,
             tab_names: &self.tab_names,
             current_tab: &current_tab,
+            spd: self.spd.source(),
+            channel_labels: &self.channel_labels,
         };
         if !self.started {
             self.started = true;
@@ -876,6 +889,16 @@ mod tests {
 
     fn notice(problem: &str) -> Option<String> {
         driver_notice_text(Some(problem), true)
+    }
+
+    #[test]
+    fn the_notice_breaks_where_the_summary_width_puts_it() {
+        // wraplength=self.WINDOW_WIDTH - 40: 735 on the base table, 660 on
+        // LGA1700 DDR5 and AM5, whichever tab is open.
+        assert_eq!(notice_wrap_width(Platform::Lga1700Ddr4), 735.0);
+        assert_eq!(notice_wrap_width(Platform::Lga1851), 735.0);
+        assert_eq!(notice_wrap_width(Platform::Lga1700Ddr5), 660.0);
+        assert_eq!(notice_wrap_width(Platform::Am5), 660.0);
     }
 
     #[test]

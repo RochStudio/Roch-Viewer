@@ -43,6 +43,10 @@ pub struct Shared<'a> {
     pub settings: &'a mut Settings,
     pub tab_names: &'a [String],
     pub current_tab: &'a str,
+    /// The SPD read the SPD tab owns, which Advanced lists too.
+    pub spd: &'a SpdSource,
+    /// The slot each channel holds, once the main window has read them.
+    pub channel_labels: &'a BTreeMap<String, String>,
 }
 
 /// How long the screenshot status stays beside the button.
@@ -86,6 +90,10 @@ impl PopoutStyle {
             handle_min_length: 24.0,
             bar_inner_margin: 6.0,
             bar_outer_margin: 4.0,
+            // A CTkScrollableFrame cuts its last row off at the edge; egui
+            // otherwise washes the rows at either end into the background,
+            // which drew the row under the footer as a faded ghost.
+            fade: egui::style::ScrollFadeStyle { strength: 0.0, ..Default::default() },
             ..egui::style::ScrollStyle::solid()
         };
         let widgets = &mut style.visuals.widgets;
@@ -395,7 +403,22 @@ impl SpdSource {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Read SPD once off the UI thread, if it has not been.
+    /// Whether a read is running, and whether one has finished.
+    pub fn status(&self) -> (bool, bool) {
+        let state = self.state();
+        (state.loading, state.loaded)
+    }
+
+    /// The modules the read found, and the system-wide values it resolved.
+    pub fn snapshot(&self) -> (Vec<SpdRecord>, HashMap<String, String>) {
+        let state = self.state();
+        (state.modules.clone(), state.system_values.clone())
+    }
+
+    /// Read SPD once off the UI thread, if it has not been. The SPD tab and
+    /// Advanced share this one read, as the Python's page and window shared
+    /// `_spd_modules`: two SMBus walks at once could disagree, and a page
+    /// already read left Advanced waiting on a read of its own.
     pub fn load_async(&self, backend: Arc<Backend>, repaint: impl Fn() + Send + 'static) {
         {
             let mut state = self.state();
@@ -407,18 +430,19 @@ impl SpdSource {
         let source = self.clone();
         let spawned = std::thread::Builder::new().name("SPD reader".into()).spawn(move || {
             let read = std::panic::catch_unwind(|| rochviewer::memory::spd_profiles::read_spd_modules(None, false));
-            let modules = match read {
-                Ok(Ok(modules)) => modules,
+            // A read that fails drops the system values with the modules,
+            // as the Python's worker did: the page shows dashes throughout.
+            let (modules, system_values) = match read {
+                Ok(Ok(modules)) => (modules, read_spd_system_values(&backend)),
                 Ok(Err(error)) => {
                     eprintln!("SPD tab unavailable: {error}");
-                    Vec::new()
+                    (Vec::new(), HashMap::new())
                 }
                 Err(_) => {
                     eprintln!("SPD tab unavailable: the reader panicked");
-                    Vec::new()
+                    (Vec::new(), HashMap::new())
                 }
             };
-            let system_values = read_spd_system_values(&backend);
             {
                 let mut state = source.state();
                 state.modules = modules;
@@ -669,9 +693,9 @@ struct Popout<T> {
     id: ViewportId,
     builder: ViewportBuilder,
     window: Arc<Mutex<T>>,
-    /// The mode last given to the native frame; per window, so a reopened
-    /// one is told again.
-    theme_sent: Arc<Mutex<Option<bool>>>,
+    /// The native window, once it has been found; per window, so a
+    /// reopened one is looked up again.
+    hwnd: Arc<Mutex<Option<isize>>>,
     /// When the window was asked for, until its first frame is drawn.
     opened: Arc<Mutex<Option<Instant>>>,
     name: String,
@@ -708,13 +732,142 @@ impl PopoutWindow for DimmTelemetryWindow {
     }
 }
 
+/// This process's visible top-level window with exactly this title.
+pub fn own_window_titled(title: &str) -> Option<windows::Win32::Foundation::HWND> {
+    use windows::Win32::Foundation::{HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible};
+    use windows::core::BOOL;
+
+    struct Search {
+        pid: u32,
+        title: Vec<u16>,
+        found: Option<HWND>,
+    }
+    unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        // SAFETY: lparam is the &mut Search passed below, alive for the call.
+        let search = unsafe { &mut *(lparam.0 as *mut Search) };
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        if pid != search.pid || !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+            return BOOL(1);
+        }
+        let mut buffer = [0u16; 256];
+        let length = unsafe { GetWindowTextW(hwnd, &mut buffer) }.max(0) as usize;
+        if buffer[..length] == search.title[..] {
+            search.found = Some(hwnd);
+            return BOOL(0);
+        }
+        BOOL(1)
+    }
+    let mut search = Search { pid: std::process::id(), title: title.encode_utf16().collect(), found: None };
+    // SAFETY: the callback only touches `search` for the length of the call.
+    let _ = unsafe { EnumWindows(Some(visit), LPARAM(&mut search as *mut Search as isize)) };
+    search.found
+}
+
+/// The window procedure each width-capped window had before ours.
+static PREVIOUS_PROCS: Mutex<Vec<(isize, isize)>> = Mutex::new(Vec::new());
+
+unsafe extern "system" fn capped_width_proc(
+    hwnd: windows::Win32::Foundation::HWND,
+    message: u32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::{CallWindowProcW, DefWindowProcW, MINMAXINFO, WM_GETMINMAXINFO, WM_NCDESTROY, WNDPROC};
+    let key = hwnd.0 as isize;
+    let previous = PREVIOUS_PROCS.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(h, _)| *h == key).map(|(_, p)| *p);
+    let Some(previous) = previous else {
+        // SAFETY: the default procedure, for a window we no longer track.
+        return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
+    };
+    // SAFETY: `previous` is the WNDPROC SetWindowLongPtrW handed back.
+    let previous: WNDPROC = unsafe { std::mem::transmute::<isize, WNDPROC>(previous) };
+    let result = unsafe { CallWindowProcW(previous, hwnd, message, wparam, lparam) };
+    if message == WM_GETMINMAXINFO && lparam.0 != 0 {
+        // SAFETY: WM_GETMINMAXINFO's lparam is the MINMAXINFO to fill in.
+        let info = unsafe { &mut *(lparam.0 as *mut MINMAXINFO) };
+        if info.ptMaxTrackSize.x > 0 && info.ptMaxTrackSize.x < info.ptMaxSize.x {
+            info.ptMaxSize.x = info.ptMaxTrackSize.x;
+        }
+    } else if message == WM_NCDESTROY {
+        PREVIOUS_PROCS.lock().unwrap_or_else(|e| e.into_inner()).retain(|(h, _)| *h != key);
+    }
+    result
+}
+
+/// Make maximizing keep the window's maximum width, as Tk's
+/// `resizable(False, True)` did: the window takes the screen's full height
+/// at the left edge rather than the whole screen. winit hands Windows the
+/// width cap only as the largest size a drag can reach.
+pub fn cap_maximized_width(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::{GWLP_WNDPROC, SetWindowLongPtrW};
+    let key = hwnd.0 as isize;
+    if PREVIOUS_PROCS.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|(h, _)| *h == key) {
+        return;
+    }
+    // SAFETY: our own window, on the thread that owns it, so no message
+    // reaches the new procedure before its predecessor is recorded; every
+    // message is passed on to that predecessor.
+    let previous = unsafe { SetWindowLongPtrW(hwnd, GWLP_WNDPROC, capped_width_proc as *const () as isize) };
+    if previous != 0 {
+        PREVIOUS_PROCS.lock().unwrap_or_else(|e| e.into_inner()).push((key, previous));
+    }
+}
+
+/// Draw a borderless window as a native menu is drawn: square corners and
+/// no frame line of DWM's own. Windows 11 rounds and outlines every
+/// top-level window, which the Tk option menu's native menu never was.
+pub fn square_menu_window(hwnd: windows::Win32::Foundation::HWND) -> bool {
+    use windows::Win32::Graphics::Dwm::{DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DwmSetWindowAttribute};
+    let corner = DWMWCP_DONOTROUND.0;
+    let border = DWMWA_COLOR_NONE;
+    // SAFETY: 4-byte values, as both attributes take. Either fails harmlessly
+    // before Windows 11.
+    unsafe {
+        let squared = DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner as *const i32 as *const _, 4).is_ok();
+        let _ = DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &border as *const u32 as *const _, 4);
+        squared
+    }
+}
+
+/// Make `owner` the owner of `hwnd`: an owned window stays above its owner,
+/// and when it closes Windows activates the owner again.
+pub fn set_owner(hwnd: windows::Win32::Foundation::HWND, owner: windows::Win32::Foundation::HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::{GWLP_HWNDPARENT, SetWindowLongPtrW};
+    // SAFETY: both are live top-level windows of ours; GWLP_HWNDPARENT on a
+    // top-level window sets its owner.
+    unsafe { SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, owner.0 as isize) };
+}
+
+/// Whether a window's native title bar is drawn dark.
+pub fn title_bar_dark(hwnd: windows::Win32::Foundation::HWND) -> Option<bool> {
+    use windows::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmGetWindowAttribute};
+    let mut value: i32 = 0;
+    // SAFETY: a 4-byte BOOL out-parameter, as the attribute takes.
+    unsafe { DwmGetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &mut value as *mut i32 as *mut _, 4) }.ok()?;
+    Some(value != 0)
+}
+
+/// Give a native title bar the app's mode, as customtkinter did with
+/// DWMWA_USE_IMMERSIVE_DARK_MODE. True when it had to be changed.
+pub fn sync_title_bar(hwnd: windows::Win32::Foundation::HWND, dark: bool) -> bool {
+    use windows::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute};
+    if title_bar_dark(hwnd) == Some(dark) {
+        return false;
+    }
+    let value: i32 = dark.into();
+    // SAFETY: a 4-byte BOOL, as the attribute takes; a stale handle fails.
+    unsafe { DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &value as *const i32 as *const _, 4) }.is_ok()
+}
+
 impl<T: PopoutWindow> Popout<T> {
     fn new(name: &str, builder: ViewportBuilder, window: T) -> Self {
         Popout {
             id: ViewportId::from_hash_of(name),
             builder,
             window: Arc::new(Mutex::new(window)),
-            theme_sent: Arc::new(Mutex::new(None)),
+            hwnd: Arc::new(Mutex::new(None)),
             opened: Arc::new(Mutex::new(None)),
             name: name.to_string(),
         }
@@ -745,23 +898,39 @@ impl<T: PopoutWindow> Popout<T> {
             }
         }
         let window = self.window.clone();
-        let theme_sent = self.theme_sent.clone();
+        let hwnd = self.hwnd.clone();
         let opened = self.opened.clone();
         let name = self.name.clone();
+        let title = self.builder.title.clone().unwrap_or_default();
+        let capped_width = self.builder.maximize_button == Some(true)
+            && self.builder.max_inner_size.is_some_and(|size| size.x.is_finite());
         ctx.show_viewport_deferred(self.id, self.builder.clone(), move |ui, _class| {
             let frame_started = Instant::now();
             let mut window = window.lock().unwrap_or_else(|e| e.into_inner());
             let palette = *window.palette_mut();
             ui.style_mut().visuals = popout_visuals(&palette);
             // The native frame follows the app's mode, as customtkinter
-            // darkened the pop-outs' title bars.
-            let theme = if palette.dark { egui::SystemTheme::Dark } else { egui::SystemTheme::Light };
-            let mut sent = theme_sent.lock().unwrap_or_else(|e| e.into_inner());
-            if *sent != Some(palette.dark) {
-                ui.ctx().send_viewport_cmd(ViewportCommand::SetTheme(theme));
-                *sent = Some(palette.dark);
+            // darkened (or lightened) the pop-outs' title bars by setting
+            // DWMWA_USE_IMMERSIVE_DARK_MODE. winit's SetTheme did not reach
+            // the caption, and Windows puts the system's dark caption back
+            // when the window is first shown, so it is checked every frame
+            // and set again whenever it has drifted.
+            let mut found = hwnd.lock().unwrap_or_else(|e| e.into_inner());
+            if found.is_none() {
+                *found = own_window_titled(&title).map(|h| h.0 as isize);
+                if let Some(h) = *found
+                    && capped_width
+                {
+                    cap_maximized_width(windows::Win32::Foundation::HWND(h as *mut _));
+                }
             }
-            drop(sent);
+            if let Some(h) = *found
+                && sync_title_bar(windows::Win32::Foundation::HWND(h as *mut _), palette.dark)
+            {
+                // Look again shortly: the first show can undo it once more.
+                ui.ctx().request_repaint_after(Duration::from_millis(100));
+            }
+            drop(found);
             window.draw(ui);
             if let Some(at) = opened.lock().unwrap_or_else(|e| e.into_inner()).take() {
                 super::timing::took(&format!("{name} first frame (frame {:.1} ms)", frame_started.elapsed().as_secs_f64() * 1000.0), at);
@@ -787,7 +956,6 @@ pub struct Popouts {
     advanced: Option<Popout<AdvancedWindow>>,
     telemetry: Option<Popout<DimmTelemetryWindow>>,
     capture: Arc<Mutex<Option<Capture>>>,
-    spd: SpdSource,
     auto_open_at: Option<Instant>,
 }
 
@@ -799,7 +967,6 @@ impl Default for Popouts {
             advanced: None,
             telemetry: None,
             capture: Arc::new(Mutex::new(None)),
-            spd: SpdSource::default(),
             auto_open_at: None,
         }
     }
@@ -819,8 +986,12 @@ impl Popouts {
         }
         let backend = shared.backend.clone();
         let id = ViewportId::from_hash_of("advanced");
-        let channels = channel_labels("A1", "B1");
-        {
+        // Named for the slots from the first frame when the main window
+        // already knows them, as the Python passed its own headings in.
+        let known: HashMap<String, String> = shared.channel_labels.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let (a, b) = channel_headers(&known, "A1", "B1");
+        let channels = channel_labels(&a, &b);
+        if known.is_empty() {
             // Named for the slots once the inventory is read. Never on this
             // thread: WMI refuses a call from the window's thread
             // (RPC_E_WRONG_THREAD), and the inventory would cache the
@@ -838,9 +1009,12 @@ impl Popouts {
             // The SPD rows fill in from an SPD read; start it if it has not
             // been.
             let repaint_ctx = ctx.clone();
-            self.spd.load_async(backend.clone(), move || repaint_ctx.request_repaint_of(id));
+            shared.spd.load_async(backend.clone(), move || {
+                repaint_ctx.request_repaint();
+                repaint_ctx.request_repaint_of(id);
+            });
             let (fields, profile_fields) = spd_tab_fields(backend.platform);
-            entries.extend(advanced_spd_entries(&self.spd, fields, profile_fields, channels.clone()));
+            entries.extend(advanced_spd_entries(shared.spd, fields, profile_fields, channels.clone()));
         }
         let window = AdvancedWindow::new(entries, channels, *shared.palette);
         let position = position_beside(ctx, Side::Right, advanced_window::WINDOW_WIDTH, advanced_window::WINDOW_HEIGHT);
@@ -992,6 +1166,100 @@ mod tests {
 
     fn backend(rows: Vec<Row>) -> Arc<Backend> {
         Arc::new(Backend { platform: Platform::Unsupported, rows, unavailable: EM_DASH })
+    }
+
+    #[test]
+    fn advanced_opens_with_the_slot_names_the_main_window_knows() {
+        // The Python passed its own channel headings in when it opened the
+        // window; the port started at A1/B1 and renamed them later.
+        let ctx = egui::Context::default();
+        let backend = backend(vec![Row::new("tCL", "Primary", "Timings", "Left").with_value("38")]);
+        let palette = Palette::new(true);
+        let mut settings = Settings::default();
+        let spd = SpdSource::with(Vec::new(), HashMap::new());
+        let labels = BTreeMap::from([("a".to_string(), "A2".to_string()), ("b".to_string(), "B2".to_string())]);
+        let values = Values::default();
+        let tab_names: Vec<String> = vec!["Summary".into(), "Timings".into()];
+        let mut shared = Shared {
+            backend: &backend,
+            values: &values,
+            palette: &palette,
+            settings: &mut settings,
+            tab_names: &tab_names,
+            current_tab: "Summary",
+            spd: &spd,
+            channel_labels: &labels,
+        };
+        let mut popouts = Popouts::new();
+        popouts.open_advanced(&ctx, &mut shared);
+        let window = popouts.advanced.as_ref().expect("opened").lock();
+        assert_eq!(*window.channel_labels.lock().unwrap(), ("A2".to_string(), "B2".to_string()));
+    }
+
+    #[test]
+    fn a_pop_out_list_is_cut_at_its_edge_not_faded() {
+        // CTkScrollableFrame clips its last row; egui's default fade drew it
+        // as a washed-out ghost above the footer.
+        let style = PopoutStyle::new(&Palette::new(false));
+        super::super::ui_tests::with_ui(|ui| {
+            style.apply_scrollbar(ui);
+            assert_eq!(ui.spacing().scroll.fade.strength, 0.0);
+            assert!(!ui.spacing().scroll.floating);
+        });
+    }
+
+    #[test]
+    fn a_pop_out_title_bar_takes_the_apps_mode_and_keeps_it() {
+        // A Light pop-out wore the system's black caption: winit's SetTheme
+        // never reached it. The bar is set the way customtkinter set it, on
+        // our own window found by its title, and set again if it drifts.
+        use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW, WS_VISIBLE};
+        use windows::core::w;
+        let title = "RochViewer title bar test";
+        // SAFETY: a plain STATIC window, off screen, destroyed below.
+        let hwnd = unsafe {
+            CreateWindowExW(WS_EX_TOOLWINDOW, w!("STATIC"), w!("RochViewer title bar test"), WS_OVERLAPPEDWINDOW | WS_VISIBLE, -3000, -3000, 200, 100, None, None, None, None)
+        }
+        .expect("a test window");
+        assert_eq!(own_window_titled(title), Some(hwnd));
+        assert_eq!(own_window_titled("RochViewer title bar"), None, "the whole title, not a prefix");
+        for dark in [true, false, true] {
+            sync_title_bar(hwnd, dark);
+            assert_eq!(title_bar_dark(hwnd), Some(dark));
+            assert!(!sync_title_bar(hwnd, dark), "already in that mode: nothing to change");
+        }
+        // SAFETY: the window made above, on this thread.
+        let _ = unsafe { DestroyWindow(hwnd) };
+    }
+
+    #[test]
+    fn maximizing_the_advanced_window_keeps_its_width() {
+        // Tk's resizable(False, True) left the maximize button working, and
+        // it took the window to the screen's height at its fixed width. The
+        // port had switched the button off.
+        let builder = advanced_window::viewport_builder(None);
+        assert_eq!(builder.maximize_button, Some(true));
+        assert_eq!(builder.max_inner_size.map(|s| s.x), Some(advanced_window::WINDOW_WIDTH));
+
+        use windows::Win32::Foundation::{LPARAM, POINT, WPARAM};
+        use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, MINMAXINFO, SendMessageW, WM_GETMINMAXINFO, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW};
+        use windows::core::w;
+        // SAFETY: a plain STATIC window, never shown, destroyed below.
+        let hwnd = unsafe { CreateWindowExW(WS_EX_TOOLWINDOW, w!("STATIC"), w!("cap test"), WS_OVERLAPPEDWINDOW, 0, 0, 200, 100, None, None, None, None) }
+            .expect("a test window");
+        cap_maximized_width(hwnd);
+        cap_maximized_width(hwnd); // a second call does not wrap it twice
+        let ask = |track: i32| {
+            let mut info = MINMAXINFO { ptMaxSize: POINT { x: 2576, y: 1456 }, ptMaxTrackSize: POINT { x: track, y: 99999 }, ..Default::default() };
+            // SAFETY: the MINMAXINFO outlives the synchronous call.
+            unsafe { SendMessageW(hwnd, WM_GETMINMAXINFO, Some(WPARAM(0)), Some(LPARAM(&mut info as *mut MINMAXINFO as isize))) };
+            info.ptMaxSize
+        };
+        assert_eq!(ask(576), POINT { x: 576, y: 1456 }, "maximized at the capped width, full height");
+        assert_eq!(ask(9999), POINT { x: 2576, y: 1456 }, "no cap narrower than the screen: left alone");
+        // SAFETY: the window made above, on this thread.
+        let _ = unsafe { DestroyWindow(hwnd) };
+        assert!(PREVIOUS_PROCS.lock().unwrap().iter().all(|(h, _)| *h != hwnd.0 as isize), "forgotten once destroyed");
     }
 
     /// The stand-in reader the Python tests gave the builder.

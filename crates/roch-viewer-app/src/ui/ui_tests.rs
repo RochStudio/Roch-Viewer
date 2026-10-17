@@ -681,3 +681,26 @@ fn opening_a_tab_re_takes_its_snapshot() {
     assert_eq!(super::app::reread_rows(&rows, "Voltages"), vec![0]);
     assert!(super::app::reread_rows(&rows, "Timings").is_empty());
 }
+
+#[test]
+fn the_summary_clocks_are_the_telemetry_copies_on_every_intel_platform() {
+    // The Python Summary built its clock rows from a dict of the table, so
+    // the last row of a name won: for MCLK and UCLK that is the live
+    // Telemetry copy. The main window has to read those two although it
+    // leaves the rest of the Sensors tab to the Telemetry window (the
+    // reader's `first` set covers them); AM5 has no such row.
+    for platform in [Platform::Lga1700Ddr5, Platform::Lga1700Ddr4, Platform::Lga1851] {
+        let rows = std::thread::spawn(move || intel_table(platform)).join().unwrap();
+        let plan = summary::summary_plan(&rows, platform);
+        let windowed: Vec<(&str, bool)> = plan
+            .row_indices()
+            .into_iter()
+            .filter(|&i| !super::reader::shown_in_main_window(&rows[i]))
+            .map(|i| (rows[i].name.as_str(), rows[i].live))
+            .collect();
+        assert_eq!(windowed, vec![("MCLK", true), ("UCLK", true)], "{platform:?}");
+    }
+    let rows = std::thread::spawn(rochviewer::amd::profile::build_timings).join().unwrap();
+    let plan = summary::summary_plan(&rows, Platform::Am5);
+    assert!(plan.row_indices().into_iter().all(|i| super::reader::shown_in_main_window(&rows[i])));
+}

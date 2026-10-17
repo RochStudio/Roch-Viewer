@@ -93,6 +93,14 @@ const CONTROL_HEIGHT: f32 = 24.0;
 const SEARCH_LABEL_WIDTH: f32 = 54.0;
 const DUMP_WIDTH: f32 = 62.0;
 const COUNT_HEIGHT: f32 = 28.0;
+
+/// Where egui centres a 12.75px line against where Tk set the same label,
+/// measured off the two windows side by side: the names sat a pixel low,
+/// and the values, headings, search label and count line a pixel high.
+const NAME_NUDGE: f32 = -1.0;
+const VALUE_NUDGE: f32 = 1.0;
+const HEADING_NUDGE: f32 = 1.0;
+const HEADER_TEXT_NUDGE: f32 = 1.0;
 const BODY_PAD: f32 = 4.0;
 
 /// What one row read: one displayed value, or both channels of a row that
@@ -215,6 +223,26 @@ pub fn format_dump(entries: &[Entry]) -> String {
     lines.join("\n") + "\n"
 }
 
+/// An I/O error as Python's `str(OSError)` wrote it for a failed `open`:
+/// `[Errno 13] Permission denied: 'C:\\...'` -- the errno Python mapped the
+/// Windows error to, and the path as its repr. An error with no errno of
+/// its own keeps the system's message.
+pub fn python_os_error(error: &std::io::Error, path: &std::path::Path) -> String {
+    let errno = match error.raw_os_error() {
+        Some(2) | Some(3) => Some((2, "No such file or directory")),
+        Some(5) | Some(32) | Some(33) => Some((13, "Permission denied")),
+        Some(112) => Some((28, "No space left on device")),
+        Some(123) => Some((22, "Invalid argument")),
+        _ => None,
+    };
+    let text = path.to_string_lossy().replace('\\', r"\\");
+    let repr = if text.contains('\'') && !text.contains('"') { format!("\"{text}\"") } else { format!("'{}'", text.replace('\'', r"\'")) };
+    match errno {
+        Some((number, message)) => format!("[Errno {number}] {message}: {repr}"),
+        None => error.to_string(),
+    }
+}
+
 /// What a row shows for one reading: the channel-A (or only) text and the
 /// channel-B text.
 ///
@@ -280,7 +308,7 @@ pub struct AdvancedWindow {
     entries: Arc<Vec<Entry>>,
     /// The two channel headings, filled in off the UI thread once the
     /// installed modules are known.
-    channel_labels: ChannelLabels,
+    pub(crate) channel_labels: ChannelLabels,
     rows: Vec<RowInfo>,
     /// Which sections have a row that reads two channels. A section of
     /// single-channel rows carrying A1/B1 labels names two columns that
@@ -429,7 +457,7 @@ impl AdvancedWindow {
             let text = format_dump(&entries).replace('\n', "\r\n");
             let message = match std::fs::write(&path, text) {
                 Ok(()) => format!("Wrote {} rows to {}", entries.len(), path.display()),
-                Err(error) => format!("Could not write {}: {error}", path.display()),
+                Err(error) => format!("Could not write {}: {}", path.display(), python_os_error(&error, &path)),
             };
             *result.lock().unwrap_or_else(|e| e.into_inner()) = Some(message);
             ctx.request_repaint_of(viewport);
@@ -456,7 +484,7 @@ impl AdvancedWindow {
                 pos2(full.left() + 8.0, full.top() + HEADER_PAD + HEADER_HEIGHT + 4.0),
                 vec2(full.width() - 16.0, COUNT_HEIGHT),
             );
-            ui.painter().text(count_rect.left_center(), egui::Align2::LEFT_CENTER, &self.count, style.font.clone(), palette.text);
+            ui.painter().text(count_rect.left_center() + vec2(0.0, HEADER_TEXT_NUDGE), egui::Align2::LEFT_CENTER, &self.count, style.font.clone(), palette.text);
             let body = Rect::from_min_max(
                 pos2(full.left() + BODY_PAD, count_rect.bottom() + 2.0),
                 pos2(full.right() - BODY_PAD, full.bottom() - 6.0),
@@ -471,7 +499,7 @@ impl AdvancedWindow {
         let left = full.left() + HEADER_PAD;
         let right = full.right() - HEADER_PAD;
         let label_rect = Rect::from_min_size(pos2(left, top), vec2(SEARCH_LABEL_WIDTH, HEADER_HEIGHT));
-        ui.painter().text(label_rect.left_center(), egui::Align2::LEFT_CENTER, "Search:", style.font.clone(), palette.text);
+        ui.painter().text(label_rect.left_center() + vec2(0.0, HEADER_TEXT_NUDGE), egui::Align2::LEFT_CENTER, "Search:", style.font.clone(), palette.text);
 
         let control_top = top + (HEADER_HEIGHT - CONTROL_HEIGHT) / 2.0;
         let dump_rect = Rect::from_min_max(pos2(right - DUMP_WIDTH, control_top), pos2(right, control_top + CONTROL_HEIGHT));
@@ -558,7 +586,8 @@ impl AdvancedWindow {
         let painter = ui.painter();
         painter.rect_filled(rect, CornerRadius::ZERO, band(&palette, line));
         let text = format!("{tab} — {title}").to_uppercase();
-        painter.text(pos2(rect.left() + 6.0, rect.center().y), egui::Align2::LEFT_CENTER, text, style.bold.clone(), palette.value);
+        let y = rect.center().y + HEADING_NUDGE;
+        painter.text(pos2(rect.left() + 6.0, y), egui::Align2::LEFT_CENTER, text, style.bold.clone(), palette.value);
         // The channel names ride on the section heading rather than taking a
         // row of their own, which would break the band and cost a line per
         // section. Only where the section has a row to put under them.
@@ -566,8 +595,8 @@ impl AdvancedWindow {
             let (a, b) = &*self.channel_labels.lock().unwrap_or_else(|e| e.into_inner());
             let a_right = rect.right() - CHANNEL_WIDTH - 4.0;
             let b_right = rect.right() - 8.0;
-            painter.text(pos2(a_right, rect.center().y), egui::Align2::RIGHT_CENTER, a, style.bold.clone(), palette.text);
-            painter.text(pos2(b_right, rect.center().y), egui::Align2::RIGHT_CENTER, b, style.bold.clone(), palette.text);
+            painter.text(pos2(a_right, y), egui::Align2::RIGHT_CENTER, a, style.bold.clone(), palette.text);
+            painter.text(pos2(b_right, y), egui::Align2::RIGHT_CENTER, b, style.bold.clone(), palette.text);
         }
     }
 }
@@ -610,13 +639,10 @@ fn draw_row(ui: &mut Ui, style: &PopoutStyle, palette: &Palette, width: f32, lin
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::ZERO, band(palette, line));
     // The name keeps the top line, which keeps every row at the same pitch.
-    painter.text(pos2(rect.left() + 6.0, rect.top() + ROW_HEIGHT / 2.0), egui::Align2::LEFT_CENTER, label, font.clone(), palette.text);
+    painter.text(pos2(rect.left() + 6.0, rect.top() + ROW_HEIGHT / 2.0 + NAME_NUDGE), egui::Align2::LEFT_CENTER, label, font.clone(), palette.text);
     let place = |galley: Arc<egui::Galley>, right_edge: f32| {
-        let y = if paired {
-            rect.top() + (ROW_HEIGHT - WRAPPED_LINE_HEIGHT) / 2.0
-        } else {
-            rect.center().y - galley.size().y / 2.0
-        };
+        let y = VALUE_NUDGE
+            + if paired { rect.top() + (ROW_HEIGHT - WRAPPED_LINE_HEIGHT) / 2.0 } else { rect.center().y - galley.size().y / 2.0 };
         painter.galley(pos2(right_edge, y), galley, palette.value);
     };
     match b {
@@ -632,12 +658,14 @@ fn draw_row(ui: &mut Ui, style: &PopoutStyle, palette: &Palette, width: f32, lin
 pub fn viewport_builder(position: Option<(f32, f32)>) -> egui::ViewportBuilder {
     // Width fixed, height not: the list is long and worth resizing
     // vertically, while the columns are laid out against a known width.
+    // Tk's resizable(False, True) kept the maximize button, which takes the
+    // window to the screen's full height at its fixed width; so does this.
     let builder = egui::ViewportBuilder::default()
         .with_title("Advanced")
         .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
         .with_min_inner_size([WINDOW_WIDTH, 200.0])
         .with_max_inner_size([WINDOW_WIDTH, f32::INFINITY])
-        .with_maximize_button(false)
+        .with_maximize_button(true)
         .with_resizable(true);
     popouts::finish_builder(builder, position)
 }
@@ -717,6 +745,17 @@ mod tests {
     #[test]
     fn the_text_ends_with_a_newline() {
         assert!(format_dump(&[entry("tCL", "38")]).ends_with('\n'));
+    }
+
+    #[test]
+    fn a_failed_write_is_reported_in_the_pythons_words() {
+        let path = std::path::Path::new(r"C:\Users\arrow\Desktop\RochViewer.txt");
+        let denied = std::io::Error::from_raw_os_error(5);
+        assert_eq!(python_os_error(&denied, path), r"[Errno 13] Permission denied: 'C:\\Users\\arrow\\Desktop\\RochViewer.txt'");
+        let missing = std::io::Error::from_raw_os_error(3);
+        assert_eq!(python_os_error(&missing, path), r"[Errno 2] No such file or directory: 'C:\\Users\\arrow\\Desktop\\RochViewer.txt'");
+        let quoted = std::path::Path::new(r"C:\Bob's\RochViewer.txt");
+        assert_eq!(python_os_error(&denied, quoted), r#"[Errno 13] Permission denied: "C:\\Bob's\\RochViewer.txt""#);
     }
 
     #[test]
