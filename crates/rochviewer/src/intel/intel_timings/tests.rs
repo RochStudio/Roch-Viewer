@@ -2986,6 +2986,12 @@ fn hashed_table(config: &Hashed) -> Vec<serde_json::Value> {
 #[test]
 #[ignore = "audit tool: FZ_PLATFORM, FZ_CPU, FZ_SEED, FZ_MODE, FZ_OUT, FZ_PROFILE, FZ_LAYOUT, FZ_PID"]
 fn hashed_register_dump() {
+    // A harness rather than a check: without its inputs there is nothing to
+    // run, and `cargo test -- --ignored` on a bench must stay green.
+    if std::env::var_os("FZ_PLATFORM").is_none() {
+        eprintln!("hashed_register_dump: set FZ_PLATFORM and the other FZ_* inputs to run it");
+        return;
+    }
     let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
     let platform = [DDR4, DDR5, Platform::Lga1851].into_iter().find(|p| p.id() == var("FZ_PLATFORM")).expect("platform");
     let profile = std::env::var("FZ_PROFILE").unwrap_or_else(|_| "msi".into());
