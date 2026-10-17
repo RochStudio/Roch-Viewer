@@ -19,6 +19,7 @@ pub mod settings;
 pub mod settings_window;
 pub mod spd_tab;
 pub mod summary;
+pub mod summary_layout;
 pub mod tabs;
 pub mod theme;
 pub mod timing;

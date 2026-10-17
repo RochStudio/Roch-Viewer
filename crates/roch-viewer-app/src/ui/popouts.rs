@@ -74,6 +74,26 @@ impl Shared<'_> {
     }
 }
 
+/// What the Summary editor offers: every row once (by tab and name), and
+/// the built-in Summary to start from.
+fn summary_context(backend: &Arc<Backend>) -> settings_window::SummaryContext {
+    use super::summary_layout::SummaryLayout;
+    let rows = &backend.rows;
+    let mut seen = HashSet::new();
+    let catalog = rows
+        .iter()
+        .filter(|row| !row.extra_bool("diagnostic") && seen.insert((row.tab.clone(), row.name.clone())))
+        .map(|row| settings_window::CatalogRow {
+            name: row.name.clone(),
+            tab: row.tab.clone(),
+            category: row.category.clone(),
+            label: row.label().to_string(),
+        })
+        .collect();
+    let built_in = SummaryLayout::from_plan(rows, &super::summary::summary_plan(rows, backend.platform));
+    settings_window::SummaryContext { platform: backend.platform.id().to_string(), catalog, built_in }
+}
+
 /// A pop-out builder with the preferences' window level.
 fn with_level(builder: ViewportBuilder, on_top: bool) -> ViewportBuilder {
     if on_top { builder.with_window_level(egui::WindowLevel::AlwaysOnTop) } else { builder }
@@ -1166,6 +1186,7 @@ impl Popouts {
             shared.prefs.clone(),
             shared.prefs_revision.clone(),
             shared.settings.get_bool("telemetry_auto_open"),
+            Arc::new(summary_context(shared.backend)),
         );
         let position = position_beside(ctx, Side::Right, settings_window::WINDOW_WIDTH, settings_window::WINDOW_HEIGHT);
         let builder = with_level(settings_window::viewport_builder(position), shared.on_top());

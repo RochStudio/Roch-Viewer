@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 use eframe::egui::Color32;
 use serde_json::{Map, Value, json};
 
+use super::summary_layout::SummaryLayout;
+
 /// Light, Dark, or whatever Windows is set to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThemeMode {
@@ -314,6 +316,9 @@ pub struct Prefs {
     pub refresh_ms: u32,
     pub show_footer_links: bool,
     pub screenshot_to_clipboard: bool,
+
+    /// A hand-made Summary per platform id; none means the built-in one.
+    pub summary_layouts: BTreeMap<String, SummaryLayout>,
 }
 
 pub const DEFAULT_FONT: &str = "Consolas";
@@ -341,6 +346,7 @@ impl Default for Prefs {
             refresh_ms: 1000,
             show_footer_links: true,
             screenshot_to_clipboard: true,
+            summary_layouts: BTreeMap::new(),
         }
     }
 }
@@ -416,6 +422,13 @@ impl Prefs {
                 .map_or(defaults.refresh_ms, |v| (v as u32).clamp(REFRESH_RANGE.0, REFRESH_RANGE.1)),
             show_footer_links: flag(map, "show_footer_links", defaults.show_footer_links),
             screenshot_to_clipboard: flag(map, "screenshot_to_clipboard", defaults.screenshot_to_clipboard),
+            summary_layouts: map
+                .get("summary_layouts")
+                .and_then(Value::as_object)
+                .map(|saved| {
+                    saved.iter().filter_map(|(platform, layout)| Some((platform.clone(), SummaryLayout::from_json(layout)?))).collect()
+                })
+                .unwrap_or_default(),
         }
     }
 
@@ -443,6 +456,7 @@ impl Prefs {
             "refresh_ms": self.refresh_ms,
             "show_footer_links": self.show_footer_links,
             "screenshot_to_clipboard": self.screenshot_to_clipboard,
+            "summary_layouts": self.summary_layouts.iter().map(|(k, v)| (k.clone(), v.to_json())).collect::<Map<String, Value>>(),
         })
     }
 

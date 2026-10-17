@@ -46,6 +46,9 @@ pub const BLANK_RETRY: Duration = Duration::from_millis(1500);
 enum Request {
     /// Read these rows again now (a tab re-read, a selection change).
     Reread(Vec<usize>),
+    /// The window now draws these rows too (a Summary laid out by hand can
+    /// name any row): read them, and keep the live ones live.
+    Show(Vec<usize>),
     /// Show one channel of dual rows, or both.
     Select(Option<Channel>),
     Stop,
@@ -159,6 +162,11 @@ impl Reader {
         Reader { values, sender }
     }
 
+    /// Read these rows too, from now on.
+    pub fn show(&self, rows: Vec<usize>) {
+        let _ = self.sender.send(Request::Show(rows));
+    }
+
     /// Re-take these rows now: each row's `refresh` is called first (once
     /// per distinct callable), which drops whatever cache it reads from.
     pub fn reread(&self, rows: Vec<usize>) {
@@ -251,7 +259,8 @@ fn worker(backend: Arc<Backend>, first: Vec<usize>, values: Values, receiver: Re
         repaint();
     }
     super::timing::took("first read of every row", first_pass);
-    let live: Vec<usize> = shown.iter().copied().filter(|&i| backend.rows[i].live).collect();
+    let mut shown = shown;
+    let mut live: Vec<usize> = shown.iter().copied().filter(|&i| backend.rows[i].live).collect();
     let started = Instant::now();
     let mut retried_blanks = false;
     let mut next_live = Instant::now() + live_refresh();
@@ -278,6 +287,18 @@ fn worker(backend: Arc<Backend>, first: Vec<usize>, values: Values, receiver: Re
                     }
                 }
                 if read_all(&mut rows.into_iter(), channel) {
+                    repaint();
+                }
+            }
+            Ok(Request::Show(rows)) => {
+                let new: Vec<usize> = rows.into_iter().filter(|i| *i < backend.rows.len() && !shown.contains(i)).collect();
+                for &index in &new {
+                    shown.push(index);
+                    if backend.rows[index].live {
+                        live.push(index);
+                    }
+                }
+                if read_all(&mut new.into_iter(), channel) {
                     repaint();
                 }
             }

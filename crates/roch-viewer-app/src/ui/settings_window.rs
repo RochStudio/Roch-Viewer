@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use eframe::egui::{self, RichText, Ui, vec2};
 
 use super::fonts::{self, Family};
+use super::summary_layout::{Item, ItemKind, MAX_COLUMNS, SummaryLayout};
 use super::popouts;
 use super::prefs::{
     self, COLOR_ROLES, Colors, OPACITY_RANGE, Prefs, REFRESH_RANGE, RADIUS_RANGE, ROW_DELTA_RANGE, SCALE_RANGE,
@@ -29,12 +30,14 @@ pub enum Page {
     Colors,
     Text,
     Layout,
+    Summary,
     Window,
     Behavior,
 }
 
 impl Page {
-    const ALL: [Page; 6] = [Page::Appearance, Page::Colors, Page::Text, Page::Layout, Page::Window, Page::Behavior];
+    const ALL: [Page; 7] =
+        [Page::Appearance, Page::Colors, Page::Text, Page::Layout, Page::Summary, Page::Window, Page::Behavior];
 
     fn name(self) -> &'static str {
         match self {
@@ -42,10 +45,38 @@ impl Page {
             Page::Colors => "Colours",
             Page::Text => "Text",
             Page::Layout => "Layout",
+            Page::Summary => "Summary",
             Page::Window => "Window",
             Page::Behavior => "Behaviour",
         }
     }
+}
+
+/// One row the Summary editor can add.
+#[derive(Clone, Debug)]
+pub struct CatalogRow {
+    pub name: String,
+    pub tab: String,
+    pub category: String,
+    pub label: String,
+}
+
+/// What the Summary page needs from the main window: which platform the
+/// layout is saved under, every row it could show, and the built-in layout
+/// to start from.
+#[derive(Clone, Debug)]
+pub struct SummaryContext {
+    pub platform: String,
+    pub catalog: Vec<CatalogRow>,
+    pub built_in: SummaryLayout,
+}
+
+/// Which part of the Summary the editor is showing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Part {
+    Identity,
+    Clocks,
+    Column(usize),
 }
 
 /// What the Settings window asks the main window to do beyond a preference
@@ -73,10 +104,19 @@ pub struct SettingsWindow {
     editing_dark: Option<bool>,
     hex: HashMap<String, String>,
     confirm_reset: bool,
+    summary: Arc<SummaryContext>,
+    part: Part,
+    row_filter: String,
 }
 
 impl SettingsWindow {
-    pub fn new(palette: Palette, prefs: Arc<Mutex<Prefs>>, revision: Arc<AtomicU64>, auto_open: bool) -> Self {
+    pub fn new(
+        palette: Palette,
+        prefs: Arc<Mutex<Prefs>>,
+        revision: Arc<AtomicU64>,
+        auto_open: bool,
+        summary: Arc<SummaryContext>,
+    ) -> Self {
         SettingsWindow {
             open: true,
             palette,
@@ -90,6 +130,9 @@ impl SettingsWindow {
             editing_dark: None,
             hex: HashMap::new(),
             confirm_reset: false,
+            summary,
+            part: Part::Column(0),
+            row_filter: String::new(),
         }
     }
 
@@ -143,6 +186,7 @@ impl SettingsWindow {
                         Page::Colors => self.colors(ui, &mut prefs),
                         Page::Text => self.text(ui, &mut prefs),
                         Page::Layout => self.layout(ui, &mut prefs),
+                        Page::Summary => self.summary_page(ui, &mut prefs),
                         Page::Window => self.window(ui, &mut prefs),
                         Page::Behavior => self.behavior(ui, &mut prefs),
                     }
@@ -178,7 +222,8 @@ impl SettingsWindow {
                 ui.label(RichText::new("Reset every setting?").color(self.palette.brand));
                 if ui.button("Reset").clicked() {
                     let positions = prefs.positions.clone();
-                    *prefs = Prefs { positions, ..Prefs::default() };
+                    let summary_layouts = prefs.summary_layouts.clone();
+                    *prefs = Prefs { positions, summary_layouts, ..Prefs::default() };
                     self.hex.clear();
                     self.confirm_reset = false;
                 }
@@ -356,6 +401,206 @@ impl SettingsWindow {
         ui.checkbox(&mut prefs.show_footer_links, "Show the YouTube | X | Discord links");
     }
 
+    fn summary_page(&mut self, ui: &mut Ui, prefs: &mut Prefs) {
+        let palette = self.palette;
+        let context = self.summary.clone();
+        section(ui, &palette, "Layout");
+        let mut custom = prefs.summary_layouts.contains_key(&context.platform);
+        ui.horizontal(|ui| {
+            ui.radio_value(&mut custom, false, "Built-in");
+            ui.radio_value(&mut custom, true, "My own layout");
+        });
+        if custom != prefs.summary_layouts.contains_key(&context.platform) {
+            if custom {
+                prefs.summary_layouts.insert(context.platform.clone(), context.built_in.clone());
+            } else {
+                prefs.summary_layouts.remove(&context.platform);
+            }
+        }
+        let Some(layout) = prefs.summary_layouts.get_mut(&context.platform) else {
+            hint(ui, &palette, "The Summary as the viewer lays it out. Choose \"My own layout\" to start from it and change anything: \
+                which panels show, how many columns, which rows go where, their order and their labels.");
+            return;
+        };
+        hint(ui, &palette, "Saved for this kind of system only; the built-in Summary is one click away.");
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut layout.show_identity, "Identity strip");
+            ui.checkbox(&mut layout.show_clocks, "Clocks block");
+        });
+        ui.horizontal(|ui| {
+            ui.label("Columns");
+            let count = layout.columns.len();
+            if ui.add_enabled(count > 1, egui::Button::new("−")).clicked() {
+                layout.set_column_count(count - 1);
+            }
+            ui.label(RichText::new(count.to_string()).strong());
+            if ui.add_enabled(count < MAX_COLUMNS, egui::Button::new("+")).clicked() {
+                layout.set_column_count(count + 1);
+            }
+            ui.add_space(12.0);
+            if ui.button("Start again from the built-in layout").clicked() {
+                *layout = context.built_in.clone();
+            }
+        });
+        if let Part::Column(c) = self.part
+            && c >= layout.columns.len()
+        {
+            self.part = Part::Column(layout.columns.len() - 1);
+        }
+
+        section(ui, &palette, "Panels");
+        ui.horizontal_wrapped(|ui| {
+            ui.selectable_value(&mut self.part, Part::Identity, "Identity");
+            ui.selectable_value(&mut self.part, Part::Clocks, "Clocks");
+            for c in 0..layout.columns.len() {
+                ui.selectable_value(&mut self.part, Part::Column(c), format!("Column {}", c + 1));
+            }
+        });
+        hint(
+            ui,
+            &palette,
+            match self.part {
+                Part::Identity => "Entries packed along a line; a line break starts the next.",
+                Part::Clocks => "Entries placed on the columns, left to right, then down; a blank leaves a hole.",
+                Part::Column(_) => "Top to bottom. ◀ ▶ move an entry to the next column.",
+            },
+        );
+        let columns = layout.columns.len();
+        let part = self.part;
+        let items: &mut Vec<Item> = match part {
+            Part::Identity => &mut layout.identity,
+            Part::Clocks => &mut layout.clocks,
+            Part::Column(c) => &mut layout.columns[c],
+        };
+        let mut action: Option<(usize, Edit)> = None;
+        egui::Frame::new()
+            .stroke(egui::Stroke::new(1.0, palette.border))
+            .corner_radius(theme::radius(6))
+            .inner_margin(egui::Margin::same(6))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                if items.is_empty() {
+                    ui.label(RichText::new("Empty: add rows below.").color(palette.disabled_text));
+                }
+                egui::ScrollArea::vertical().id_salt("summary-items").max_height(230.0).auto_shrink([false, true]).show(ui, |ui| {
+                    let last = items.len().saturating_sub(1);
+                    for (i, item) in items.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            let small = |ui: &mut Ui, text: &str, enabled: bool| {
+                                ui.add_enabled(enabled, egui::Button::new(text).min_size(vec2(24.0, 20.0))).clicked()
+                            };
+                            if small(ui, "▲", i > 0) {
+                                action = Some((i, Edit::Up));
+                            }
+                            if small(ui, "▼", i < last) {
+                                action = Some((i, Edit::Down));
+                            }
+                            if let Part::Column(c) = part {
+                                if small(ui, "◀", c > 0) {
+                                    action = Some((i, Edit::Left));
+                                }
+                                if small(ui, "▶", c + 1 < columns) {
+                                    action = Some((i, Edit::Right));
+                                }
+                            }
+                            if small(ui, "✕", true) {
+                                action = Some((i, Edit::Remove));
+                            }
+                            match item.kind {
+                                ItemKind::Break => {
+                                    ui.label(RichText::new("— line break —").color(palette.disabled_text));
+                                }
+                                ItemKind::Blank => {
+                                    ui.label(RichText::new("— blank —").color(palette.disabled_text));
+                                }
+                                ItemKind::Heading => {
+                                    ui.add(egui::TextEdit::singleline(&mut item.label).desired_width(200.0));
+                                    ui.label(RichText::new("heading").small().color(palette.disabled_text));
+                                }
+                                _ => {
+                                    ui.add(egui::TextEdit::singleline(&mut item.label).desired_width(200.0));
+                                    let source = if item.tab.is_empty() { item.name.clone() } else { format!("{} · {}", item.tab, item.name) };
+                                    ui.label(RichText::new(source).small().color(palette.disabled_text));
+                                }
+                            }
+                        });
+                    }
+                });
+            });
+        ui.horizontal(|ui| {
+            if part != Part::Identity && ui.button("Add heading").clicked() {
+                items.push(Item::heading("Heading"));
+            }
+            if ui.button(if part == Part::Clocks { "Add hole" } else { "Add blank line" }).clicked() {
+                items.push(Item::blank());
+            }
+            if part == Part::Identity && ui.button("Add line break").clicked() {
+                items.push(Item::line_break());
+            }
+        });
+        if let Some((i, edit)) = action {
+            match edit {
+                Edit::Up if i > 0 => items.swap(i, i - 1),
+                Edit::Down if i + 1 < items.len() => items.swap(i, i + 1),
+                Edit::Remove => {
+                    items.remove(i);
+                }
+                Edit::Left | Edit::Right => {
+                    if let Part::Column(c) = part {
+                        let target = if edit == Edit::Left { c.wrapping_sub(1) } else { c + 1 };
+                        if target < columns {
+                            let item = items.remove(i);
+                            layout.columns[target].push(item);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        section(ui, &palette, "Add a row");
+        ui.horizontal(|ui| {
+            ui.label("Search");
+            ui.add(egui::TextEdit::singleline(&mut self.row_filter).desired_width(240.0).hint_text("name, tab or section"));
+        });
+        let filter = self.row_filter.to_lowercase();
+        let target = match self.part {
+            Part::Identity => &mut layout.identity,
+            Part::Clocks => &mut layout.clocks,
+            Part::Column(c) => &mut layout.columns[c],
+        };
+        egui::Frame::new()
+            .stroke(egui::Stroke::new(1.0, palette.border))
+            .corner_radius(theme::radius(6))
+            .inner_margin(egui::Margin::same(4))
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical().id_salt("summary-catalog").max_height(200.0).auto_shrink([false, true]).show(ui, |ui| {
+                    for row in context.catalog.iter().filter(|row| {
+                        filter.is_empty()
+                            || row.label.to_lowercase().contains(&filter)
+                            || row.name.to_lowercase().contains(&filter)
+                            || row.tab.to_lowercase().contains(&filter)
+                            || row.category.to_lowercase().contains(&filter)
+                    }) {
+                        let present = target.iter().any(|item| item.name == row.name && item.tab == row.tab);
+                        ui.horizontal(|ui| {
+                            if ui.add_enabled(!present, egui::Button::new("+").min_size(vec2(24.0, 20.0))).clicked() {
+                                target.push(Item {
+                                    kind: ItemKind::Value,
+                                    name: row.name.clone(),
+                                    tab: row.tab.clone(),
+                                    second: String::new(),
+                                    label: row.label.clone(),
+                                });
+                            }
+                            ui.label(&row.label);
+                            ui.label(RichText::new(format!("{} › {}", row.tab, row.category)).small().color(palette.disabled_text));
+                        });
+                    }
+                });
+            });
+    }
+
     fn window(&mut self, ui: &mut Ui, prefs: &mut Prefs) {
         let palette = self.palette;
         section(ui, &palette, "Position");
@@ -438,4 +683,14 @@ pub fn viewport_builder(position: Option<(f32, f32)>) -> egui::ViewportBuilder {
         .with_min_inner_size([520.0, 420.0])
         .with_resizable(true);
     popouts::finish_builder(builder, position)
+}
+
+/// A change to one Summary entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Edit {
+    Up,
+    Down,
+    Left,
+    Right,
+    Remove,
 }

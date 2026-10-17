@@ -320,6 +320,12 @@ pub struct TimingApp {
     /// When the preferences next need writing out.
     save_due: Option<std::time::Instant>,
     saved: serde_json::Value,
+    /// The Summary layout the plan was built from; none is the built-in one.
+    summary_layout: Option<super::summary_layout::SummaryLayout>,
+    /// Make the window big enough for a hand-made Summary on its next frame.
+    fit_summary: bool,
+    /// What the Summary needs beyond its preset size.
+    summary_extra: Vec2,
 }
 
 /// What a click asked for, carried out after the frame's layout so the
@@ -344,6 +350,15 @@ pub fn tab_names_for(rows: &[rochviewer::row::Row]) -> Vec<String> {
         tab_names.insert(at.min(tab_names.len()), "SPD".into());
     }
     tab_names
+}
+
+/// The Summary to draw: the hand-made layout saved for this platform, or
+/// the built-in one.
+pub fn summary_plan_for(backend: &Backend, prefs: &Prefs) -> SummaryPlan {
+    match prefs.summary_layouts.get(backend.platform.id()) {
+        Some(layout) => layout.to_plan(&backend.rows),
+        None => summary::summary_plan(&backend.rows, backend.platform),
+    }
 }
 
 /// The rows on `tab` that are re-taken each time it is opened: those that
@@ -380,7 +395,7 @@ impl TimingApp {
             .filter(|&at| window_tools::on_screen(at));
 
         let backend = Arc::new(timing::span("build the table", || fixture::backend_from_env().unwrap_or_else(load_active_backend)));
-        let summary = timing::span("summary plan", || summary::summary_plan(&backend.rows, backend.platform));
+        let summary = timing::span("summary plan", || summary_plan_for(&backend, &prefs));
         let ctx = cc.egui_ctx.clone();
         let reader = Reader::start(backend.clone(), summary.row_indices(), move || ctx.request_repaint());
         let tab_names = tab_names_for(&backend.rows);
@@ -413,6 +428,7 @@ impl TimingApp {
 
         let current = if prefs.remember_tab { tab_names.iter().position(|t| *t == prefs.last_tab).unwrap_or(0) } else { 0 };
         let saved = prefs.to_json();
+        let summary_layout = prefs.summary_layouts.get(backend.platform.id()).cloned();
         TimingApp {
             backend,
             reader,
@@ -446,6 +462,9 @@ impl TimingApp {
             restore_main,
             save_due: None,
             saved,
+            fit_summary: summary_layout.is_some(),
+            summary_extra: Vec2::ZERO,
+            summary_layout,
         }
     }
 
@@ -473,6 +492,13 @@ impl TimingApp {
         }
         self.palette = Palette::from_prefs(&prefs, dark);
         theme::apply(ctx, &self.palette);
+        let layout = prefs.summary_layouts.get(self.backend.platform.id()).cloned();
+        if layout != self.summary_layout {
+            self.summary = summary_plan_for(&self.backend, &prefs);
+            self.reader.show(self.summary.row_indices());
+            self.fit_summary = true;
+            self.summary_layout = layout;
+        }
         if previous.ui_scale != prefs.ui_scale {
             ctx.set_zoom_factor(prefs.ui_scale);
         }
@@ -556,6 +582,10 @@ impl TimingApp {
         // Bigger text and roomier rows need a bigger window, in proportion.
         let (across, down) = theme::size_factor();
         let (mut w, mut h) = (w * across, h * down);
+        if self.current_tab() == "Summary" {
+            w += self.summary_extra.x;
+            h += self.summary_extra.y;
+        }
         if let Some(screen) = screen {
             w = w.min(screen.x);
             h = h.min((screen.y - 120.0).max(MIN_WINDOW_HEIGHT));
@@ -796,6 +826,21 @@ impl TimingApp {
             channel_labels: &self.channel_labels,
         };
         if tab == "Summary" {
+            if std::mem::take(&mut self.fit_summary) {
+                // A hand-made Summary can need more room than the preset
+                // size: the Summary's size becomes the preset plus whatever
+                // it lacks, measured against the preset rather than against
+                // room an earlier layout asked for.
+                let needed = summary::needed_size(ui, &context, &self.summary);
+                let preset = area.size() - self.summary_extra;
+                let extra = vec2((needed.x - preset.x).max(0.0), (needed.y - preset.y).max(0.0));
+                let extra = if extra.x > 0.5 || extra.y > 0.5 { extra + vec2(2.0, 2.0) } else { Vec2::ZERO };
+                if extra != self.summary_extra {
+                    self.summary_extra = extra;
+                    self.sized_for = None;
+                    ui.ctx().request_repaint();
+                }
+            }
             summary::show(ui, &context, &self.summary, area);
         } else {
             tabs::show_detail(ui, &context, &tab, area);

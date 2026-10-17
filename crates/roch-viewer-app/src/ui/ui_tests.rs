@@ -704,3 +704,26 @@ fn the_summary_clocks_are_the_telemetry_copies_on_every_intel_platform() {
     let plan = summary::summary_plan(&rows, Platform::Am5);
     assert!(plan.row_indices().into_iter().all(|i| super::reader::shown_in_main_window(&rows[i])));
 }
+
+// --- a hand-made Summary starts as the built-in one.
+
+#[test]
+fn every_platforms_built_in_summary_survives_becoming_a_layout() {
+    use super::summary_layout::SummaryLayout;
+    // Each table on a thread of its own, as above.
+    let check = |platform: Platform| {
+        std::thread::spawn(move || {
+            let rows = if platform == Platform::Am5 { rochviewer::amd::profile::build_timings() } else { intel_table(platform) };
+            let plan = summary::summary_plan(&rows, platform);
+            let layout = SummaryLayout::from_plan(&rows, &plan);
+            assert_eq!(layout.to_plan(&rows), plan, "{platform:?}");
+            let saved = SummaryLayout::from_json(&layout.to_json()).unwrap();
+            assert_eq!(saved.to_plan(&rows), plan, "{platform:?} after saving");
+        })
+        .join()
+        .unwrap()
+    };
+    for platform in [Platform::Lga1700Ddr4, Platform::Lga1700Ddr5, Platform::Lga1851, Platform::Am5] {
+        check(platform);
+    }
+}

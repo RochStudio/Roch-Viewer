@@ -52,6 +52,10 @@ pub enum Line {
     Rows { label: String, first: Option<usize>, second: Option<usize>, has_second: bool },
     /// One dual row's own A and B.
     Sides { label: String, index: Option<usize> },
+    /// A heading in the accent colour; only a custom layout has them.
+    Heading { label: String },
+    /// An empty line; only a custom layout has them.
+    Blank,
 }
 
 /// One About entry: the row and the label it shows (empty for none).
@@ -83,6 +87,7 @@ impl SummaryPlan {
                 Line::Row { index, .. } => out.push(*index),
                 Line::Rows { first, second, .. } => out.extend(first.iter().chain(second.iter()).copied()),
                 Line::Sides { index, .. } => out.extend(index.iter().copied()),
+                Line::Heading { .. } | Line::Blank => {}
             }
         }
         out
@@ -292,6 +297,8 @@ fn line_value(ctx: &TabContext, line: &Line) -> (String, String, Color32) {
             };
             (label.clone(), value, palette.value)
         }
+        Line::Heading { label } => (label.clone(), String::new(), palette.brand),
+        Line::Blank => (String::new(), String::new(), palette.value),
     }
 }
 
@@ -319,8 +326,16 @@ fn measure(painter: &egui::Painter, ctx: &TabContext, plan: &SummaryPlan, left: 
     // Measured in the all-modules view as well: the Tk grid sized its
     // columns once, at build, and a selection never shrank them.
     let all = ctx.all_modules();
+    // A heading is not a name: it spans the column, and only makes the
+    // column as wide as it is.
+    let mut headings_w = vec![0.0f32; count];
+    let bold = theme::bold(theme::FONT_SIZE);
     for (c, lines) in plan.columns.iter().enumerate() {
         for (line, (label, value, _)) in lines.iter().zip(&texts[c]) {
+            if let Line::Heading { label } = line {
+                headings_w[c] = headings_w[c].max(draw::text_width(painter, label, &bold));
+                continue;
+            }
             names_w[c] = names_w[c].max(width(label));
             values_w[c] = values_w[c].max(width(value));
             if ctx.selected.is_some() {
@@ -336,7 +351,7 @@ fn measure(painter: &egui::Painter, ctx: &TabContext, plan: &SummaryPlan, left: 
             }
         }
     }
-    let edges: Vec<f32> = (0..count).map(|c| names_w[c] + COLUMN_GAP + values_w[c]).collect();
+    let edges: Vec<f32> = (0..count).map(|c| (names_w[c] + COLUMN_GAP + values_w[c]).max(headings_w[c])).collect();
     let mut starts = Vec::with_capacity(count);
     let mut x = left + PANEL_PADX;
     for edge in &edges {
@@ -427,16 +442,25 @@ pub fn show(ui: &mut Ui, ctx: &TabContext, plan: &SummaryPlan, area: Rect) {
     // The timing columns, each on its own panel, all as tall as the tallest.
     let rows = columns.iter().map(Vec::len).max().unwrap_or(0);
     let bottom = top + 2.0 * PANEL_PADY + pitch * rows as f32;
-    for (c, lines) in columns.iter().enumerate() {
+    let bold = theme::bold(theme::FONT_SIZE);
+    for (c, (lines, kinds)) in columns.iter().zip(&plan.columns).enumerate() {
         let left = starts[c] - PANEL_PADX;
         let right = if c + 1 == count { area.right() } else { starts[c + 1] - PANEL_PADX - super::draw::PANEL_COLUMN_SPACING };
         let panel = Rect::from_min_max(pos2(left, top), pos2(right, bottom));
         draw::panel(&painter, panel, palette);
-        for (n, (label, value, color)) in lines.iter().enumerate() {
+        for (n, ((label, value, color), line)) in lines.iter().zip(kinds).enumerate() {
             let rect = draw::row_rect(starts[c], right - PANEL_PADX, top + PANEL_PADY, pitch, n);
             // Row shading, when it is on; the default band is the
             // background, so this draws nothing unless asked.
             draw::band(&painter, rect.expand2(vec2(PANEL_PADX - 1.0, 0.0)), palette, n % 2 == 1);
+            match line {
+                Line::Heading { .. } => {
+                    draw::text_in_row(&painter, rect, starts[c], Edge::Left, label, &bold, *color);
+                    continue;
+                }
+                Line::Blank => continue,
+                _ => {}
+            }
             draw::text_in_row(&painter, rect, starts[c], Edge::Left, label, &font, palette.text);
             draw::text_in_row(&painter, rect, starts[c] + edges[c], Edge::Right, value, &font, *color);
         }
@@ -505,7 +529,10 @@ mod tests {
         lines
             .iter()
             .map(|line| match line {
-                Line::Row { label, .. } | Line::Rows { label, .. } | Line::Sides { label, .. } => label.as_str(),
+                Line::Row { label, .. } | Line::Rows { label, .. } | Line::Sides { label, .. } | Line::Heading { label } => {
+                    label.as_str()
+                }
+                Line::Blank => "",
             })
             .collect()
     }
