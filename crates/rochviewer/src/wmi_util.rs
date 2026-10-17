@@ -212,7 +212,9 @@ pub fn query_first(class_name: &str) -> Option<WmiObject> {
     })
 }
 
-static STATIC_CLASSES: MemoMap<String, Arc<Vec<WmiObject>>> = MemoMap::new();
+/// `None` for a class whose query failed, kept apart from one that answered
+/// with no objects: see [`static_class_checked`].
+static STATIC_CLASSES: MemoMap<String, Option<Arc<Vec<WmiObject>>>> = MemoMap::new();
 
 /// A WMI class's objects, queried once for the process.
 ///
@@ -221,11 +223,18 @@ static STATIC_CLASSES: MemoMap<String, Arc<Vec<WmiObject>>> = MemoMap::new();
 /// WMI being unavailable is not a transient condition, and retrying it once
 /// per caller is how the startup cost multiplied in the first place.
 pub fn static_class(class_name: &str) -> Arc<Vec<WmiObject>> {
+    static_class_checked(class_name).unwrap_or_default()
+}
+
+/// [`static_class`], but `None` when the query failed rather than an empty
+/// list: for a caller whose Python counterpart treated a raising query
+/// differently from one that found nothing. Shares the same cache.
+pub fn static_class_checked(class_name: &str) -> Option<Arc<Vec<WmiObject>>> {
     STATIC_CLASSES.get_or_init(class_name.to_string(), || match query(class_name) {
-        Ok(objects) => Arc::new(objects),
+        Ok(objects) => Some(Arc::new(objects)),
         Err(error) => {
             eprintln!("Error querying {class_name}: {error}");
-            Arc::new(Vec::new())
+            None
         }
     })
 }

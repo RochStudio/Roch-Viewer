@@ -59,10 +59,29 @@ impl InpOut {
         let path = find_driver().ok_or_else(|| HwError(missing_message()))?;
         // SAFETY: loading a DLL runs its DllMain. This is the driver the
         // user placed beside the program for exactly this purpose.
-        let library = unsafe { Library::new(&path) }.map_err(|e| {
+        //
+        // With the flags ctypes.WinDLL passes for a full path, so the DLL's own
+        // dependencies are searched for where the Python searched for them.
+        let library = unsafe {
+            libloading::os::windows::Library::load_with_flags(
+                &path,
+                libloading::os::windows::LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
+                    | libloading::os::windows::LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR,
+            )
+        }
+        .map(Library::from)
+        .map_err(|e| {
+            let reason = match &e {
+                // WindowsError's Debug is the bare code GetLastError gave.
+                libloading::Error::LoadLibraryExW { source } => match format!("{source:?}").parse::<u32>() {
+                    Ok(code) => ctypes_load_error(code, &path.display().to_string()),
+                    Err(_) => e.to_string(),
+                },
+                _ => e.to_string(),
+            };
             HwError(format!(
                 "Found {} but could not load it. It may be the wrong architecture, \
-                 or the process may not be running as administrator ({e}).",
+                 or the process may not be running as administrator ({reason}).",
                 path.display()
             ))
         })?;
@@ -101,6 +120,54 @@ impl InpOut {
             is_open,
         })
     }
+}
+
+/// The text `str(exc)` gave for the OSError ctypes raised when LoadLibraryExW
+/// failed with `code`: CPython's own wording, which the driver notice quotes.
+///
+/// A missing module (126) is ctypes' FileNotFoundError naming the path; any
+/// other code is `PyErr_SetFromWindowsErr`'s "[WinError n] message", the
+/// system message with its trailing whitespace and full stops removed.
+fn ctypes_load_error(code: u32, path: &str) -> String {
+    const ERROR_MOD_NOT_FOUND: u32 = 126;
+    if code == ERROR_MOD_NOT_FOUND {
+        return format!(
+            "Could not find module '{path}' (or one of its dependencies). \
+             Try using the full path with constructor syntax."
+        );
+    }
+    format!("[WinError {code}] {}", windows_error_message(code, system_message(code)))
+}
+
+/// CPython's tidy-up of a FormatMessageW result, or its fallback when there
+/// was none.
+fn windows_error_message(code: u32, message: Option<String>) -> String {
+    match message {
+        Some(text) => text.trim_end_matches(|c: char| c <= ' ' || c == '.').to_string(),
+        None => format!("Windows Error 0x{code:x}"),
+    }
+}
+
+/// FormatMessageW's text for a system error code, in the language CPython
+/// asks for (neutral, default sublanguage), or `None`.
+fn system_message(code: u32) -> Option<String> {
+    use windows::Win32::System::Diagnostics::Debug::{
+        FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_IGNORE_INSERTS, FormatMessageW,
+    };
+    let mut buffer = [0u16; 2048];
+    // SAFETY: the buffer is ours and its length is passed; no inserts.
+    let length = unsafe {
+        FormatMessageW(
+            FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            None,
+            code,
+            0x0400,
+            windows::core::PWSTR(buffer.as_mut_ptr()),
+            buffer.len() as u32,
+            None,
+        )
+    } as usize;
+    (length != 0).then(|| String::from_utf16_lossy(&buffer[..length.min(buffer.len())]))
 }
 
 impl Hardware for InpOut {
@@ -188,5 +255,27 @@ impl Hardware for InpOut {
     fn is_driver_open(&self) -> bool {
         // SAFETY: no arguments; returns whether the kernel driver is open.
         unsafe { (self.is_open)() != 0 }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_load_is_described_in_cpythons_words() {
+        // Python 1.1.0's notice quoted str(OSError) from ctypes.WinDLL:
+        // "[WinError 193] %1 is not a valid Win32 application" for a file
+        // that is not a DLL, where this said only "LoadLibraryExW failed".
+        assert_eq!(
+            windows_error_message(193, Some("%1 is not a valid Win32 application.\r\n".into())),
+            "%1 is not a valid Win32 application"
+        );
+        assert_eq!(windows_error_message(5, None), "Windows Error 0x5");
+        assert_eq!(
+            ctypes_load_error(126, r"C:\x\inpoutx64.dll"),
+            r"Could not find module 'C:\x\inpoutx64.dll' (or one of its dependencies). Try using the full path with constructor syntax."
+        );
+        assert!(ctypes_load_error(193, "x").starts_with("[WinError 193] "));
     }
 }

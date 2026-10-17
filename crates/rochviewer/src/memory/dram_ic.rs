@@ -10,10 +10,14 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-static WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
+use crate::system_identity::py_isspace;
 
+/// `re.sub(r"\s+", "", value.upper())`. Python's `\s` is every character
+/// `str.isspace()` accepts -- a no-break space, an ideographic space, the
+/// 0x1C-0x1F separators -- where regex-lite's is ASCII only, so the filter is
+/// written out rather than left to the regex.
 fn clean(value: &str) -> String {
-    WHITESPACE.replace_all(&value.to_uppercase(), "").into_owned()
+    value.to_uppercase().chars().filter(|c| !py_isspace(*c)).collect()
 }
 
 fn joined(values: &[&str]) -> String {
@@ -269,5 +273,15 @@ mod tests {
         assert_eq!(identify("X", "",), "Unknown IC");
         assert_eq!(identify_dram_ic("X", "", "", 0, "", &["SAMSUNG B-DIE".into()]), "Samsung B-die");
         assert_eq!(identify_dram_ic("X", "", "", 0, "", &["SAMSUNG-B-DIE".into()]), "Samsung-B-Die B-die");
+    }
+
+    #[test]
+    fn unicode_whitespace_is_removed_as_pythons_backslash_s_removes_it() {
+        // Python 1.1.0: identify_dram_ic("F4-3600C14-16 GVKA") is
+        // "Samsung B-die" and a component marking split by an ideographic
+        // space still names the die; an ASCII-only \s left both unmatched.
+        assert_eq!(identify("F4-3600C14-16\u{a0}GVKA", ""), "Samsung B-die");
+        assert_eq!(identify("F4-3600C14-16GVKA\x1c", ""), "Samsung B-die");
+        assert_eq!(identify_dram_ic("X", "", "", 0, "", &["H5CG48\u{3000}AGBD".into()]), "SK hynix A-die");
     }
 }

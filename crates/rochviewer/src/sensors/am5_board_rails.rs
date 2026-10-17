@@ -7,6 +7,7 @@ use crate::memo::Memo;
 use crate::sensors::ite_superio::{IteSuperIoReader, TEMPERATURE_MAX_C, TEMPERATURE_MIN_C};
 use crate::sensors::superio_lpc;
 use crate::sensors::voltage_rails::{rail_by_key, validate_voltage};
+use crate::system_identity::py_strip;
 use crate::wmi_util;
 
 static BOARD_IDENTITY: Memo<(String, String)> = Memo::new();
@@ -25,7 +26,7 @@ pub fn board_identity() -> (String, String) {
             };
             let manufacturer = field("Manufacturer")?;
             let product = field("Product")?;
-            Some((manufacturer.trim().to_uppercase(), product.trim().to_uppercase()))
+            Some((py_strip(&manufacturer).to_uppercase(), py_strip(&product).to_uppercase()))
         };
         identity().unwrap_or_default()
     })
@@ -381,6 +382,17 @@ mod tests {
     #[test]
     fn identity_is_upper_cased_and_trimmed() {
         on_board(" Gigabyte Technology Co., Ltd. ", "x870 aorus tachyon ice");
+        assert_eq!(
+            board_identity(),
+            ("GIGABYTE TECHNOLOGY CO., LTD.".to_string(), "X870 AORUS TACHYON ICE".to_string())
+        );
+    }
+
+    #[test]
+    fn identity_is_stripped_the_way_python_strip_does() {
+        // str.strip() takes the 0x1C-0x1F separators too, so Python 1.1.0
+        // still recognises the Tachyon from a product name ending in one.
+        on_board("Gigabyte Technology Co., Ltd.\x1c", "X870 AORUS TACHYON ICE\x1f");
         assert_eq!(
             board_identity(),
             ("GIGABYTE TECHNOLOGY CO., LTD.".to_string(), "X870 AORUS TACHYON ICE".to_string())

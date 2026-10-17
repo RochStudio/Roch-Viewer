@@ -17,6 +17,7 @@ use super::ddr5_spd::{EM_DASH, decode_jep106_id, decode_manufacture_date};
 use super::ddr5_telemetry::{ReaderFactory, SpdBytes};
 use super::dimm_inventory::DimmModule;
 use crate::pyfmt;
+use crate::system_identity::py_strip;
 
 /// One displayed value: what the Python dicts held.
 #[derive(Clone, Debug, PartialEq)]
@@ -863,13 +864,13 @@ pub fn join_slots(mut modules: Vec<SpdRecord>, inventory: &[DimmModule]) -> Vec<
     remaining.sort_by_key(|item| item.slot.clone().unwrap_or_default());
     for module in modules.iter_mut() {
         let mut matched: Option<usize> = None;
-        let serial = module.text("serial_number").unwrap_or_default().trim().to_string();
+        let serial = py_strip(&module.text("serial_number").unwrap_or_default()).to_string();
         if !(serial.is_empty() || serial == "0" || serial == EM_DASH) {
-            matched = remaining.iter().position(|item| item.serial_number.trim() == serial);
+            matched = remaining.iter().position(|item| py_strip(&item.serial_number) == serial);
         }
         if matched.is_none() {
-            let part = module.text("part_number").unwrap_or_default().trim().to_uppercase();
-            matched = remaining.iter().position(|item| item.part_number.trim().to_uppercase() == part);
+            let part = py_strip(&module.text("part_number").unwrap_or_default()).to_uppercase();
+            matched = remaining.iter().position(|item| py_strip(&item.part_number).to_uppercase() == part);
         }
         if matched.is_none() && !remaining.is_empty() {
             matched = Some(0);
@@ -1437,5 +1438,27 @@ pub(crate) mod tests {
         ddr5.insert(30, 0);
         ddr5.insert(31, 0);
         assert!(decode_ddr5_base(&ddr5).unwrap_err().contains("'>' not supported"));
+    }
+
+    #[test]
+    fn slot_join_strips_serials_the_way_python_strip_does() {
+        // Python's str.strip() also takes the 0x1C-0x1F separators, so a
+        // serial SMBIOS ends with one still matches the module's own: the
+        // Python 1.1.0 join puts this module in B1, not in the first slot.
+        let module = SpdRecord {
+            fields: fields(&[("part_number", "KIT".into()), ("serial_number", "00004997".into())]),
+            profiles: Vec::new(),
+        };
+        let inventory = [
+            DimmModule { part_number: "KIT".into(), serial_number: "00004996".into(), slot: Some("A1".into()), ..DimmModule::default() },
+            DimmModule {
+                part_number: "KIT".into(),
+                serial_number: "00004997\x1c".into(),
+                slot: Some("B1".into()),
+                ..DimmModule::default()
+            },
+        ];
+        let joined = join_slots(vec![module], &inventory).remove(0);
+        assert_eq!(joined.text("slot").as_deref(), Some("B1"));
     }
 }
