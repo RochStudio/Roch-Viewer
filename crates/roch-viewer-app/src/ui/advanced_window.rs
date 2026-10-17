@@ -223,6 +223,26 @@ pub fn format_dump(entries: &[Entry]) -> String {
     lines.join("\n") + "\n"
 }
 
+/// An I/O error as Python's `str(OSError)` wrote it for a failed `open`:
+/// `[Errno 13] Permission denied: 'C:\\...'` -- the errno Python mapped the
+/// Windows error to, and the path as its repr. An error with no errno of
+/// its own keeps the system's message.
+pub fn python_os_error(error: &std::io::Error, path: &std::path::Path) -> String {
+    let errno = match error.raw_os_error() {
+        Some(2) | Some(3) => Some((2, "No such file or directory")),
+        Some(5) | Some(32) | Some(33) => Some((13, "Permission denied")),
+        Some(112) => Some((28, "No space left on device")),
+        Some(123) => Some((22, "Invalid argument")),
+        _ => None,
+    };
+    let text = path.to_string_lossy().replace('\\', r"\\");
+    let repr = if text.contains('\'') && !text.contains('"') { format!("\"{text}\"") } else { format!("'{}'", text.replace('\'', r"\'")) };
+    match errno {
+        Some((number, message)) => format!("[Errno {number}] {message}: {repr}"),
+        None => error.to_string(),
+    }
+}
+
 /// What a row shows for one reading: the channel-A (or only) text and the
 /// channel-B text.
 ///
@@ -437,7 +457,7 @@ impl AdvancedWindow {
             let text = format_dump(&entries).replace('\n', "\r\n");
             let message = match std::fs::write(&path, text) {
                 Ok(()) => format!("Wrote {} rows to {}", entries.len(), path.display()),
-                Err(error) => format!("Could not write {}: {error}", path.display()),
+                Err(error) => format!("Could not write {}: {}", path.display(), python_os_error(&error, &path)),
             };
             *result.lock().unwrap_or_else(|e| e.into_inner()) = Some(message);
             ctx.request_repaint_of(viewport);
@@ -725,6 +745,17 @@ mod tests {
     #[test]
     fn the_text_ends_with_a_newline() {
         assert!(format_dump(&[entry("tCL", "38")]).ends_with('\n'));
+    }
+
+    #[test]
+    fn a_failed_write_is_reported_in_the_pythons_words() {
+        let path = std::path::Path::new(r"C:\Users\arrow\Desktop\RochViewer.txt");
+        let denied = std::io::Error::from_raw_os_error(5);
+        assert_eq!(python_os_error(&denied, path), r"[Errno 13] Permission denied: 'C:\\Users\\arrow\\Desktop\\RochViewer.txt'");
+        let missing = std::io::Error::from_raw_os_error(3);
+        assert_eq!(python_os_error(&missing, path), r"[Errno 2] No such file or directory: 'C:\\Users\\arrow\\Desktop\\RochViewer.txt'");
+        let quoted = std::path::Path::new(r"C:\Bob's\RochViewer.txt");
+        assert_eq!(python_os_error(&denied, quoted), r#"[Errno 13] Permission denied: "C:\\Bob's\\RochViewer.txt""#);
     }
 
     #[test]

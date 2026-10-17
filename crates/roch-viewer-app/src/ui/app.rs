@@ -179,6 +179,13 @@ pub fn tab_window_sizes(platform: Platform) -> Vec<(&'static str, (f32, f32))> {
 
 /// The requested size of one main tab on `platform`, capped to what the
 /// screen leaves. An unknown tab takes the Summary's size.
+/// Where the driver notice breaks its line: the Python label's wraplength,
+/// the Summary's width less 40 whatever tab is showing -- so the wide tabs
+/// break it where the Summary does, rather than running it out to one line.
+pub fn notice_wrap_width(platform: Platform) -> f32 {
+    window_size_for_tab(platform, "Summary", None).0 - 40.0
+}
+
 pub fn window_size_for_tab(platform: Platform, tab: &str, screen_height: Option<f32>) -> (f32, f32) {
     let sizes = tab_window_sizes(platform);
     let summary = sizes.iter().find(|(t, _)| *t == "Summary").map(|(_, s)| *s).unwrap_or((775.0, 775.0));
@@ -624,7 +631,7 @@ impl TimingApp {
         painter.rect(rect, CornerRadius::same(6), palette.bg, Stroke::new(1.0, palette.brand), egui::StrokeKind::Inside);
         let job = {
             let mut job = theme::job(text.clone(), theme::bold(theme::FONT_SIZE), palette.brand);
-            job.wrap.max_width = rect.width() - 16.0;
+            job.wrap.max_width = notice_wrap_width(self.backend.platform).min(rect.width() - 16.0);
             job
         };
         let galley = painter.layout_job(job);
@@ -880,6 +887,16 @@ mod tests {
 
     fn notice(problem: &str) -> Option<String> {
         driver_notice_text(Some(problem), true)
+    }
+
+    #[test]
+    fn the_notice_breaks_where_the_summary_width_puts_it() {
+        // wraplength=self.WINDOW_WIDTH - 40: 735 on the base table, 660 on
+        // LGA1700 DDR5 and AM5, whichever tab is open.
+        assert_eq!(notice_wrap_width(Platform::Lga1700Ddr4), 735.0);
+        assert_eq!(notice_wrap_width(Platform::Lga1851), 735.0);
+        assert_eq!(notice_wrap_width(Platform::Lga1700Ddr5), 660.0);
+        assert_eq!(notice_wrap_width(Platform::Am5), 660.0);
     }
 
     #[test]
