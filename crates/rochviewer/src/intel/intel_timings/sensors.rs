@@ -660,8 +660,8 @@ pub fn absent_sensor_rows(platform: Platform, arrow_lake: bool, manufacturer: Op
 pub fn dimm_slots_by_channel(modules: &[(Option<String>, Option<String>)]) -> BTreeMap<String, String> {
     let mut slots: Vec<(String, Vec<String>)> = Vec::new();
     for (slot, channel) in modules {
-        let slot = slot.as_deref().unwrap_or("").trim().to_string();
-        let channel = channel.as_deref().unwrap_or("").trim().to_lowercase();
+        let slot = crate::system_identity::py_strip(slot.as_deref().unwrap_or("")).to_string();
+        let channel = crate::system_identity::py_strip(channel.as_deref().unwrap_or("")).to_lowercase();
         if !slot.is_empty() && !channel.is_empty() {
             match slots.iter_mut().find(|(c, _)| *c == channel) {
                 Some((_, found)) => found.push(slot),

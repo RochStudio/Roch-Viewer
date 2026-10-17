@@ -19,7 +19,7 @@ use crate::hardware::{Hardware, HwError, HwResult, set_thread_hardware};
 use crate::platform_profiles::Platform;
 use crate::row::{Channel, Row, Value};
 use crate::testing::FakeHardware;
-use crate::wmi_util::{FakeWmi, WmiObject};
+use crate::wmi_util::{FakeWmi, WmiObject, WmiValue};
 
 use super::build::Build;
 use super::dict::{T, V, bits};
@@ -2829,4 +2829,358 @@ fn the_scheduler_register_is_actually_claimed() {
     let gear2 = (raw >> SCHEDULER_GEAR2_BIT) & 1;
     let gear4 = (raw >> SCHEDULER_GEAR4_BIT) & 1;
     assert_ne!(gear2, gear4, "SC_GS_CFG 0x{raw:08X} sets both gear flags or neither");
+}
+
+// --- Parity over a hashed register space.
+//
+// Every physical dword answers a hash of (seed, address), shaped by a mode,
+// and roughly one dword in eleven does not answer at all. The Python side
+// (_shared/intel-scratch/fz/py_fuzz.py beside the worktrees) computes the same function, so the two
+// tables can be compared over register contents no single bench produces.
+
+const M32: u64 = 0xFFFF_FFFF;
+
+struct HashHardware {
+    seed: u64,
+    mode: String,
+}
+
+impl HashHardware {
+    fn mix(&self, address: u64) -> u64 {
+        let mut x = address ^ self.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        x ^ (x >> 31)
+    }
+
+    fn word(&self, address: u64) -> Option<u32> {
+        let h = self.mix(address);
+        if self.mode == "absent" {
+            return None;
+        }
+        if let Some(hex) = self.mode.strip_prefix("const:") {
+            return Some(u32::from_str_radix(hex, 16).unwrap());
+        }
+        if (h >> 48) % 11 == 0 {
+            return None;
+        }
+        Some(match self.mode.as_str() {
+            "rand" => h & M32,
+            "sparse" => (h & (h >> 32)) & M32,
+            "sparser" => (h & (h >> 32) & (h >> 16)) & M32,
+            "dense" => (h | (h >> 32)) & M32,
+            other => panic!("mode {other}?"),
+        } as u32)
+    }
+}
+
+impl Hardware for HashHardware {
+    fn read_phys(&self, address: u64, size: usize) -> HwResult<Vec<u8>> {
+        let mut out = Vec::with_capacity(size);
+        for a in address..address + size as u64 {
+            let word = self.word(a & !3).ok_or_else(|| HwError::new("unmapped"))?;
+            out.push((word >> (8 * (a & 3))) as u8);
+        }
+        Ok(out)
+    }
+    fn get_phys_long(&self, address: u64) -> HwResult<u32> {
+        let bytes = self.read_phys(address, 4)?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+    fn set_phys_long(&self, _address: u64, _value: u32) -> HwResult<()> {
+        Err(HwError::new("read-only"))
+    }
+    fn inb(&self, _port: u16) -> HwResult<u8> {
+        Err(HwError::new("no ports"))
+    }
+    fn outb(&self, _port: u16, _value: u8) -> HwResult<()> {
+        Err(HwError::new("no ports"))
+    }
+    fn inl(&self, _port: u16) -> HwResult<u32> {
+        Err(HwError::new("no ports"))
+    }
+    fn outl(&self, _port: u16, _value: u32) -> HwResult<()> {
+        Err(HwError::new("no ports"))
+    }
+    fn is_driver_open(&self) -> bool {
+        true
+    }
+}
+
+fn board_profile(profile: &str, platform: Platform) -> (&'static str, &'static str) {
+    match profile {
+        "msi" => ("Micro-Star International Co., Ltd.", memory_facts(platform).board),
+        "asus" => ("ASUSTeK COMPUTER INC.", "ROG MAXIMUS Z790 HERO"),
+        "gigabyte" => ("Gigabyte Technology Co., Ltd.", "Z790 AORUS MASTER"),
+        "asrock" => ("ASRock", "Z790 Taichi"),
+        other => panic!("profile {other}?"),
+    }
+}
+
+/// The table over a hashed register space, rows as the Python dump writes them.
+/// The hashed space and the fixture it is read under.
+struct Hashed<'a> {
+    platform: Platform,
+    cpu: &'a str,
+    seed: u64,
+    mode: &'a str,
+    profile: &'a str,
+    layout: &'a str,
+    pid: &'a str,
+}
+
+fn hashed_table(config: &Hashed) -> Vec<serde_json::Value> {
+    let platform = config.platform;
+    let seed = config.seed;
+    let (cpu, mode, profile) = (config.cpu.to_string(), config.mode.to_string(), config.profile.to_string());
+    let (layout, pid) = (config.layout.to_string(), config.pid.to_string());
+    on_fresh_thread(move || {
+        let (manufacturer, product) = board_profile(&profile, platform);
+        let slots: &[(&str, &str)] = match layout.as_str() {
+            "two" => &[("Physical Memory 1", "Controller0-DIMMA2"), ("Physical Memory 3", "Controller1-DIMMB2")],
+            "one" => &[("Physical Memory 1", "Controller0-DIMMA2")],
+            "four" => &[
+                ("Physical Memory 0", "Controller0-DIMMA1"),
+                ("Physical Memory 1", "Controller0-DIMMA2"),
+                ("Physical Memory 2", "Controller1-DIMMB1"),
+                ("Physical Memory 3", "Controller1-DIMMB2"),
+            ],
+            "samechan" => &[("Physical Memory 0", "Controller0-DIMMA1"), ("Physical Memory 1", "Controller0-DIMMA2")],
+            "chan" => &[("Physical Memory 0", "ChannelA-DIMM0"), ("Physical Memory 1", "ChannelB-DIMM0")],
+            "none" => &[],
+            other => panic!("layout {other}?"),
+        };
+        let mut processor = WmiObject::new()
+            .with("Name", cpu.as_str())
+            .with("Manufacturer", "GenuineIntel")
+            .with("NumberOfCores", 8i64)
+            .with("NumberOfLogicalProcessors", 32i64);
+        if !pid.is_empty() {
+            processor = processor.with("ProcessorId", pid.as_str()).with("SocketDesignation", "LGA1700");
+        }
+        let facts = memory_facts(platform);
+        stub_wmi_for(platform)
+            .class("Win32_PhysicalMemory", slots.iter().map(|(tag, locator)| fake_module(tag, locator, facts)).collect())
+            .class("Win32_Processor", vec![processor])
+            .class(
+                "Win32_BaseBoard",
+                vec![WmiObject::new().with("Product", product).with("Manufacturer", manufacturer).with("Version", "1.0")],
+            )
+            .install();
+        set_thread_hardware(Some(Arc::new(HashHardware { seed, mode })));
+        let rows = build_timings(platform);
+        rows.iter()
+            .filter(|row| !row.extra.contains_key(super::sensors::PARENT_ROW_KEY))
+            .map(|got| {
+                let value = if got.tab == "Sensors" || got.tab == "CPU" {
+                    serde_json::Value::Null
+                } else {
+                    crate::display_values::read_value(got, None, "N/A").into()
+                };
+                serde_json::json!([got.tab, got.category, got.column, got.name, got.label(), got.is_dual(), got.live, value])
+            })
+            .collect()
+    })
+}
+
+#[test]
+#[ignore = "audit tool: FZ_PLATFORM, FZ_CPU, FZ_SEED, FZ_MODE, FZ_OUT, FZ_PROFILE, FZ_LAYOUT, FZ_PID"]
+fn hashed_register_dump() {
+    let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
+    let platform = [DDR4, DDR5, Platform::Lga1851].into_iter().find(|p| p.id() == var("FZ_PLATFORM")).expect("platform");
+    let profile = std::env::var("FZ_PROFILE").unwrap_or_else(|_| "msi".into());
+    let layout = std::env::var("FZ_LAYOUT").unwrap_or_else(|_| "two".into());
+    let pid = std::env::var("FZ_PID").unwrap_or_default();
+    let rows = hashed_table(&Hashed {
+        platform,
+        cpu: &var("FZ_CPU"),
+        seed: var("FZ_SEED").parse().unwrap(),
+        mode: &var("FZ_MODE"),
+        profile: &profile,
+        layout: &layout,
+        pid: &pid,
+    });
+    let body: Vec<String> = rows.iter().map(|row| serde_json::to_string(row).unwrap()).collect();
+    let text = format!(
+        "{{\"platform\": {}, \"cpu\": {}, \"rows\": [\n{}\n]}}\n",
+        serde_json::to_string(platform.id()).unwrap(),
+        serde_json::to_string(&var("FZ_CPU")).unwrap(),
+        body.join(",\n")
+    );
+    std::fs::write(var("FZ_OUT"), text).unwrap();
+}
+
+// --- Parity fixes found by the audit against Python 1.1.0.
+
+#[test]
+fn speed_rounds_a_tie_bclk_the_way_python_round_does() {
+    // round(99.65, 1) is 99.7 in Python: the float sits a hair above the
+    // tie. Scaling by ten first made it an exact tie and rounded it to 99.6,
+    // and every clock derived from the speed moved with it.
+    assert_eq!(speed_at(99.65), "7976.0 MHz");
+    assert_eq!(speed_at(99.35), "7944.0 MHz");
+    FakeWmi::new()
+        .class("Win32_Processor", vec![WmiObject::new().with("Name", "Intel(R) Core(TM) i5-14600KF")])
+        .install();
+    FakeHardware::new()
+        .with_dword(MCHBAR + 0x5F60, 99_650)
+        .with_dword(MCHBAR + 0x5E04, 40 | (1 << 8) | (1 << 12))
+        .with_dword(MCHBAR + 0x13D10, 0)
+        .install();
+    // Python 1.1.0 over the same registers.
+    assert_eq!(get_speed(), "7976.0 MHz");
+    assert_eq!(get_dram_frequency(DDR5), "7976 MT/s");
+    assert_eq!(get_dram_frequency(DDR4), "7976 MHz");
+    assert_eq!(get_mclk(), "3988 MHz");
+}
+
+#[test]
+fn mhz_rounds_a_tie_the_way_python_round_does() {
+    // Python: f"{round(972.5435, 3):.3f}" is "972.543".
+    assert_eq!(registers::mhz(972.5435, 3), "972.543 MHz");
+    assert_eq!(registers::mhz(3387.1305, 3), "3387.131 MHz");
+    assert_eq!(registers::mhz(5000.0, 3), "5000 MHz");
+    assert_eq!(registers::mhz(4987.5, 3), "4987.5 MHz");
+}
+
+#[test]
+fn display_version_falls_back_when_winreg_gives_none() {
+    use crate::system_identity::RegValue;
+    let release = || Some(RegValue::Text("2009".into()));
+    // An empty REG_BINARY or REG_NONE DisplayVersion is None to winreg, so
+    // Python's `if version is None` consults ReleaseId.
+    assert_eq!(identity::display_version_from(Some(RegValue::None), release).as_deref(), Some("2009"));
+    assert_eq!(identity::display_version_from(None, release).as_deref(), Some("2009"));
+    // A present but empty string is not None: no fallback.
+    assert_eq!(identity::display_version_from(Some(RegValue::Text(String::new())), release), None);
+    assert_eq!(identity::display_version_from(Some(RegValue::Text(" 23H2 ".into())), release).as_deref(), Some("23H2"));
+}
+
+#[test]
+fn update_revision_takes_bytes_as_python_int_does() {
+    use crate::system_identity::RegValue;
+    let bytes = |b: &[u8]| identity::update_revision_from(Some(RegValue::Bytes(b.to_vec())));
+    // int(b"6199") == 6199; int(b" 6199\n") == 6199; int(b"61_99") == 6199.
+    assert_eq!(bytes(b"6199"), Some(6199));
+    assert_eq!(bytes(b" 6199\n"), Some(6199));
+    assert_eq!(bytes(b"61_99"), Some(6199));
+    // int(b"\x1c6199") and int(b"6199\x00") raise ValueError.
+    assert_eq!(bytes(b"\x1c6199"), None);
+    assert_eq!(bytes(b"6199\x00"), None);
+    assert_eq!(identity::update_revision_from(Some(RegValue::Int(6199))), Some(6199));
+    assert_eq!(identity::update_revision_from(Some(RegValue::Multi(vec!["1".into()]))), None);
+}
+
+#[test]
+fn slot_tag_layout_compares_memory_devices_as_python_does() {
+    for (devices, expected) in [
+        (WmiValue::Int(2), "Dual Channel"),
+        (WmiValue::Float(2.0), "Dual Channel"),
+        // "2" == 2 and 2.5 == 2 are both False in Python.
+        (WmiValue::Str("2".into()), "2 DIMM slots detected - Unknown Channel Layout"),
+        (WmiValue::Float(2.5), "2.5 DIMM slots detected - Unknown Channel Layout"),
+    ] {
+        let got = on_fresh_thread(move || {
+            FakeWmi::new()
+                .class("Win32_PhysicalMemoryArray", vec![WmiObject::new().with("MemoryDevices", devices)])
+                .class(
+                    "Win32_PhysicalMemory",
+                    vec![
+                        WmiObject::new().with("Tag", "Physical Memory 0").with("DeviceLocator", "Slot 1"),
+                        WmiObject::new().with("Tag", "Physical Memory 1").with("DeviceLocator", "Slot 2"),
+                    ],
+                )
+                .install();
+            identity::channel_layout_from_slot_tags(DDR5)
+        });
+        assert_eq!(got.as_deref(), Some(expected));
+    }
+}
+
+#[test]
+fn locator_channel_follows_python_re_ignorecase() {
+    // _LOCATOR_CHANNEL.search(...) under py -3.13.
+    for (locator, expected) in [
+        ("DIMMA1", Some('A')),
+        ("DIMMA\u{17F}1", None),
+        ("D\u{131}MMA1", Some('A')),
+        ("D\u{130}MMB1", Some('B')),
+        ("ChannelA-DIMM0", Some('A')),
+        ("DIMMA\u{212A}", None),
+        ("CHA\u{131}", None),
+        ("dimm_c", Some('C')),
+        ("DIMMAB DIMM_D", Some('D')),
+    ] {
+        assert_eq!(identity::locator_channel(locator), expected, "{locator:?}");
+    }
+}
+
+#[test]
+fn cpu_name_collapses_python_whitespace() {
+    // " ".join(name.split()) also splits on \x1c-\x1f.
+    let got = on_fresh_thread(|| {
+        FakeWmi::new()
+            .class("Win32_Processor", vec![WmiObject::new().with("Name", "Intel(R) Core(TM)\x1ci9-14900K\x1f")])
+            .install();
+        get_cpu_name()
+    });
+    assert_eq!(got, "Intel Core i9-14900K");
+}
+
+#[test]
+fn dimm_slots_strip_python_whitespace() {
+    let modules = vec![(Some("\x1cA1\x1d".to_string()), Some("\x1fa ".to_string()))];
+    let slots = dimm_slots_by_channel(&modules);
+    assert_eq!(slots.get("a").map(String::as_str), Some("A1"));
+}
+
+/// The Rust table over a hashed register space against the Python 1.1.0 one
+/// over the same space (_shared/intel-scratch/fz/py_fuzz.py, then mkfix.py,
+/// beside the worktrees). Values the fixture took from the machine rather
+/// than the map --
+/// registry, NVML, Super I/O -- are null there and compared by shape only.
+fn assert_hashed_parity(expected: &'static str) {
+    let expected: serde_json::Value = serde_json::from_str(expected).expect("fixture parses");
+    let text = |key: &str| expected[key].as_str().expect(key).to_string();
+    let platform_id = text("platform");
+    let platform = [DDR4, DDR5, Platform::Lga1851].into_iter().find(|p| p.id() == platform_id).expect("platform");
+    let (cpu, mode, profile, layout, pid) = (text("cpu"), text("mode"), text("profile"), text("layout"), text("pid"));
+    let rows = hashed_table(&Hashed {
+        platform,
+        cpu: &cpu,
+        seed: expected["seed"].as_u64().expect("seed"),
+        mode: &mode,
+        profile: &profile,
+        layout: &layout,
+        pid: &pid,
+    });
+    let want = expected["rows"].as_array().expect("rows");
+    for (index, (want, got)) in want.iter().zip(rows.iter()).enumerate() {
+        let (want, got) = (want.as_array().unwrap(), got.as_array().unwrap());
+        assert_eq!(want[..7], got[..7], "row #{index} on {platform_id} seed {mode}");
+        if !want[7].is_null() {
+            assert_eq!(want[7], got[7], "row #{index} {} value on {platform_id} {mode}", want[3]);
+        }
+    }
+    assert_eq!(want.len(), rows.len(), "row count on {platform_id} {mode}");
+}
+
+#[test]
+fn hashed_parity_lga1700_ddr4_alder_lake_four_dimms() {
+    assert_hashed_parity(include_str!("expected/hashed-lga1700-ddr4.json"));
+}
+
+#[test]
+fn hashed_parity_lga1700_ddr5_raptor_lake() {
+    assert_hashed_parity(include_str!("expected/hashed-lga1700-ddr5.json"));
+}
+
+#[test]
+fn hashed_parity_lga1851_sparse_fields() {
+    assert_hashed_parity(include_str!("expected/hashed-lga1851-sparser.json"));
+}
+
+#[test]
+fn hashed_parity_lga1851_dense_fields_one_dimm() {
+    assert_hashed_parity(include_str!("expected/hashed-lga1851-dense.json"));
 }
