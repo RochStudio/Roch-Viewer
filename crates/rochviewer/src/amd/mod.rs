@@ -18,3 +18,6 @@ pub mod smu_clocks;
 pub mod smu_power;
 pub mod smu_voltages;
 pub mod timings;
+
+#[cfg(test)]
+mod decoder_parity;

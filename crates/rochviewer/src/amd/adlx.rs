@@ -173,11 +173,15 @@ fn with_gpu<T>(work: impl FnOnce(Object) -> Option<T>) -> Option<T> {
     let result = (|| {
         // SAFETY (each call below): `system` is the IADLXSystem ADLX handed
         // out, and each later object is one a call on it returned, checked
-        // non-null by its status; the slots are those of the SDK headers, and
-        // every out parameter is a live local.
+        // by its status and checked non-null before a method is called
+        // through it; the slots are those of the SDK headers, and every out
+        // parameter is a live local.
         unsafe {
             let get_gpus: GetObjectFn = method(system, SYSTEM_GET_GPUS);
-            if get_gpus(system, &mut gpu_list) != ADLX_OK {
+            // A null object behind ADLX_OK is a failed read, not something
+            // to call through: the Python's ctypes raised "NULL pointer
+            // access" there and the read came back None.
+            if get_gpus(system, &mut gpu_list) != ADLX_OK || gpu_list.is_null() {
                 return None;
             }
             let size: ListCountFn = method(gpu_list, LIST_SIZE);
@@ -191,11 +195,11 @@ fn with_gpu<T>(work: impl FnOnce(Object) -> Option<T>) -> Option<T> {
                 return None;
             }
             let get_perf: GetObjectFn = method(system, SYSTEM_GET_PERF_SERVICES);
-            if get_perf(system, &mut perf) != ADLX_OK {
+            if get_perf(system, &mut perf) != ADLX_OK || perf.is_null() {
                 return None;
             }
             let supported: SupportedMetricsFn = method(perf, PERF_GET_SUPPORTED_GPU_METRICS);
-            if supported(perf, gpu, &mut support) != ADLX_OK {
+            if supported(perf, gpu, &mut support) != ADLX_OK || support.is_null() {
                 return None;
             }
         }
@@ -484,15 +488,25 @@ mod tests {
         0
     }
 
+    thread_local! {
+        /// The one object the fake hands back as null while saying ADLX_OK.
+        static NULL_OBJECT: Cell<&'static str> = const { Cell::new("") };
+    }
+
+    /// `name`'s object, or null when the test asked for that one to be null.
+    fn handed_out(name: &'static str) -> Object {
+        if NULL_OBJECT.with(Cell::get) == name { std::ptr::null_mut() } else { named_object(name) }
+    }
+
     unsafe extern "C" fn fake_get_gpus(_: Object, out: *mut Object) -> i32 {
         // SAFETY: the caller's live out parameter.
-        unsafe { *out = named_object("gpu_list") };
+        unsafe { *out = handed_out("gpu_list") };
         0
     }
 
     unsafe extern "C" fn fake_get_perf(_: Object, out: *mut Object) -> i32 {
         // SAFETY: as above.
-        unsafe { *out = named_object("perf") };
+        unsafe { *out = handed_out("perf") };
         0
     }
 
@@ -514,7 +528,7 @@ mod tests {
     unsafe extern "C" fn fake_supported(_: Object, gpu: Object, out: *mut Object) -> i32 {
         assert_eq!(gpu, named_object("gpu"));
         // SAFETY: as above.
-        unsafe { *out = named_object("support") };
+        unsafe { *out = handed_out("support") };
         0
     }
 
@@ -545,8 +559,8 @@ mod tests {
         0
     }
 
-    #[test]
-    fn the_limit_is_read_through_the_header_slots_and_everything_is_released() {
+    /// The fake ADLX the two tests below read through.
+    fn install_fake_adlx() {
         let release = fake_release as ReleaseFn as usize;
         let system = object(
             "system",
@@ -581,12 +595,32 @@ mod tests {
                 terminate: Some(fake_terminate),
             }))
         });
+    }
 
+    #[test]
+    fn the_limit_is_read_through_the_header_slots_and_everything_is_released() {
+        install_fake_adlx();
         assert_eq!(board_power_limit(), Some(363));
         assert_eq!(
             RELEASED.with(|released| released.borrow().clone()),
             ["support", "perf", "gpu", "gpu_list"]
         );
         assert!(TERMINATED.with(Cell::get));
+    }
+
+    #[test]
+    fn a_null_object_behind_adlx_ok_reads_nothing_and_still_closes() {
+        // The Python's ctypes raised "NULL pointer access" calling through a
+        // null interface, and _with_gpu turned that into None. Calling
+        // through it here would read address zero.
+        for name in ["gpu_list", "perf", "support"] {
+            RELEASED.with(|released| released.borrow_mut().clear());
+            TERMINATED.with(|t| t.set(false));
+            NULL_OBJECT.with(|null| null.set(name));
+            install_fake_adlx();
+            assert_eq!(board_power_limit(), None, "{name} null");
+            assert!(TERMINATED.with(Cell::get), "{name} null: ADLX was not terminated");
+            assert!(!RELEASED.with(|released| released.borrow().contains(&name)), "{name} null was released");
+        }
     }
 }

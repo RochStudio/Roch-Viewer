@@ -588,6 +588,11 @@ pub(crate) fn py_int(text: &str, radix: u32) -> Option<i64> {
         return None;
     }
     let cleaned: String = digits.chars().filter(|c| *c != '_').collect();
+    // One sign, and only ahead of the prefix: int("+-5") and int("0x-5", 16)
+    // both raise, where from_str_radix would take the second sign.
+    if cleaned.starts_with(['+', '-']) {
+        return None;
+    }
     let value = i64::from_str_radix(&cleaned, radix).ok()?;
     Some(if negative { -value } else { value })
 }

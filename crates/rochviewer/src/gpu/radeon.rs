@@ -432,6 +432,19 @@ mod tests {
     }
 
     #[test]
+    fn a_second_sign_is_refused_as_int_refuses_it() {
+        // int("+-17095983104") and int("--5") raise ValueError, so the card
+        // read failed and every GPU row read the em dash; one sign is fine.
+        assert!(registry_int(&RegValue::Text("+-17095983104".into())).is_err());
+        assert!(registry_int(&RegValue::Text("--5".into())).is_err());
+        assert_eq!(registry_int(&RegValue::Text(" +17095983104 ".into())), Ok(17_095_983_104));
+        // The same parse decodes WMI's ProcessorId, where int(tail, 16)
+        // raised on a doubled sign too.
+        assert!(crate::system_identity::decode_wmi_processor_id(Some("178BFBFF+-B40F40")).is_err());
+        assert!(crate::system_identity::decode_wmi_processor_id(Some("178BFBFF0x-40F40")).is_err());
+    }
+
+    #[test]
     fn another_vendors_card_is_no_radeon() {
         let ids = vec![r"PCI\VEN_10DE&DEV_2786&SUBSYS_40C61458&REV_A1\4&0".to_string()];
         assert_eq!(read_gpu(Some(&ids)), Ok(None));

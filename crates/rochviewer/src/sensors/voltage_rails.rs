@@ -70,7 +70,7 @@ pub fn validate_voltage(rail: &VoltageRail, volts: f64) -> Result<f64, String> {
 
 /// Render a rail voltage the way memory tuners read it (millivolt step).
 pub fn format_volts(volts: f64) -> String {
-    format!("{volts:.3} V")
+    format!("{:.3} V", crate::pyfmt::PyFloat(volts))
 }
 
 /// True when a decoded float could plausibly be any rail on this platform.

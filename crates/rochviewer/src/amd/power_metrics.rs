@@ -29,6 +29,8 @@
 //! Deliberately free of any hardware access so the UI row builder and the
 //! tests can use it without the driver.
 
+use crate::pyfmt::PyFloat;
+
 /// One displayable limit plus the range that makes a reading believable.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PowerMetric {
@@ -87,9 +89,11 @@ pub fn format_power(metric: &PowerMetric, value: Option<f64>, limit: Option<f64>
     let decimals = metric.decimals;
     match (value, limit) {
         (None, None) => None,
-        (None, Some(limit)) => Some(format!("{limit:.decimals$} {}", metric.unit)),
-        (Some(value), None) => Some(format!("{value:.decimals$} {}", metric.unit)),
-        (Some(value), Some(limit)) => Some(format!("{value:.decimals$} / {limit:.decimals$} {}", metric.unit)),
+        (None, Some(limit)) => Some(format!("{:.decimals$} {}", PyFloat(limit), metric.unit)),
+        (Some(value), None) => Some(format!("{:.decimals$} {}", PyFloat(value), metric.unit)),
+        (Some(value), Some(limit)) => {
+            Some(format!("{:.decimals$} / {:.decimals$} {}", PyFloat(value), PyFloat(limit), metric.unit))
+        }
     }
 }
 
