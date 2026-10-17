@@ -12,9 +12,13 @@ pub mod apob;
 pub mod fch_smbus;
 pub mod power_metrics;
 pub mod profile;
+pub mod py_float;
 pub mod smn;
 pub mod smn_mcfg;
 pub mod smu_clocks;
 pub mod smu_power;
 pub mod smu_voltages;
 pub mod timings;
+
+#[cfg(test)]
+mod decoder_parity;

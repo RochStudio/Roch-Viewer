@@ -50,6 +50,7 @@ use crate::hardware::pci_mcfg::{ecam_address, get_mcfg_table, parse_mcfg, select
 use crate::hardware::{HwError, HwResult, hw};
 use crate::memo::Memo;
 use crate::platform_profiles::{is_granite_ridge_cpu, is_raphael_cpu};
+use crate::amd::py_float::PyFloat;
 use crate::pyfmt::round_half_even;
 
 use super::smn::{
@@ -210,10 +211,10 @@ pub fn decode_clock_float(raw_dword: u32) -> Result<f64, String> {
 /// `(fclk, uclk)`, or why the values look wrong.
 pub fn validate_clocks(fclk: f64, uclk: f64, mclk: Option<f64>, umc_mclk: Option<f64>) -> Result<(f64, f64), String> {
     if !(FCLK_MIN_MHZ..=FCLK_MAX_MHZ).contains(&fclk) {
-        return Err(format!("FCLK {fclk:.1} MHz out of range"));
+        return Err(format!("FCLK {:.1} MHz out of range", PyFloat(fclk)));
     }
     if !(UCLK_MIN_MHZ..=UCLK_MAX_MHZ).contains(&uclk) {
-        return Err(format!("UCLK {uclk:.1} MHz out of range"));
+        return Err(format!("UCLK {:.1} MHz out of range", PyFloat(uclk)));
     }
     // Prefer near-integer MHz values (telemetry is float but clocks are discrete).
     if (fclk - round_half_even(fclk, 0)).abs() > 1.5 {

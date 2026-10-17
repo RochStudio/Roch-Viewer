@@ -257,7 +257,7 @@ fn install_seams(scenario: &str) {
     );
 }
 
-fn stub_with_status<T: Clone + Truthy>(source: &Mutex<LiveSource<T>>, value: T) {
+pub(super) fn stub_with_status<T: Clone + Truthy>(source: &Mutex<LiveSource<T>>, value: T) {
     stub_live(source, value.clone());
     let mut source = lock(source);
     if value.truthy() {
@@ -379,7 +379,7 @@ fn resolve(value: Option<&crate::row::Value>) -> String {
 }
 
 /// One row as the dump script wrote it.
-fn dump_row(row: &Row) -> Json {
+pub(super) fn dump_row(row: &Row) -> Json {
     let dual = row.a.is_some() || row.b.is_some();
     let mut extra = Map::new();
     for key in ["hide_when_blank", "diagnostic", "Parent", "rail_key", "rail_group"] {

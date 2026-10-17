@@ -25,7 +25,10 @@ pub fn board_identity() -> (String, String) {
             };
             let manufacturer = field("Manufacturer")?;
             let product = field("Product")?;
-            Some((manufacturer.trim().to_uppercase(), product.trim().to_uppercase()))
+            // str.strip(), which also takes the - separators that
+            // Rust's trim() leaves on.
+            let strip = |text: &str| crate::system_identity::py_strip(text).to_uppercase();
+            Some((strip(&manufacturer), strip(&product)))
         };
         identity().unwrap_or_default()
     })
@@ -381,6 +384,18 @@ mod tests {
     #[test]
     fn identity_is_upper_cased_and_trimmed() {
         on_board(" Gigabyte Technology Co., Ltd. ", "x870 aorus tachyon ice");
+        assert_eq!(
+            board_identity(),
+            ("GIGABYTE TECHNOLOGY CO., LTD.".to_string(), "X870 AORUS TACHYON ICE".to_string())
+        );
+    }
+
+    #[test]
+    fn identity_is_stripped_as_python_strips() {
+        // " x ".strip() is "x": Python's whitespace includes the four
+        // information separators, and a board name ending in one still
+        // names the board.
+        on_board("Gigabyte Technology Co., Ltd.", "X870 AORUS TACHYON ICE ");
         assert_eq!(
             board_identity(),
             ("GIGABYTE TECHNOLOGY CO., LTD.".to_string(), "X870 AORUS TACHYON ICE".to_string())
