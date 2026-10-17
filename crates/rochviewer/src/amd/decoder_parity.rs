@@ -1,14 +1,14 @@
 //! The AMD decoders against the Python ones, over generated inputs.
 //!
-//! `parity/dump_python_decoders.py` ran the v1.1.0 decoders -- the UMC
+//! A generator script ran the v1.1.0 Python decoders -- the UMC
 //! `decode_channel` and `decode_misc_settings`, both APOB training-block
 //! layouts, and the two tCCD_L searches -- over inputs drawn from a fixed
 //! seed, and wrote each input beside what Python returned. These run the Rust
 //! decoders over the same inputs and require the same answers, key for key.
 //!
-//! Regenerate after a deliberate change to a Python decoder, from the root of
-//! a v1.1.0 checkout:
-//! `python crates/rochviewer/src/amd/parity/dump_python_decoders.py`.
+//! The fixture is frozen: the Python it records is retired. The generator,
+//! `crates/rochviewer/src/amd/parity/dump_python_decoders.py`, is in git
+//! history at commit 81dbf6b, to be run from the root of a v1.1.0 checkout.
 
 use serde_json::{Map, Value as Json, json};
 

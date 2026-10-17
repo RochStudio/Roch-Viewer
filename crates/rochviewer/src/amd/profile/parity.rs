@@ -1,6 +1,6 @@
 //! Row-by-row parity with the Python profile.
 //!
-//! `parity/dump_python_profile.py` built rochviewer/amd/profile.py's table
+//! A generator script built the v1.1.0 Python profile's table
 //! three times under stubs -- a Ryzen 9000 with two channels that disagree,
 //! a Ryzen 7000 with one training record, and a machine where nothing could
 //! be read -- read every row the way the window does, and wrote what it saw
@@ -9,8 +9,10 @@
 //! category, column, flags, both channel sides, and the exact text each one
 //! shows.
 //!
-//! Regenerate the fixture after a deliberate change to the Python profile:
-//! `python crates/rochviewer/src/amd/profile/parity/dump_python_profile.py`.
+//! The fixture is frozen: the Python it records is retired. The generator,
+//! `crates/rochviewer/src/amd/profile/parity/dump_python_profile.py`, is in
+//! git history at commit 81dbf6b, to be run from the root of a v1.1.0
+//! checkout.
 
 use serde_json::{Map, Value as Json, json};
 

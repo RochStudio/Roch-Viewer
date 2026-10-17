@@ -1,7 +1,7 @@
 //! Row-by-row parity with the Python profile over varied inputs.
 //!
-//! `parity.rs` pins three machines. `parity/dump_python_scenarios.py` built
-//! rochviewer/amd/profile.py's table over eight more -- other refresh modes,
+//! `parity.rs` pins three machines. A generator script built the v1.1.0
+//! Python profile's table over eight more -- other refresh modes,
 //! reserved preamble codes, a lone channel, failed and out-of-range
 //! registers, both tCCD_L fallbacks, training records that come back empty or
 //! without channel geometry, transports that raise, readings on a rounding
@@ -10,9 +10,10 @@
 //! fixture beside what Python displayed. This builds the Rust table from those
 //! same inputs and requires every row and every status line to match.
 //!
-//! Regenerate the fixture after a deliberate change to the Python profile:
-//! `python crates/rochviewer/src/amd/profile/parity/dump_python_scenarios.py`
-//! from the root of a v1.1.0 checkout.
+//! The fixture is frozen: the Python it records is retired. The generator,
+//! `crates/rochviewer/src/amd/profile/parity/dump_python_scenarios.py`, is in
+//! git history at commit 81dbf6b, to be run from the root of a v1.1.0
+//! checkout.
 
 use serde_json::Value as Json;
 
