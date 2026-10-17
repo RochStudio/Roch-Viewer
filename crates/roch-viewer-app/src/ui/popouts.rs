@@ -795,6 +795,31 @@ pub fn cap_maximized_width(hwnd: windows::Win32::Foundation::HWND) {
     }
 }
 
+/// Draw a borderless window as a native menu is drawn: square corners and
+/// no frame line of DWM's own. Windows 11 rounds and outlines every
+/// top-level window, which the Tk option menu's native menu never was.
+pub fn square_menu_window(hwnd: windows::Win32::Foundation::HWND) -> bool {
+    use windows::Win32::Graphics::Dwm::{DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DwmSetWindowAttribute};
+    let corner = DWMWCP_DONOTROUND.0;
+    let border = DWMWA_COLOR_NONE;
+    // SAFETY: 4-byte values, as both attributes take. Either fails harmlessly
+    // before Windows 11.
+    unsafe {
+        let squared = DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner as *const i32 as *const _, 4).is_ok();
+        let _ = DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &border as *const u32 as *const _, 4);
+        squared
+    }
+}
+
+/// Make `owner` the owner of `hwnd`: an owned window stays above its owner,
+/// and when it closes Windows activates the owner again.
+pub fn set_owner(hwnd: windows::Win32::Foundation::HWND, owner: windows::Win32::Foundation::HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::{GWLP_HWNDPARENT, SetWindowLongPtrW};
+    // SAFETY: both are live top-level windows of ours; GWLP_HWNDPARENT on a
+    // top-level window sets its owner.
+    unsafe { SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, owner.0 as isize) };
+}
+
 /// Whether a window's native title bar is drawn dark.
 pub fn title_bar_dark(hwnd: windows::Win32::Foundation::HWND) -> Option<bool> {
     use windows::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmGetWindowAttribute};
