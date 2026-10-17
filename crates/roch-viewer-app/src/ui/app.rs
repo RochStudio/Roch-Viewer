@@ -286,6 +286,8 @@ pub struct TimingApp {
     pending: Vec<Action>,
     /// The module selection every module-aware tab shows.
     selected: Option<Channel>,
+    /// The choice picked, as its text: what every selector shows.
+    selected_choice: Option<String>,
     choices: ModuleChoices,
     channel_labels: BTreeMap<String, String>,
     summary: SummaryPlan,
@@ -385,6 +387,7 @@ impl TimingApp {
             started: false,
             pending: Vec::new(),
             selected: None,
+            selected_choice: None,
             choices: ModuleChoices::new(&[], &[]),
             channel_labels: BTreeMap::new(),
             inventory,
@@ -632,11 +635,12 @@ impl TimingApp {
     /// The module selector at the foot of Summary, Timings and Training.
     fn module_selector(&mut self, ui: &mut Ui, chrome: &Chrome) {
         let tab = self.current_tab().to_string();
-        let display = self.choices.display(self.selected);
+        let display = self.choices.shown(self.selected_choice.as_deref());
         let names = self.choices.names();
         if let Some(index) = selector::selector(ui, Id::unique(("module-selector", tab)), chrome.selector(), &self.palette, &display, &names)
             && let Some(channel) = self.choices.select(&names[index])
         {
+            self.selected_choice = Some(names[index].clone());
             self.select_module(channel);
         }
     }

@@ -84,8 +84,13 @@ impl Values {
         self.row(index).is_some_and(|value| value.dimmed)
     }
 
-    pub(crate) fn set(&self, index: usize, value: RowValue) -> bool {
+    pub(crate) fn set(&self, index: usize, mut value: RowValue) -> bool {
         let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        // The Python chose a label's colour once, when it built the label,
+        // and every later read changed its text only.
+        if let Some(old) = map.get(&index) {
+            value.dimmed = old.dimmed;
+        }
         match map.get(&index) {
             Some(old) if *old == value => false,
             _ => {
@@ -265,9 +270,12 @@ fn worker(backend: Arc<Backend>, first: Vec<usize>, values: Values, receiver: Re
                 }
             }
             Ok(Request::Select(selected)) => {
+                // Every label the window draws is read again, as the Python's
+                // selection walked all of its module-aware labels -- the
+                // single-value ones too, which picks up anything that has
+                // changed or had come back blank.
                 channel = selected;
-                let dual: Vec<usize> = shown.iter().copied().filter(|&i| backend.rows[i].is_dual()).collect();
-                if read_all(&mut dual.into_iter(), channel) {
+                if read_all(&mut shown.iter().copied(), channel) {
                     repaint();
                 }
             }
@@ -279,8 +287,14 @@ fn worker(backend: Arc<Backend>, first: Vec<usize>, values: Values, receiver: Re
             // retried forever -- at that point the value really is
             // unavailable, and an em dash is the honest answer.
             retried_blanks = true;
+            // Single-value rows only: the Python collected a blank for its
+            // retry where it registered a label, and a two-channel row's
+            // labels were never registered, so a blank pair stayed blank
+            // until a module was picked.
             let blank: Vec<usize> = (0..backend.rows.len())
-                .filter(|&i| !backend.rows[i].live && values.get(i).is_some_and(|v| v.trim() == EM_DASH))
+                .filter(|&i| {
+                    !backend.rows[i].live && !backend.rows[i].is_dual() && values.get(i).is_some_and(|v| v.trim() == EM_DASH)
+                })
                 .collect();
             if read_all(&mut blank.into_iter(), channel) {
                 repaint();
@@ -411,6 +425,50 @@ mod tests {
         assert!(reads.load(Ordering::SeqCst) >= 2, "the live copy is re-read on the tick");
         // A Sensors row nothing on the page asked for is still left alone.
         assert_eq!(reader.values.get(2), None);
+    }
+
+    #[test]
+    fn a_rows_colour_is_the_one_it_was_first_drawn_in() {
+        let values = Values::default();
+        values.set(0, RowValue { text: "416".into(), sides: None, dimmed: true });
+        assert!(values.set(0, RowValue { text: "418".into(), sides: None, dimmed: false }));
+        assert_eq!(values.get(0).as_deref(), Some("418"));
+        assert!(values.dimmed(0), "the text changes, the colour does not");
+    }
+
+    #[test]
+    fn picking_a_module_reads_the_single_value_rows_again_too() {
+        // The Python re-read every module-aware label on a selection, not
+        // only the two-channel ones.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counter = reads.clone();
+        let single = Row::new("tREFI", "Refresh", "Timings", "Left").with_lazy(move || {
+            Some(format!("{}", 24575 + counter.fetch_add(1, Ordering::SeqCst)))
+        });
+        let reader = Reader::start(Arc::new(backend(vec![single, sides("38", "38")])), Vec::new(), || {});
+        assert_eq!(wait_for(&reader, 0, "24575").as_deref(), Some("24575"));
+        reader.select_channel(Some(Channel::B));
+        assert_eq!(wait_for(&reader, 0, "24576").as_deref(), Some("24576"));
+    }
+
+    #[test]
+    fn a_blank_two_channel_row_waits_for_a_selection() {
+        // The Python's blank retry covered the labels it registered, and a
+        // two-channel row's never were: a pair that read blank stayed blank
+        // until a module was picked.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counter = reads.clone();
+        let side = move || if counter.fetch_add(1, Ordering::SeqCst) < 2 { None } else { Some("2N".to_string()) };
+        let side_b = side.clone();
+        let row = Row::new("CR", "Primary", "Timings", "Left")
+            .with_sides(Side::value(Value::lazy(side)), Side::value(Value::lazy(side_b)));
+        let reader = Reader::start(Arc::new(backend(vec![row])), Vec::new(), || {});
+        std::thread::sleep(BLANK_RETRY + Duration::from_millis(400));
+        assert_eq!(reads.load(Ordering::SeqCst), 2, "read once, not retried");
+        reader.select_channel(Some(Channel::A));
+        assert_eq!(wait_for(&reader, 0, "2N").as_deref(), Some("2N"));
     }
 
     #[test]

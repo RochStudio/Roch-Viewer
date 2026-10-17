@@ -90,7 +90,14 @@ impl ModuleChoices {
         let mut choices = vec![("All modules".to_string(), None)];
         for (channel, modules) in [(Channel::A, channel_a), (Channel::B, channel_b)] {
             for (slot, detail) in modules {
-                choices.push((format!("{slot}: {detail}"), Some(channel)));
+                // Keyed by the text, as the Python's dict was: a second
+                // module that reads the same keeps the first one's place
+                // and takes over its channel.
+                let name = format!("{slot}: {detail}");
+                match choices.iter_mut().find(|(existing, _)| *existing == name) {
+                    Some(existing) => existing.1 = Some(channel),
+                    None => choices.push((name, Some(channel))),
+                }
             }
         }
         ModuleChoices { choices, all_display: all_modules_label(channel_a, channel_b) }
@@ -109,16 +116,14 @@ impl ModuleChoices {
         self.choices.iter().find(|(name, _)| name == choice).map(|(_, channel)| *channel)
     }
 
-    /// What the selector shows for a selection.
-    pub fn display(&self, selected: Option<Channel>) -> String {
-        match selected {
-            None => self.all_display.clone(),
-            Some(channel) => self
-                .choices
-                .iter()
-                .find(|(_, c)| *c == Some(channel))
-                .map(|(name, _)| name.clone())
-                .unwrap_or_else(|| self.all_display.clone()),
+    /// What the selector shows once `choice` was picked: the choice itself,
+    /// as Tk set the option menu to the text clicked -- so picking A2 on a
+    /// board with two modules on channel A shows A2, not the first module
+    /// of that channel -- and the all-modules text for "All modules".
+    pub fn shown(&self, choice: Option<&str>) -> String {
+        match choice {
+            Some(name) if name != "All modules" && self.choices.iter().any(|(n, _)| n == name) => name.to_string(),
+            _ => self.all_display.clone(),
         }
     }
 
@@ -348,8 +353,30 @@ mod tests {
         // The combined display text is "All modules" too.
         assert_eq!(choices.select(&choices.all_display), Some(None));
         assert_eq!(choices.select("unknown"), None);
-        assert_eq!(choices.display(None), "A1:stick | B1:stick");
-        assert_eq!(choices.display(Some(Channel::B)), "B1: stick");
+        assert_eq!(choices.shown(None), "A1:stick | B1:stick");
+        assert_eq!(choices.shown(Some("All modules")), "A1:stick | B1:stick");
+        assert_eq!(choices.shown(Some("B1: stick")), "B1: stick");
+        assert_eq!(choices.shown(Some("gone")), "A1:stick | B1:stick");
+    }
+
+    #[test]
+    fn the_selector_shows_the_module_picked_not_the_first_on_its_channel() {
+        // Two modules on channel A: picking A2 showed "A1: ..." because the
+        // text was looked up from the channel. Tk showed the choice clicked.
+        let choices = ModuleChoices::new(
+            &[("A1".into(), "first".into()), ("A2".into(), "second".into())],
+            &[("B1".into(), "third".into())],
+        );
+        assert_eq!(choices.select("A2: second"), Some(Some(Channel::A)));
+        assert_eq!(choices.shown(Some("A2: second")), "A2: second");
+    }
+
+    #[test]
+    fn two_modules_that_read_alike_are_one_choice() {
+        // The Python keyed its choices by their text.
+        let choices = ModuleChoices::new(&[("A1".into(), "stick".into())], &[("A1".into(), "stick".into())]);
+        assert_eq!(choices.names(), vec!["All modules", "A1: stick"]);
+        assert_eq!(choices.select("A1: stick"), Some(Some(Channel::B)));
     }
 
     #[test]
