@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use eframe::egui::{Color32, CornerRadius, FontId, Galley, Painter, Pos2, Rect, Stroke, StrokeKind, pos2, vec2};
+use eframe::egui::{Color32, FontId, Galley, Painter, Pos2, Rect, Stroke, StrokeKind, pos2, vec2};
 
 use super::theme::{self, Palette};
 
@@ -74,7 +74,7 @@ pub fn text_in_row(painter: &Painter, row: Rect, x: f32, edge: Edge, text: &str,
 
 /// A bordered, rounded panel: the background every table column sits on.
 pub fn panel(painter: &Painter, rect: Rect, palette: &Palette) {
-    painter.rect(rect, CornerRadius::same(PANEL_RADIUS), palette.bg, Stroke::new(1.0, palette.border), StrokeKind::Inside);
+    painter.rect(rect, theme::radius(PANEL_RADIUS), palette.bg, Stroke::new(1.0, palette.border), StrokeKind::Inside);
 }
 
 /// One table row's background. The band role is the background itself since

@@ -13,6 +13,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -29,9 +30,12 @@ use super::advanced_window::{self, AdvancedWindow, Entry, Reading};
 use super::asset_path;
 use super::dimm_telemetry_window::{self, DimmTelemetryWindow, SensorGroup, SensorReading, StatKey, TelemetryModule};
 use super::reader::Values;
+use super::prefs::Prefs;
 use super::screenshot;
 use super::settings::Settings;
+use super::settings_window::{self, SettingsWindow};
 use super::theme::{self, Palette};
+use super::window_tools;
 
 /// What the main window shares with the windows it opens.
 pub struct Shared<'a> {
@@ -47,6 +51,32 @@ pub struct Shared<'a> {
     pub spd: &'a SpdSource,
     /// The slot each channel holds, once the main window has read them.
     pub channel_labels: &'a BTreeMap<String, String>,
+    /// The preferences the Settings window edits, and a counter it bumps on
+    /// each change.
+    pub prefs: &'a Arc<Mutex<Prefs>>,
+    pub prefs_revision: &'a Arc<AtomicU64>,
+}
+
+impl Shared<'_> {
+    fn prefs(&self) -> Prefs {
+        self.prefs.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Where a window was last, when the preferences say to remember it and
+    /// it would still be on a monitor.
+    fn saved_position(&self, key: &str) -> Option<(i32, i32)> {
+        let prefs = self.prefs();
+        prefs.remember_positions.then(|| prefs.positions.get(key).copied()).flatten().filter(|&at| window_tools::on_screen(at))
+    }
+
+    fn on_top(&self) -> bool {
+        self.prefs().always_on_top
+    }
+}
+
+/// A pop-out builder with the preferences' window level.
+fn with_level(builder: ViewportBuilder, on_top: bool) -> ViewportBuilder {
+    if on_top { builder.with_window_level(egui::WindowLevel::AlwaysOnTop) } else { builder }
 }
 
 /// How long the screenshot status stays beside the button.
@@ -699,6 +729,10 @@ struct Popout<T> {
     /// When the window was asked for, until its first frame is drawn.
     opened: Arc<Mutex<Option<Instant>>>,
     name: String,
+    /// Where to put the window once it exists, in screen pixels.
+    restore_to: Arc<Mutex<Option<(i32, i32)>>>,
+    /// Where it is now, in screen pixels.
+    position: Arc<Mutex<Option<(i32, i32)>>>,
 }
 
 /// Something a pop-out draws in its own viewport.
@@ -709,6 +743,18 @@ trait PopoutWindow: Send + 'static {
 }
 
 impl PopoutWindow for AdvancedWindow {
+    fn draw(&mut self, ui: &mut egui::Ui) {
+        self.ui(ui);
+    }
+    fn is_open(&self) -> bool {
+        self.open
+    }
+    fn palette_mut(&mut self) -> &mut Palette {
+        &mut self.palette
+    }
+}
+
+impl PopoutWindow for SettingsWindow {
     fn draw(&mut self, ui: &mut egui::Ui) {
         self.ui(ui);
     }
@@ -734,13 +780,20 @@ impl PopoutWindow for DimmTelemetryWindow {
 
 /// This process's visible top-level window with exactly this title.
 pub fn own_window_titled(title: &str) -> Option<windows::Win32::Foundation::HWND> {
+    own_window(title, true)
+}
+
+/// This process's top-level window with exactly this title; `visible_only`
+/// skips one not shown yet, which the main window is on its first frame.
+pub fn own_window(title: &str, visible_only: bool) -> Option<windows::Win32::Foundation::HWND> {
     use windows::Win32::Foundation::{HWND, LPARAM};
-    use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible};
+    use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, InternalGetWindowText, IsWindowVisible};
     use windows::core::BOOL;
 
     struct Search {
         pid: u32,
         title: Vec<u16>,
+        visible_only: bool,
         found: Option<HWND>,
     }
     unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -748,18 +801,22 @@ pub fn own_window_titled(title: &str) -> Option<windows::Win32::Foundation::HWND
         let search = unsafe { &mut *(lparam.0 as *mut Search) };
         let mut pid = 0u32;
         unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
-        if pid != search.pid || !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+        if pid != search.pid || (search.visible_only && !unsafe { IsWindowVisible(hwnd) }.as_bool()) {
             return BOOL(1);
         }
         let mut buffer = [0u16; 256];
-        let length = unsafe { GetWindowTextW(hwnd, &mut buffer) }.max(0) as usize;
+        // InternalGetWindowText reads the title without sending WM_GETTEXT:
+        // GetWindowTextW messages each window, and one owned by a thread of
+        // ours that is not pumping messages (WMI's, the reader's) kept the
+        // first frame waiting a tenth of a second.
+        let length = unsafe { InternalGetWindowText(hwnd, &mut buffer) }.max(0) as usize;
         if buffer[..length] == search.title[..] {
             search.found = Some(hwnd);
             return BOOL(0);
         }
         BOOL(1)
     }
-    let mut search = Search { pid: std::process::id(), title: title.encode_utf16().collect(), found: None };
+    let mut search = Search { pid: std::process::id(), title: title.encode_utf16().collect(), visible_only, found: None };
     // SAFETY: the callback only touches `search` for the length of the call.
     let _ = unsafe { EnumWindows(Some(visit), LPARAM(&mut search as *mut Search as isize)) };
     search.found
@@ -870,7 +927,29 @@ impl<T: PopoutWindow> Popout<T> {
             hwnd: Arc::new(Mutex::new(None)),
             opened: Arc::new(Mutex::new(None)),
             name: name.to_string(),
+            restore_to: Arc::new(Mutex::new(None)),
+            position: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Open where it was last rather than beside the main window: created
+    /// there, and checked once it exists.
+    fn restoring(mut self, at: Option<(i32, i32)>, zoom: f32) -> Self {
+        if let Some(at) = at {
+            self.builder = self.builder.with_position(window_tools::to_points(at, zoom));
+        }
+        *self.restore_to.lock().unwrap_or_else(|e| e.into_inner()) = at;
+        self
+    }
+
+    /// Where the window is now, in screen pixels.
+    fn current_position(&self) -> Option<(i32, i32)> {
+        *self.position.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn set_on_top(&self, ctx: &egui::Context, on_top: bool) {
+        let level = if on_top { egui::WindowLevel::AlwaysOnTop } else { egui::WindowLevel::Normal };
+        ctx.send_viewport_cmd_to(self.id, ViewportCommand::WindowLevel(level));
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, T> {
@@ -892,7 +971,7 @@ impl<T: PopoutWindow> Popout<T> {
         {
             let mut window = self.lock();
             let current = window.palette_mut();
-            if current.dark != palette.dark {
+            if *current != *palette {
                 *current = *palette;
                 ctx.request_repaint_of(self.id);
             }
@@ -901,6 +980,8 @@ impl<T: PopoutWindow> Popout<T> {
         let hwnd = self.hwnd.clone();
         let opened = self.opened.clone();
         let name = self.name.clone();
+        let restore_to = self.restore_to.clone();
+        let position = self.position.clone();
         let title = self.builder.title.clone().unwrap_or_default();
         let capped_width = self.builder.maximize_button == Some(true)
             && self.builder.max_inner_size.is_some_and(|size| size.x.is_finite());
@@ -930,6 +1011,23 @@ impl<T: PopoutWindow> Popout<T> {
                 // Look again shortly: the first show can undo it once more.
                 ui.ctx().request_repaint_after(Duration::from_millis(100));
             }
+            if let Some(h) = *found {
+                let native = window_tools::hwnd(h);
+                let mut restore = restore_to.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(at) = *restore
+                    && let Some(now) = window_tools::position(native)
+                {
+                    *restore = None;
+                    if (now.0 - at.0).abs() > 1 || (now.1 - at.1).abs() > 1 {
+                        window_tools::move_to(native, at);
+                    }
+                }
+                drop(restore);
+                window_tools::apply_opacity(native, window_tools::target_opacity());
+                if let Some(at) = window_tools::position(native) {
+                    *position.lock().unwrap_or_else(|e| e.into_inner()) = Some(at);
+                }
+            }
             drop(found);
             window.draw(ui);
             if let Some(at) = opened.lock().unwrap_or_else(|e| e.into_inner()).take() {
@@ -955,6 +1053,11 @@ pub struct Popouts {
     status: Option<(String, Instant)>,
     advanced: Option<Popout<AdvancedWindow>>,
     telemetry: Option<Popout<DimmTelemetryWindow>>,
+    settings: Option<Popout<SettingsWindow>>,
+    /// The always-on-top setting the open windows were last given.
+    on_top: bool,
+    /// The last place recorded for each pop-out.
+    remembered: HashMap<&'static str, (i32, i32)>,
     capture: Arc<Mutex<Option<Capture>>>,
     auto_open_at: Option<Instant>,
 }
@@ -966,6 +1069,9 @@ impl Default for Popouts {
             status: None,
             advanced: None,
             telemetry: None,
+            settings: None,
+            on_top: false,
+            remembered: HashMap::new(),
             capture: Arc::new(Mutex::new(None)),
             auto_open_at: None,
         }
@@ -1018,7 +1124,8 @@ impl Popouts {
         }
         let window = AdvancedWindow::new(entries, channels, *shared.palette);
         let position = position_beside(ctx, Side::Right, advanced_window::WINDOW_WIDTH, advanced_window::WINDOW_HEIGHT);
-        self.advanced = Some(Popout::new("advanced", advanced_window::viewport_builder(position), window));
+        let builder = with_level(advanced_window::viewport_builder(position), shared.on_top());
+        self.advanced = Some(Popout::new("advanced", builder, window).restoring(shared.saved_position("advanced"), ctx.zoom_factor()));
         super::timing::took("open Advanced (prepare)", opened);
         *self.advanced.as_ref().unwrap().opened.lock().unwrap() = Some(opened);
         ctx.request_repaint();
@@ -1041,10 +1148,61 @@ impl Popouts {
             sensor_reveal_keys(&backend.rows),
         );
         let position = position_beside(ctx, Side::Left, dimm_telemetry_window::WINDOW_WIDTH, dimm_telemetry_window::WINDOW_HEIGHT);
-        self.telemetry = Some(Popout::new("telemetry", dimm_telemetry_window::viewport_builder(position), window));
+        let builder = with_level(dimm_telemetry_window::viewport_builder(position), shared.on_top());
+        self.telemetry = Some(Popout::new("telemetry", builder, window).restoring(shared.saved_position("telemetry"), ctx.zoom_factor()));
         super::timing::took("open Telemetry (prepare)", opened);
         *self.telemetry.as_ref().unwrap().opened.lock().unwrap() = Some(opened);
         ctx.request_repaint();
+    }
+
+    /// Open the Settings window, or focus the open one.
+    pub fn open_settings(&mut self, ctx: &egui::Context, shared: &mut Shared) {
+        if let Some(existing) = self.settings.as_ref().filter(|p| p.is_open()) {
+            existing.focus(ctx);
+            return;
+        }
+        let window = SettingsWindow::new(
+            *shared.palette,
+            shared.prefs.clone(),
+            shared.prefs_revision.clone(),
+            shared.settings.get_bool("telemetry_auto_open"),
+        );
+        let position = position_beside(ctx, Side::Right, settings_window::WINDOW_WIDTH, settings_window::WINDOW_HEIGHT);
+        let builder = with_level(settings_window::viewport_builder(position), shared.on_top());
+        self.settings = Some(Popout::new("settings", builder, window).restoring(shared.saved_position("settings"), ctx.zoom_factor()));
+        ctx.request_repaint();
+    }
+
+    /// Give every open window the always-on-top setting.
+    fn follow_window_level(&mut self, ctx: &egui::Context, on_top: bool) {
+        if self.on_top == on_top {
+            return;
+        }
+        self.on_top = on_top;
+        if let Some(p) = &self.advanced {
+            p.set_on_top(ctx, on_top);
+        }
+        if let Some(p) = &self.telemetry {
+            p.set_on_top(ctx, on_top);
+        }
+        if let Some(p) = &self.settings {
+            p.set_on_top(ctx, on_top);
+        }
+    }
+
+    /// Where each open pop-out is now, by its preferences key.
+    fn positions(&self) -> Vec<(&'static str, (i32, i32))> {
+        let mut out = Vec::new();
+        if let Some(at) = self.advanced.as_ref().and_then(Popout::current_position) {
+            out.push(("advanced", at));
+        }
+        if let Some(at) = self.telemetry.as_ref().and_then(Popout::current_position) {
+            out.push(("telemetry", at));
+        }
+        if let Some(at) = self.settings.as_ref().and_then(Popout::current_position) {
+            out.push(("settings", at));
+        }
+        out
     }
 
     /// Called once at startup: reopen Telemetry if the user asked for that.
@@ -1091,6 +1249,11 @@ impl Popouts {
         };
         // The file is what matters; a clipboard another program is holding
         // open only costs the paste.
+        if !screenshot::COPY_TO_CLIPBOARD.load(Ordering::Relaxed) {
+            self.show_screenshot_status("Saved");
+            self.last_screenshot = Some(path);
+            return;
+        }
         match screenshot::copy_to_clipboard(width, height, &pixels) {
             Ok(()) => self.show_screenshot_status("Saved · copied"),
             Err(error) => {
@@ -1140,6 +1303,40 @@ impl Popouts {
         if let Some(popout) = &self.telemetry {
             popout.show(ctx, shared.palette);
         }
+
+        if let Some(popout) = &self.settings {
+            let requests = std::mem::take(&mut popout.lock().requests);
+            if let Some(value) = requests.auto_open {
+                shared.settings.save("telemetry_auto_open", serde_json::Value::Bool(value));
+            }
+            if requests.forget_positions {
+                // Nothing saved means nothing to put back: a window open now
+                // records its place again only once moved.
+                self.remembered.clear();
+            }
+        }
+        if self.settings.as_ref().is_some_and(|p| !p.is_open()) {
+            self.settings = None;
+        }
+        if let Some(popout) = &self.settings {
+            popout.show(ctx, shared.palette);
+        }
+
+        self.follow_window_level(ctx, shared.on_top());
+        // Each window's place, into the preferences when it has moved; the
+        // main window saves them.
+        let positions = self.positions();
+        if !positions.is_empty() {
+            let mut prefs = shared.prefs.lock().unwrap_or_else(|e| e.into_inner());
+            if prefs.remember_positions {
+                for (key, at) in positions {
+                    if self.remembered.get(key) != Some(&at) {
+                        self.remembered.insert(key, at);
+                        prefs.positions.insert(key.to_string(), at);
+                    }
+                }
+            }
+        }
     }
 
     /// The few-seconds status beside the screenshot button, if any.
@@ -1180,6 +1377,8 @@ mod tests {
         let labels = BTreeMap::from([("a".to_string(), "A2".to_string()), ("b".to_string(), "B2".to_string())]);
         let values = Values::default();
         let tab_names: Vec<String> = vec!["Summary".into(), "Timings".into()];
+        let prefs = Arc::new(Mutex::new(Prefs::default()));
+        let revision = Arc::new(AtomicU64::new(0));
         let mut shared = Shared {
             backend: &backend,
             values: &values,
@@ -1189,6 +1388,8 @@ mod tests {
             current_tab: "Summary",
             spd: &spd,
             channel_labels: &labels,
+            prefs: &prefs,
+            prefs_revision: &revision,
         };
         let mut popouts = Popouts::new();
         popouts.open_advanced(&ctx, &mut shared);

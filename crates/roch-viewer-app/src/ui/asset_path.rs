@@ -6,7 +6,6 @@
 use eframe::egui::{ColorImage, IconData};
 
 pub const ICON_ICO: &[u8] = include_bytes!("../../../../icon.ico");
-pub const MOON_PNG: &[u8] = include_bytes!("../../../../assets/moon-solid-black-18.png");
 
 /// The 8-byte PNG signature.
 pub const PNG_MAGIC: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
@@ -90,12 +89,6 @@ pub fn window_icon() -> Option<IconData> {
     Some(IconData { width: rgba.width, height: rgba.height, rgba: rgba.pixels })
 }
 
-/// The solid black crescent the Light-mode toggle shows.
-pub fn moon_image() -> Option<ColorImage> {
-    let rgba = decode_png(MOON_PNG)?;
-    Some(ColorImage::from_rgba_unmultiplied([rgba.width as usize, rgba.height as usize], &rgba.pixels))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,6 +106,5 @@ mod tests {
         assert!(!ico_png_entries(ICON_ICO).is_empty());
         assert!(logo_image(24).is_some());
         assert!(window_icon().is_some());
-        assert!(moon_image().is_some());
     }
 }

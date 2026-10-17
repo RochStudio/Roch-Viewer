@@ -16,7 +16,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use eframe::egui::{self, Color32, Rect, Ui, pos2};
+use eframe::egui::{self, Color32, Rect, Ui, pos2, vec2};
 
 use rochviewer::display_values::{module_pair_text, summary_compact_ohm};
 use rochviewer::platform_profiles::Platform;
@@ -356,7 +356,7 @@ pub fn needed_size(ui: &Ui, ctx: &TabContext, plan: &SummaryPlan) -> egui::Vec2 
         (Some(start), Some(edge)) => start + edge + PANEL_PADX,
         _ => 0.0,
     };
-    let panel = |rows: usize| 2.0 * PANEL_PADY + theme::ROW_HEIGHT * rows as f32;
+    let panel = |rows: usize| 2.0 * PANEL_PADY + theme::pitch(theme::ROW_HEIGHT) * rows as f32;
     let mut height = panel(plan.columns.iter().map(Vec::len).max().unwrap_or(0));
     for rows in [plan.identity.len(), plan.aligned.len()] {
         if rows > 0 {
@@ -372,7 +372,7 @@ pub fn show(ui: &mut Ui, ctx: &TabContext, plan: &SummaryPlan, area: Rect) {
     let font = theme::font(theme::FONT_SIZE);
     let painter = ui.painter_at(area);
     let width = |text: &str| draw::text_width(&painter, text, &font);
-    let pitch = theme::ROW_HEIGHT;
+    let pitch = theme::pitch(theme::ROW_HEIGHT);
     let Columns { texts: columns, edges, starts } = measure(&painter, ctx, plan, area.left());
     let count = columns.len();
     let about_text = |pair: &AboutPair| (pair.label.clone(), ctx.compact_value(pair.index));
@@ -434,6 +434,9 @@ pub fn show(ui: &mut Ui, ctx: &TabContext, plan: &SummaryPlan, area: Rect) {
         draw::panel(&painter, panel, palette);
         for (n, (label, value, color)) in lines.iter().enumerate() {
             let rect = draw::row_rect(starts[c], right - PANEL_PADX, top + PANEL_PADY, pitch, n);
+            // Row shading, when it is on; the default band is the
+            // background, so this draws nothing unless asked.
+            draw::band(&painter, rect.expand2(vec2(PANEL_PADX - 1.0, 0.0)), palette, n % 2 == 1);
             draw::text_in_row(&painter, rect, starts[c], Edge::Left, label, &font, palette.text);
             draw::text_in_row(&painter, rect, starts[c] + edges[c], Edge::Right, value, &font, *color);
         }

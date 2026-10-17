@@ -6,7 +6,9 @@
 
 use eframe::egui::text::{LayoutJob, TextFormat};
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+
+use super::prefs::{self, Prefs};
 
 use rochviewer::platform_profiles::Platform;
 
@@ -26,6 +28,67 @@ pub const ROW_HEIGHT: f32 = 20.0;
 #[allow(dead_code)]
 pub const SECTION_GAP: f32 = 3.0;
 
+/// The parts of the preferences every drawing call needs, held where a
+/// free function can reach them. The defaults are the window as it was.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Look {
+    /// Added to every text size.
+    pub text_delta: f32,
+    /// Added to every table row's height, on top of the text delta.
+    pub row_delta: f32,
+    /// Lay text out on Consolas' GDI-hinted 7px grid; only right for Consolas.
+    pub consolas_spacing: bool,
+    /// Headings in the bold face; off draws them in the regular one.
+    pub bold_headings: bool,
+    pub corner_radius: f32,
+}
+
+impl Look {
+    pub const DEFAULT: Look =
+        Look { text_delta: 0.0, row_delta: 0.0, consolas_spacing: true, bold_headings: true, corner_radius: 8.0 };
+
+    pub fn from_prefs(prefs: &Prefs) -> Look {
+        Look {
+            text_delta: prefs.text_delta,
+            row_delta: prefs.row_delta,
+            consolas_spacing: prefs.font_family.eq_ignore_ascii_case(prefs::DEFAULT_FONT),
+            bold_headings: prefs.bold_headings,
+            corner_radius: prefs.corner_radius,
+        }
+    }
+}
+
+static LOOK: RwLock<Look> = RwLock::new(Look::DEFAULT);
+
+pub fn look() -> Look {
+    *LOOK.read().unwrap_or_else(|e| e.into_inner())
+}
+
+pub fn set_look(look: Look) {
+    *LOOK.write().unwrap_or_else(|e| e.into_inner()) = look;
+}
+
+/// A table row's height: its base pitch, grown with the text and the chosen
+/// spacing. Never so small a row overlaps the next.
+pub fn pitch(base: f32) -> f32 {
+    let look = look();
+    (base + look.text_delta + look.row_delta).max(10.0)
+}
+
+/// How much bigger (or smaller) the text is than the window was laid out for,
+/// across and down: the window sizes grow by this.
+pub fn size_factor() -> (f32, f32) {
+    let look = look();
+    ((FONT_SIZE + look.text_delta) / FONT_SIZE, pitch(ROW_HEIGHT) / ROW_HEIGHT)
+}
+
+/// A corner radius from the preferences, scaled from the 8px the panels
+/// were drawn with: `radius(6)` is a 6px corner at the default.
+pub fn radius(at_default: u8) -> egui::CornerRadius {
+    let scaled = at_default as f32 * look().corner_radius / 8.0;
+    egui::CornerRadius::same(scaled.round().clamp(0.0, 255.0) as u8)
+}
+
 /// Consolas' advance, as a fraction of the em (1126 of 2048 units).
 const CONSOLAS_ADVANCE: f32 = 1126.0 / 2048.0;
 
@@ -42,7 +105,7 @@ pub fn gdi_letter_spacing(size: f32) -> f32 {
 /// needed more height than a 1080p screen leaves. Consolas at 12 stays clear
 /// inside 18; it clipped at IMC's 17.
 pub fn training_row_height(platform: Platform) -> f32 {
-    if platform == Platform::Lga1700Ddr5 { 18.0 } else { 19.0 }
+    pitch(if platform == Platform::Lga1700Ddr5 { 18.0 } else { 19.0 })
 }
 
 /// IMC carries the controller's full register set elsewhere, so it uses a
@@ -50,7 +113,7 @@ pub fn training_row_height(platform: Platform) -> f32 {
 /// inside it. On LGA1700 DDR5 the per-module rows moved to Training, and the
 /// rest reads in the same face and pitch as every other tab.
 pub fn imc_row_height(platform: Platform) -> f32 {
-    if platform == Platform::Lga1700Ddr5 { ROW_HEIGHT } else { 17.0 }
+    pitch(if platform == Platform::Lga1700Ddr5 { ROW_HEIGHT } else { 17.0 })
 }
 
 pub fn imc_font_size(platform: Platform) -> f32 {
@@ -62,7 +125,7 @@ pub fn row_height_for_tab(platform: Platform, tab: &str) -> f32 {
     match tab {
         "Training" => training_row_height(platform),
         "IMC" => imc_row_height(platform),
-        _ => ROW_HEIGHT,
+        _ => pitch(ROW_HEIGHT),
     }
 }
 
@@ -75,12 +138,7 @@ pub const CONSOLAS: &str = "consolas";
 pub const CONSOLAS_BOLD: &str = "consolas-bold";
 pub const SYMBOL: &str = "symbol";
 
-fn pair(light: u32, dark: u32, is_dark: bool) -> Color32 {
-    let rgb = if is_dark { dark } else { light };
-    Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
-}
-
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Palette {
     pub dark: bool,
     pub bg: Color32,
@@ -103,35 +161,51 @@ pub struct Palette {
 }
 
 impl Palette {
+    /// The window's own colours: the default preferences, which are the
+    /// Python build's (light, dark) pairs.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn new(dark: bool) -> Self {
-        let tab_selected = pair(0xD0343A, 0xD0343A, dark);
-        let tab_hover = pair(0xE0383E, 0xE0383E, dark);
+        Palette::from_prefs(&Prefs::default(), dark)
+    }
+}
+
+impl Palette {
+    /// The colours the preferences ask for, in the mode in use.
+    pub fn from_prefs(prefs: &Prefs, dark: bool) -> Self {
+        let c = prefs.colors(dark);
+        let bg = c.background;
+        let contrast = |color| prefs::apply_contrast(color, bg, prefs.contrast);
         Palette {
             dark,
-            bg: pair(0xFFFFFF, 0x000000, dark),
-            border: pair(0xD0D0D0, 0x383838, dark),
-            text: pair(0x000000, 0xFFFFFF, dark),
-            value: pair(0xB91C1C, 0xFF5A5F, dark),
-            tab_selected,
-            tab_hover,
-            tab_selected_text: pair(0xFFFFFF, 0xFFFFFF, dark),
-            tab_unselected_hover: pair(0xE6E6E6, 0x222222, dark),
-            disabled_text: pair(0x62666D, 0xA0A0A0, dark),
-            band: pair(0xFFFFFF, 0x000000, dark),
-            hairline: tab_selected,
-            brand: tab_selected,
-            brand_hover: tab_hover,
+            bg,
+            border: contrast(c.border),
+            text: contrast(c.text),
+            value: contrast(c.value),
+            tab_selected: c.accent,
+            tab_hover: c.accent_hover,
+            // White on the default red, in both modes; whichever of black and
+            // white reads on an accent the user picked.
+            tab_selected_text: prefs::text_on(c.accent),
+            tab_unselected_hover: c.hover,
+            disabled_text: contrast(c.dimmed),
+            band: if prefs.row_shading { c.shading } else { bg },
+            hairline: c.accent,
+            brand: contrast(c.accent),
+            brand_hover: c.accent_hover,
             close_hover: Color32::from_rgb(0xC4, 0x2B, 0x1C),
         }
     }
 }
 
+/// The text face at `size`, grown by the chosen text size.
 pub fn font(size: f32) -> FontId {
-    FontId::new(size, FontFamily::Name(CONSOLAS.into()))
+    FontId::new((size + look().text_delta).max(6.0), FontFamily::Name(CONSOLAS.into()))
 }
 
+/// The heading face at `size`: bold unless the preferences say otherwise.
 pub fn bold(size: f32) -> FontId {
-    FontId::new(size, FontFamily::Name(CONSOLAS_BOLD.into()))
+    let family = if look().bold_headings { CONSOLAS_BOLD } else { CONSOLAS };
+    FontId::new((size + look().text_delta).max(6.0), FontFamily::Name(family.into()))
 }
 
 pub fn symbol(size: f32) -> FontId {
@@ -142,7 +216,9 @@ pub fn symbol(size: f32) -> FontId {
 /// it (see [`gdi_letter_spacing`]).
 pub fn job(text: impl Into<String>, font_id: FontId, color: Color32) -> LayoutJob {
     let extra_letter_spacing = match &font_id.family {
-        FontFamily::Name(name) if &**name == CONSOLAS || &**name == CONSOLAS_BOLD => gdi_letter_spacing(font_id.size),
+        FontFamily::Name(name) if look().consolas_spacing && (&**name == CONSOLAS || &**name == CONSOLAS_BOLD) => {
+            gdi_letter_spacing(font_id.size)
+        }
         _ => 0.0,
     };
     LayoutJob::single_section(text.into(), TextFormat { font_id, color, extra_letter_spacing, ..Default::default() })
@@ -153,15 +229,16 @@ fn system_font(name: &str) -> Option<Vec<u8>> {
     std::fs::read(std::path::Path::new(&windir).join("Fonts").join(name)).ok()
 }
 
-/// Consolas for everything, as the Python build used it for timing-tool
-/// alignment, with Segoe UI Symbol for the title-bar glyphs (the camera,
-/// sun, minus and cross are all in it). Every font comes from the Windows
-/// fonts folder rather than the executable; when Consolas is missing the
-/// family falls back to Courier New, then Arial, so the window still draws.
-pub fn install_fonts(ctx: &egui::Context) {
+/// The chosen family for everything -- Consolas unless the preferences pick
+/// another, as the Python build used it for timing-tool alignment -- with
+/// Segoe UI Symbol behind it for the title-bar glyphs (the camera, gear,
+/// minus and cross are all in it). Every font comes from the Windows fonts
+/// folder rather than the executable; when the family is missing it falls
+/// back to Consolas, then Courier New, then Arial, so the window still draws.
+pub fn install_fonts(ctx: &egui::Context, family: &str) {
     let mut fonts = FontDefinitions::empty();
-    let mut add = |key: &str, files: &[&str]| -> bool {
-        match files.iter().find_map(|file| system_font(file)) {
+    let mut add_bytes = |key: &str, bytes: Option<Vec<u8>>| -> bool {
+        match bytes {
             Some(bytes) => {
                 fonts.font_data.insert(key.to_string(), Arc::new(FontData::from_owned(bytes)));
                 true
@@ -169,9 +246,18 @@ pub fn install_fonts(ctx: &egui::Context) {
             None => false,
         }
     };
-    let have_regular = add("Consolas", &["consola.ttf", "cour.ttf", "arial.ttf"]);
-    let have_bold = add("Consolas Bold", &["consolab.ttf", "courbd.ttf", "arialbd.ttf"]);
-    let have_symbol = add("Segoe UI Symbol", &["seguisym.ttf", "segoeui.ttf"]);
+    let chosen = if family.eq_ignore_ascii_case(prefs::DEFAULT_FONT) { None } else { super::fonts::find_family(family) };
+    let (regular, bold) = match &chosen {
+        Some(found) => (std::fs::read(&found.regular).ok(), found.bold.as_ref().and_then(|p| std::fs::read(p).ok())),
+        None => (None, None),
+    };
+    let fallback = |files: &[&str]| files.iter().find_map(|file| system_font(file));
+    let have_regular = add_bytes("Consolas", regular.or_else(|| fallback(&["consola.ttf", "cour.ttf", "arial.ttf"])));
+    let have_bold = add_bytes(
+        "Consolas Bold",
+        bold.or_else(|| if chosen.is_some() { None } else { fallback(&["consolab.ttf", "courbd.ttf", "arialbd.ttf"]) }),
+    );
+    let have_symbol = add_bytes("Segoe UI Symbol", fallback(&["seguisym.ttf", "segoeui.ttf"]));
 
     let present = |list: &[(&str, bool)]| -> Vec<String> {
         list.iter().filter(|(_, present)| *present).map(|(font, _)| font.to_string()).collect()
@@ -209,4 +295,64 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
         style.text_styles.insert(egui::TextStyle::Heading, bold(FONT_SIZE));
         style.spacing.item_spacing = egui::vec2(0.0, 0.0);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rgb(hex: u32) -> Color32 {
+        Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
+    }
+
+    #[test]
+    fn the_default_preferences_draw_the_python_colours() {
+        // The pairs the window was drawn in before Settings existed.
+        for (dark, bg, text, value, border, dimmed, hover) in [
+            (false, 0xFFFFFF, 0x000000, 0xB91C1C, 0xD0D0D0, 0x62666D, 0xE6E6E6),
+            (true, 0x000000, 0xFFFFFF, 0xFF5A5F, 0x383838, 0xA0A0A0, 0x222222),
+        ] {
+            let palette = Palette::new(dark);
+            assert_eq!(palette.bg, rgb(bg));
+            assert_eq!(palette.text, rgb(text));
+            assert_eq!(palette.value, rgb(value));
+            assert_eq!(palette.border, rgb(border));
+            assert_eq!(palette.disabled_text, rgb(dimmed));
+            assert_eq!(palette.tab_unselected_hover, rgb(hover));
+            assert_eq!(palette.tab_selected, rgb(0xD0343A));
+            assert_eq!(palette.tab_hover, rgb(0xE0383E));
+            assert_eq!(palette.tab_selected_text, Color32::WHITE);
+            // No shading by default: the band is the background.
+            assert_eq!(palette.band, palette.bg);
+        }
+    }
+
+    #[test]
+    fn shading_and_contrast_come_from_the_preferences() {
+        let prefs = Prefs { row_shading: true, contrast: 1.0, ..Prefs::default() };
+        let palette = Palette::from_prefs(&prefs, false);
+        assert_eq!(palette.band, prefs.light.shading);
+        assert!(prefs::luminance(palette.value) < prefs::luminance(prefs.light.value));
+        // A light accent gets dark text on the selected tab.
+        let mut light_accent = Prefs::default();
+        light_accent.light.accent = Color32::from_rgb(0xF0, 0xF0, 0x80);
+        assert_eq!(Palette::from_prefs(&light_accent, false).tab_selected_text, Color32::BLACK);
+    }
+
+    #[test]
+    fn the_default_look_changes_no_size() {
+        assert_eq!(Look::from_prefs(&Prefs::default()), Look::DEFAULT);
+        let defaults = Look::DEFAULT;
+        assert_eq!(defaults.text_delta + defaults.row_delta, 0.0);
+        assert!(defaults.consolas_spacing && defaults.bold_headings);
+        assert_eq!(defaults.corner_radius, 8.0);
+    }
+
+    #[test]
+    fn another_font_drops_the_consolas_grid() {
+        let prefs = Prefs { font_family: "Cascadia Mono".into(), text_delta: 2.0, row_delta: 3.0, ..Prefs::default() };
+        let look = Look::from_prefs(&prefs);
+        assert!(!look.consolas_spacing);
+        assert_eq!((look.text_delta, look.row_delta), (2.0, 3.0));
+    }
 }

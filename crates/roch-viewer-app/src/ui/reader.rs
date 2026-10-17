@@ -26,6 +26,18 @@ use rochviewer::timings::Backend;
 /// runtime caches a successful read for slightly less than this, so one tick
 /// costs one read per transport rather than one per row.
 pub const LIVE_REFRESH: Duration = Duration::from_millis(1000);
+
+/// The live refresh in use, in milliseconds: a preference, one second unless
+/// changed.
+static REFRESH_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(LIVE_REFRESH.as_millis() as u64);
+
+pub fn set_live_refresh(ms: u32) {
+    REFRESH_MS.store(ms.max(100) as u64, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn live_refresh() -> Duration {
+    Duration::from_millis(REFRESH_MS.load(std::sync::atomic::Ordering::Relaxed))
+}
 /// How long after startup the rows that came back empty are read once more.
 /// Long enough for the opening burst of reads to be over, since contention
 /// for the same mailbox is what blanked them.
@@ -242,7 +254,7 @@ fn worker(backend: Arc<Backend>, first: Vec<usize>, values: Values, receiver: Re
     let live: Vec<usize> = shown.iter().copied().filter(|&i| backend.rows[i].live).collect();
     let started = Instant::now();
     let mut retried_blanks = false;
-    let mut next_live = Instant::now() + LIVE_REFRESH;
+    let mut next_live = Instant::now() + live_refresh();
 
     loop {
         let now = Instant::now();
@@ -304,7 +316,7 @@ fn worker(backend: Arc<Backend>, first: Vec<usize>, values: Values, receiver: Re
             if read_all(&mut live.iter().copied(), channel) {
                 repaint();
             }
-            next_live = Instant::now() + LIVE_REFRESH;
+            next_live = Instant::now() + live_refresh();
         }
     }
 }

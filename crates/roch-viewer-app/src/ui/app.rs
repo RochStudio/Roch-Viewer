@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use eframe::egui::{self, Color32, CornerRadius, Id, Rect, Sense, Stroke, TextureHandle, Ui, Vec2, pos2, vec2};
+use eframe::egui::{self, Color32, Id, Rect, Sense, Stroke, TextureHandle, Ui, Vec2, pos2, vec2};
 
 use rochviewer::hardware;
 use rochviewer::memory::dimm_inventory::{read_modules, read_modules_with_spd_ic};
@@ -35,15 +35,19 @@ use super::spd_tab::{self, SpdTab};
 use super::summary::{self, SummaryPlan};
 use super::tabs::{self, TabContext};
 use super::theme::{self, Palette};
+use super::prefs::Prefs;
 use super::timing;
+use super::window_tools;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 pub const TITLE_BAR_HEIGHT: f32 = 30.0;
 pub const TITLE_BUTTON_WIDTH: f32 = 44.0;
 pub const TITLE_THEME_WIDTH: f32 = 36.0;
 pub const LOGO_SIZE: u32 = 24;
-pub const LIGHT_MODE_ICON: &str = "☀";
+/// The Settings button: everything about the look, the theme included.
+pub const SETTINGS_ICON: &str = "\u{2699}";
 #[allow(dead_code)]
-pub const DARK_MODE_IMAGE: &str = "assets/moon-solid-black-18.png";
 pub const SCREENSHOT_ICON: &str = "\u{1F4F7}";
 
 /// The compact window has room for the tab list and the two utility buttons
@@ -284,7 +288,6 @@ pub struct TimingApp {
     settings: Settings,
     palette: Palette,
     logo: Option<TextureHandle>,
-    moon: Option<TextureHandle>,
     driver_notice: Option<String>,
     sized_for: Option<usize>,
     positioned: bool,
@@ -303,6 +306,20 @@ pub struct TimingApp {
     /// The module inventory being read; taken on the frame it finishes.
     inventory: Option<std::thread::JoinHandle<(ModuleChoices, BTreeMap<String, String>)>>,
     switched_at: Option<std::time::Instant>,
+    /// What the Settings window edits; it bumps the revision on each change.
+    prefs: Arc<Mutex<Prefs>>,
+    prefs_revision: Arc<AtomicU64>,
+    /// The preferences and revision the window was last drawn with.
+    applied: Prefs,
+    applied_revision: u64,
+    applied_dark: bool,
+    /// The main window's native handle, once found.
+    main_hwnd: Option<isize>,
+    /// Where the main window opens, in screen pixels, once it exists.
+    restore_main: Option<(i32, i32)>,
+    /// When the preferences next need writing out.
+    save_due: Option<std::time::Instant>,
+    saved: serde_json::Value,
 }
 
 /// What a click asked for, carried out after the frame's layout so the
@@ -313,6 +330,7 @@ enum Action {
     Telemetry,
     Screenshot,
     OpenScreenshotFolder,
+    Settings,
 }
 
 /// The tabs the window offers for these rows.
@@ -341,9 +359,25 @@ pub fn reread_rows(rows: &[rochviewer::row::Row], tab: &str) -> Vec<usize> {
 impl TimingApp {
     pub fn new(cc: &eframe::CreationContext<'_>, settings: Settings) -> Self {
         timing::mark("window created");
-        timing::span("install fonts", || theme::install_fonts(&cc.egui_ctx));
-        let palette = Palette::new(settings.appearance_mode() == "Dark");
+        let prefs = Prefs::from_settings(settings.map());
+        theme::set_look(theme::Look::from_prefs(&prefs));
+        timing::span("install fonts", || theme::install_fonts(&cc.egui_ctx, &prefs.font_family));
+        let system_dark = cc.egui_ctx.system_theme() == Some(egui::Theme::Dark);
+        let dark = prefs.theme.is_dark(system_dark);
+        let palette = Palette::from_prefs(&prefs, dark);
         theme::apply(&cc.egui_ctx, &palette);
+        cc.egui_ctx.set_zoom_factor(prefs.ui_scale);
+        super::reader::set_live_refresh(prefs.refresh_ms);
+        super::screenshot::COPY_TO_CLIPBOARD.store(prefs.screenshot_to_clipboard, Ordering::Relaxed);
+        window_tools::set_target_opacity(prefs.opacity);
+        if prefs.always_on_top {
+            cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
+        }
+        let restore_main = prefs
+            .remember_positions
+            .then(|| prefs.positions.get("main").copied())
+            .flatten()
+            .filter(|&at| window_tools::on_screen(at));
 
         let backend = Arc::new(timing::span("build the table", || fixture::backend_from_env().unwrap_or_else(load_active_backend)));
         let summary = timing::span("summary plan", || summary::summary_plan(&backend.rows, backend.platform));
@@ -354,7 +388,6 @@ impl TimingApp {
         let driver_notice = driver_notice_text(hardware::driver_error().as_deref(), hardware::driver_path::find_driver().is_none());
 
         let logo = asset_path::logo_image(LOGO_SIZE).map(|img| cc.egui_ctx.load_texture("logo", img, egui::TextureOptions::LINEAR));
-        let moon = asset_path::moon_image().map(|img| cc.egui_ctx.load_texture("moon", img, egui::TextureOptions::LINEAR));
 
         // The installed modules, read once: the selector's choices with the
         // DRAM maker and die the modules' own SPD reports, and the slot
@@ -378,18 +411,20 @@ impl TimingApp {
             })
             .ok();
 
+        let current = if prefs.remember_tab { tab_names.iter().position(|t| *t == prefs.last_tab).unwrap_or(0) } else { 0 };
+        let saved = prefs.to_json();
         TimingApp {
             backend,
             reader,
             tab_names,
-            current: 0,
+            current,
             settings,
             palette,
             logo,
-            moon,
             driver_notice,
             sized_for: None,
-            positioned: false,
+            // A remembered place replaces the opening position.
+            positioned: restore_main.is_some(),
             popouts: Popouts::new(),
             started: false,
             pending: Vec::new(),
@@ -402,13 +437,102 @@ impl TimingApp {
             spd: SpdTab::default(),
             first_frame_drawn: false,
             switched_at: None,
+            prefs: Arc::new(Mutex::new(prefs.clone())),
+            prefs_revision: Arc::new(AtomicU64::new(0)),
+            applied: prefs,
+            applied_revision: 0,
+            applied_dark: dark,
+            main_hwnd: None,
+            restore_main,
+            save_due: None,
+            saved,
         }
     }
 
-    fn set_appearance(&mut self, ctx: &egui::Context, dark: bool) {
-        self.palette = Palette::new(dark);
+    /// Take up whatever the Settings window changed, and follow Windows'
+    /// own theme when the preferences say to.
+    fn follow_prefs(&mut self, ctx: &egui::Context) {
+        let revision = self.prefs_revision.load(Ordering::SeqCst);
+        let prefs = self.prefs.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let system_dark = ctx.system_theme() == Some(egui::Theme::Dark);
+        let dark = prefs.theme.is_dark(system_dark);
+        if revision == self.applied_revision && dark == self.applied_dark {
+            // Only places or the last tab may have moved: saved, nothing to redraw.
+            if prefs != self.applied {
+                self.applied = prefs;
+                self.save_due.get_or_insert_with(|| std::time::Instant::now() + std::time::Duration::from_millis(800));
+            }
+            return;
+        }
+        let previous = std::mem::replace(&mut self.applied, prefs.clone());
+        self.applied_revision = revision;
+        self.applied_dark = dark;
+        theme::set_look(theme::Look::from_prefs(&prefs));
+        if previous.font_family != prefs.font_family {
+            theme::install_fonts(ctx, &prefs.font_family);
+        }
+        self.palette = Palette::from_prefs(&prefs, dark);
         theme::apply(ctx, &self.palette);
-        self.settings.save("appearance_mode", serde_json::Value::from(if dark { "Dark" } else { "Light" }));
+        if previous.ui_scale != prefs.ui_scale {
+            ctx.set_zoom_factor(prefs.ui_scale);
+        }
+        if previous.always_on_top != prefs.always_on_top {
+            let level = if prefs.always_on_top { egui::WindowLevel::AlwaysOnTop } else { egui::WindowLevel::Normal };
+            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
+        }
+        super::reader::set_live_refresh(prefs.refresh_ms);
+        super::screenshot::COPY_TO_CLIPBOARD.store(prefs.screenshot_to_clipboard, Ordering::Relaxed);
+        window_tools::set_target_opacity(prefs.opacity);
+        // The text or spacing may have changed how much room each tab needs.
+        self.sized_for = None;
+        self.save_due = Some(std::time::Instant::now() + std::time::Duration::from_millis(400));
+        ctx.request_repaint();
+    }
+
+    /// The main window's native chores: put it where it was, give it the
+    /// chosen opacity, and note where it is now.
+    fn follow_native_window(&mut self) {
+        if self.main_hwnd.is_none() {
+            self.main_hwnd = super::popouts::own_window(&format!("{APP_NAME} {VERSION}"), false).map(|h| h.0 as isize);
+        }
+        let Some(raw) = self.main_hwnd else { return };
+        let native = window_tools::hwnd(raw);
+        if let Some(at) = self.restore_main {
+            // The window was created there; move it only if it landed
+            // elsewhere (a monitor whose scale the conversion missed).
+            if let Some(now) = window_tools::position(native) {
+                self.restore_main = None;
+                if (now.0 - at.0).abs() > 1 || (now.1 - at.1).abs() > 1 {
+                    window_tools::move_to(native, at);
+                }
+            }
+        }
+        window_tools::apply_opacity(native, window_tools::target_opacity());
+        if let Some(at) = window_tools::position(native) {
+            let mut prefs = self.prefs.lock().unwrap_or_else(|e| e.into_inner());
+            if prefs.remember_positions && prefs.positions.get("main") != Some(&at) {
+                prefs.positions.insert("main".into(), at);
+            }
+        }
+    }
+
+    /// Write the preferences out once they have settled.
+    fn save_prefs_when_due(&mut self, ctx: &egui::Context) {
+        let Some(due) = self.save_due else { return };
+        let now = std::time::Instant::now();
+        if now < due {
+            ctx.request_repaint_after(due - now);
+            return;
+        }
+        self.save_due = None;
+        let prefs = self.prefs.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let json = prefs.to_json();
+        if json != self.saved {
+            self.settings.save("preferences", json.clone());
+            let system_dark = ctx.system_theme() == Some(egui::Theme::Dark);
+            self.settings.save("appearance_mode", serde_json::Value::from(prefs.legacy_appearance_mode(system_dark)));
+            self.saved = json;
+        }
     }
 
     fn current_tab(&self) -> &str {
@@ -429,6 +553,13 @@ impl TimingApp {
         }
         self.sized_for = Some(self.current);
         let (w, h) = window_size_for_tab(self.backend.platform, self.current_tab(), screen.map(|s| s.y));
+        // Bigger text and roomier rows need a bigger window, in proportion.
+        let (across, down) = theme::size_factor();
+        let (mut w, mut h) = (w * across, h * down);
+        if let Some(screen) = screen {
+            w = w.min(screen.x);
+            h = h.min((screen.y - 120.0).max(MIN_WINDOW_HEIGHT));
+        }
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(w, h)));
     }
 
@@ -441,6 +572,12 @@ impl TimingApp {
         self.current = index;
         self.switched_at = Some(std::time::Instant::now());
         let tab = self.current_tab().to_string();
+        {
+            let mut prefs = self.prefs.lock().unwrap_or_else(|e| e.into_inner());
+            if prefs.remember_tab {
+                prefs.last_tab = tab.clone();
+            }
+        }
         if tab == "SPD" {
             self.spd.load(ctx, self.backend.clone());
         }
@@ -497,22 +634,13 @@ impl TimingApp {
         if response.clicked() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
         }
-        // The icon names the mode the button will switch to: the white sun
-        // in Dark, the solid moon in Light.
-        let (theme_rect, response) = button(ui, TITLE_THEME_WIDTH, "title-theme");
-        if palette.dark {
-            title_glyph(&painter, theme_rect, &response, palette.tab_unselected_hover, LIGHT_MODE_ICON, theme::TITLE_THEME_SIZE, palette.text);
-        } else {
-            if response.hovered() {
-                painter.rect_filled(theme_rect, 0.0, palette.tab_unselected_hover);
-            }
-            if let Some(moon) = &self.moon {
-                let image = Rect::from_center_size(theme_rect.center(), moon.size_vec2());
-                painter.image(moon.id(), image, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-            }
-        }
+        // Settings, where the sun and moon used to be: the theme is one of
+        // the things it holds.
+        let (settings_rect, response) = button(ui, TITLE_THEME_WIDTH, "title-settings");
+        title_glyph(&painter, settings_rect, &response, palette.tab_unselected_hover, SETTINGS_ICON, theme::TITLE_THEME_SIZE, palette.text);
+        let response = response.on_hover_text("Settings");
         if response.clicked() {
-            self.set_appearance(&ctx, !palette.dark);
+            self.pending.push(Action::Settings);
         }
         // A picture of the window, saved and put on the clipboard. In the
         // title bar rather than beside Telemetry and Advanced because the tab
@@ -558,7 +686,7 @@ impl TimingApp {
                 (false, true) => palette.tab_unselected_hover,
                 (false, false) => palette.bg,
             };
-            painter.rect_filled(rect, CornerRadius::same(6), fill);
+            painter.rect_filled(rect, theme::radius(6), fill);
             // White on the selected red tab in both modes.
             let color = if selected { palette.tab_selected_text } else { palette.text };
             draw::text_in_row(&painter, rect, rect.center().x, Edge::Center, name, &font, color);
@@ -595,7 +723,8 @@ impl TimingApp {
         let bold = theme::bold(theme::FONT_SIZE);
         let font = theme::font(theme::FONT_SIZE);
         let mut x = rect.left() + 4.0;
-        for (i, (label, url)) in [(YOUTUBE_LABEL, YOUTUBE_URL), (TWITTER_LABEL, TWITTER_URL), (DISCORD_LABEL, DISCORD_URL)].into_iter().enumerate() {
+        let links = if self.applied.show_footer_links { 3 } else { 0 };
+        for (i, (label, url)) in [(YOUTUBE_LABEL, YOUTUBE_URL), (TWITTER_LABEL, TWITTER_URL), (DISCORD_LABEL, DISCORD_URL)].into_iter().enumerate().take(links) {
             if i > 0 {
                 x += 2.0;
                 let sep = draw::text_in_row(&painter, rect, x, Edge::Left, "|", &font, palette.text);
@@ -628,7 +757,7 @@ impl TimingApp {
         let Some(text) = &self.driver_notice else { return };
         let palette = self.palette;
         let painter = ui.painter();
-        painter.rect(rect, CornerRadius::same(6), palette.bg, Stroke::new(1.0, palette.brand), egui::StrokeKind::Inside);
+        painter.rect(rect, theme::radius(6), palette.bg, Stroke::new(1.0, palette.brand), egui::StrokeKind::Inside);
         let job = {
             let mut job = theme::job(text.clone(), theme::bold(theme::FONT_SIZE), palette.brand);
             job.wrap.max_width = notice_wrap_width(self.backend.platform).min(rect.width() - 16.0);
@@ -693,7 +822,7 @@ fn tool_button(ui: &mut Ui, palette: &Palette, text: &str, right: &mut f32, top:
     *right = rect.left();
     let response = ui.interact(rect, Id::unique(("tool", text)), Sense::click());
     let fill = if response.hovered() { palette.tab_unselected_hover } else { palette.bg };
-    ui.painter().rect(rect, CornerRadius::same(8), fill, Stroke::new(1.0, palette.border), egui::StrokeKind::Inside);
+    ui.painter().rect(rect, theme::radius(8), fill, Stroke::new(1.0, palette.border), egui::StrokeKind::Inside);
     draw::text_in_row(ui.painter(), rect, rect.center().x, Edge::Center, text, &font, palette.text);
     response
 }
@@ -702,6 +831,8 @@ impl eframe::App for TimingApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let frame_started = std::time::Instant::now();
         let ctx = ui.ctx().clone();
+        self.follow_prefs(&ctx);
+        self.follow_native_window();
         if self.inventory.as_ref().is_some_and(|t| t.is_finished()) {
             if let Some(Ok((choices, labels))) = self.inventory.take().map(|t| t.join()) {
                 self.choices = choices;
@@ -748,6 +879,8 @@ impl eframe::App for TimingApp {
             current_tab: &current_tab,
             spd: self.spd.source(),
             channel_labels: &self.channel_labels,
+            prefs: &self.prefs,
+            prefs_revision: &self.prefs_revision,
         };
         if !self.started {
             self.started = true;
@@ -759,9 +892,16 @@ impl eframe::App for TimingApp {
                 Action::Telemetry => self.popouts.open_telemetry(&ctx, &mut shared),
                 Action::Screenshot => self.popouts.take_screenshot(&ctx, &mut shared),
                 Action::OpenScreenshotFolder => self.popouts.open_screenshot_folder(),
+                Action::Settings => self.popouts.open_settings(&ctx, &mut shared),
             }
         }
         self.popouts.show(&ctx, &mut shared);
+        self.save_prefs_when_due(&ctx);
+        if ctx.input(|i| i.viewport().close_requested()) {
+            // Leaving: whatever is pending is written now.
+            self.save_due = Some(std::time::Instant::now());
+            self.save_prefs_when_due(&ctx);
+        }
         if !self.first_frame_drawn {
             self.first_frame_drawn = true;
             timing::took("first frame", frame_started);
@@ -855,9 +995,9 @@ mod tests {
     }
 
     #[test]
-    fn theme_toggle_icons() {
-        assert_eq!(LIGHT_MODE_ICON, "☀");
-        assert_eq!(DARK_MODE_IMAGE, "assets/moon-solid-black-18.png");
+    fn the_title_bar_has_a_settings_gear() {
+        // U+2699 is in Segoe UI Symbol, which draws the other title glyphs.
+        assert_eq!(SETTINGS_ICON, "\u{2699}");
     }
 
     #[test]

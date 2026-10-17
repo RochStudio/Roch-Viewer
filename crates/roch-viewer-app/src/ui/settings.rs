@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use serde_json::{Map, Value};
 
 /// What a first run opens in, and what an unreadable setting falls back to.
+#[cfg(test)]
 pub const DEFAULT_APPEARANCE_MODE: &str = "Light";
 
 #[derive(Clone, Debug, Default)]
@@ -40,6 +41,12 @@ impl Settings {
         Settings { values }
     }
 
+    /// Every saved key.
+    pub fn map(&self) -> &Map<String, Value> {
+        &self.values
+    }
+
+    #[cfg(test)]
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.values.get(key)
     }
@@ -69,6 +76,7 @@ impl Settings {
     }
 
     /// "Light" or "Dark".
+    #[cfg(test)]
     pub fn appearance_mode(&self) -> &'static str {
         match self.get("appearance_mode").and_then(Value::as_str).map(str::to_lowercase).as_deref() {
             Some("dark") => "Dark",

@@ -51,6 +51,11 @@ pub const DUMP_SEPARATOR_COLUMN: usize = 38;
 
 pub const ROW_HEIGHT: f32 = 19.0;
 
+/// A row's height with the chosen text size and spacing.
+fn row_height() -> f32 {
+    super::theme::pitch(ROW_HEIGHT)
+}
+
 /// The pitch of a wrapped value's lines: Consolas at 12px, as Tk spaced it.
 const WRAPPED_LINE_HEIGHT: f32 = 14.0;
 
@@ -276,8 +281,8 @@ pub fn matches(filter: &str, haystack: &str) -> bool {
 /// on screen to say so. `None` is a value that could not be measured.
 pub fn value_height(measured: Option<f32>) -> f32 {
     match measured {
-        Some(width) if width > VALUE_WRAP => ROW_HEIGHT * 2.0,
-        _ => ROW_HEIGHT,
+        Some(width) if width > VALUE_WRAP => row_height() * 2.0,
+        _ => row_height(),
     }
 }
 
@@ -579,7 +584,7 @@ impl AdvancedWindow {
         // band its position calls for, which is what the Timings and Training
         // tabs do. Given one, the alternation would visibly restart at every
         // section.
-        let (rect, _) = ui.allocate_exact_size(vec2(width, ROW_HEIGHT), Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(vec2(width, row_height()), Sense::hover());
         if !ui.is_rect_visible(rect) {
             return;
         }
@@ -631,7 +636,7 @@ fn draw_row(ui: &mut Ui, style: &PopoutStyle, palette: &Palette, width: f32, lin
     // keeps one row and grows to whatever its wrapped values need, as a Tk
     // label grows past the height it was given.
     let tallest = a.size().y.max(b.as_ref().map_or(0.0, |g| g.size().y));
-    let height = if paired { ROW_HEIGHT.max(tallest.ceil()) } else { value_height(Some(measured)).max(tallest.ceil()) };
+    let height = if paired { row_height().max(tallest.ceil()) } else { value_height(Some(measured)).max(tallest.ceil()) };
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     if !ui.is_rect_visible(rect) {
         return;
@@ -639,10 +644,10 @@ fn draw_row(ui: &mut Ui, style: &PopoutStyle, palette: &Palette, width: f32, lin
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::ZERO, band(palette, line));
     // The name keeps the top line, which keeps every row at the same pitch.
-    painter.text(pos2(rect.left() + 6.0, rect.top() + ROW_HEIGHT / 2.0 + NAME_NUDGE), egui::Align2::LEFT_CENTER, label, font.clone(), palette.text);
+    painter.text(pos2(rect.left() + 6.0, rect.top() + row_height() / 2.0 + NAME_NUDGE), egui::Align2::LEFT_CENTER, label, font.clone(), palette.text);
     let place = |galley: Arc<egui::Galley>, right_edge: f32| {
         let y = VALUE_NUDGE
-            + if paired { rect.top() + (ROW_HEIGHT - WRAPPED_LINE_HEIGHT) / 2.0 } else { rect.center().y - galley.size().y / 2.0 };
+            + if paired { rect.top() + (row_height() - WRAPPED_LINE_HEIGHT) / 2.0 } else { rect.center().y - galley.size().y / 2.0 };
         painter.galley(pos2(right_edge, y), galley, palette.value);
     };
     match b {

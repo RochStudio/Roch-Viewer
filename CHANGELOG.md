@@ -2,6 +2,7 @@
 
 ## 1.1.0 (Unreleased)
 
+- Settings: the sun/moon toggle is replaced by a gear that opens a Settings window. Theme (Light, Dark, Follow Windows); seven colour schemes and every colour editable per mode; contrast; row shading; corner roundness; any installed font, text size and row spacing; interface scale 75-200%; always on top; window opacity; remembered window positions for the main window, Telemetry, Advanced and Settings; open on the last tab; live refresh interval; Telemetry auto-open; screenshot-to-clipboard; footer links on or off. Everything applies live and is saved in the same settings file, which keeps the old appearance key for earlier builds. The defaults are the window exactly as it was (all platforms).
 - Rewritten in Rust. The window is egui instead of customtkinter, and `RochViewer.exe` is built with `cargo build --release` instead of PyInstaller. Every tab, the Advanced and Telemetry windows and the screenshot button carry over with the same rows, values, sizes and colours, and settings are read from the same file, so the chosen appearance survives the upgrade. Rows are read on background threads, so the window never waits on a register. Checked against the Python 1.1.0 row by row on an LGA1700 DDR5 bench, and against its tables built on stubs for LGA1700 DDR4, LGA1851 and AM5 (all platforms).
 
 - Summary: each existing column has its own rounded group, preserving all labels, values, order and placement.

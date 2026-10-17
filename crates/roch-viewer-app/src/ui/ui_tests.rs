@@ -29,7 +29,7 @@ use super::theme::{self, Palette};
 /// Run `f` inside one headless egui pass with the window's fonts.
 pub fn with_ui<R>(f: impl FnOnce(&mut Ui) -> R) -> R {
     let ctx = egui::Context::default();
-    theme::install_fonts(&ctx);
+    theme::install_fonts(&ctx, super::prefs::DEFAULT_FONT);
     let input = || egui::RawInput {
         screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 1200.0))),
         ..Default::default()

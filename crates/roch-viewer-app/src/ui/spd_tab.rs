@@ -153,7 +153,7 @@ pub fn show(ui: &mut Ui, spd: &mut SpdTab, palette: &Palette, platform: Platform
     let profile_fields = spd_tab_profile_fields(platform);
     let font = theme::font(theme::FONT_SIZE);
     let bold = theme::bold(theme::FONT_SIZE);
-    let pitch = theme::ROW_HEIGHT;
+    let pitch = theme::pitch(theme::ROW_HEIGHT);
     let painter = ui.painter_at(area);
     let width = |text: &str, font: &egui::FontId| draw::text_width(&painter, text, font);
 

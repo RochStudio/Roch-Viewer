@@ -927,7 +927,7 @@ impl DimmTelemetryWindow {
         let reset_rect = Rect::from_center_size(pos2(footer.right() - RESET_WIDTH / 2.0, footer.center().y), vec2(RESET_WIDTH, RESET_HEIGHT));
         let reset = ui.interact(reset_rect, ui.scope_id().with("reset"), Sense::click());
         let fill = if reset.hovered() { palette.tab_unselected_hover } else { palette.bg };
-        painter.rect_filled(reset_rect, CornerRadius::same(6), fill);
+        painter.rect_filled(reset_rect, super::theme::radius(6), fill);
         painter.text(reset_rect.center(), egui::Align2::CENTER_CENTER, "Reset Stats", style.bold.clone(), palette.text);
         if reset.clicked() {
             self.reset_statistics();

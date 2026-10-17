@@ -7,18 +7,22 @@ pub mod app;
 pub mod asset_path;
 pub mod dimm_telemetry_window;
 pub mod draw;
+pub mod fonts;
 pub mod fixture;
 pub mod layout;
 pub mod popouts;
+pub mod prefs;
 pub mod reader;
 pub mod screenshot;
 pub mod selector;
 pub mod settings;
+pub mod settings_window;
 pub mod spd_tab;
 pub mod summary;
 pub mod tabs;
 pub mod theme;
 pub mod timing;
+pub mod window_tools;
 #[cfg(test)]
 mod ui_tests;
 
@@ -33,6 +37,12 @@ pub fn run() {
     admin::claim_taskbar_identity();
 
     let settings = settings::Settings::load();
+    let prefs = prefs::Prefs::from_settings(settings.map());
+    let restore = prefs
+        .remember_positions
+        .then(|| prefs.positions.get("main").copied())
+        .flatten()
+        .filter(|&at| window_tools::on_screen(at));
     let platform = timing::span("detect platform", rochviewer::platform_profiles::active_platform);
     let (width, height) = app::window_size_for_tab(platform, "Summary", None);
     let mut viewport = eframe::egui::ViewportBuilder::default()
@@ -43,6 +53,11 @@ pub fn run() {
         .with_resizable(true);
     if let Some(icon) = asset_path::window_icon() {
         viewport = viewport.with_icon(icon);
+    }
+    if let Some(at) = restore {
+        // The root window is created before the scale preference applies,
+        // so at a zoom of 1.
+        viewport = viewport.with_position(window_tools::to_points(at, 1.0));
     }
     let options = eframe::NativeOptions {
         viewport,

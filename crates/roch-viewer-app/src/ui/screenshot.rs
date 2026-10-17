@@ -12,6 +12,10 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui::ColorImage;
 
+/// Whether a screenshot is put on the clipboard as well as saved; a
+/// preference, on by default as it always was.
+pub static COPY_TO_CLIPBOARD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
 pub const FOLDER_NAME: &str = "Roch Viewer";
 
 /// A wall-clock moment, local time, as the file name spells it.
