@@ -14,6 +14,7 @@ use regex::Regex;
 use super::ddr5_spd::SpdIdentity;
 use super::dram_ic::identify_dram_ic;
 use crate::memo::Memo;
+use crate::system_identity::{PY_SPACE, py_strip};
 use crate::wmi_util::{self, WmiObject, WmiValue};
 
 pub const EM_DASH: &str = "—";
@@ -40,13 +41,18 @@ pub const EM_DASH: &str = "—";
 // DIMM index rather than its position in the query, so the channel it names is
 // right and the two sticks cannot swap -- which is the failure that mattered.
 // ASUS ROG MAXIMUS Z790 APEX (LGA1700 DDR5) writes this shape.
-static SLOT_LETTER_NUMBER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)DIMM[\s_-]*([A-Za-z])(\d+)").unwrap());
+//
+// The Python's `\s` is spelled `[{PY_SPACE}]` here: regex-lite's own `\s` is
+// ASCII-only, and the Python's matched a no-break space too.
+static SLOT_LETTER_NUMBER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!(r"(?i)DIMM[{PY_SPACE}_-]*([A-Za-z])(\d+)")).unwrap());
 static SLOT_CHANNEL_INDEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)CHANNEL[\s_-]*([A-Za-z]).*?DIMM[\s_-]*(\d+)").unwrap());
+    LazyLock::new(|| Regex::new(&format!(r"(?i)CHANNEL[{PY_SPACE}_-]*([A-Za-z]).*?DIMM[{PY_SPACE}_-]*(\d+)")).unwrap());
 static SLOT_CONTROLLER_INDEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)CONTROLLER[\s_-]*(\d+).*?DIMM[\s_-]*(\d+)").unwrap());
-static BANK_CHANNEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^P\d+\s+CHANNEL\s+([A-Z])$").unwrap());
-static BANK_DIMM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^DIMM\s+(\d+)$").unwrap());
+    LazyLock::new(|| Regex::new(&format!(r"(?i)CONTROLLER[{PY_SPACE}_-]*(\d+).*?DIMM[{PY_SPACE}_-]*(\d+)")).unwrap());
+static BANK_CHANNEL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!(r"(?i)^P\d+[{PY_SPACE}]+CHANNEL[{PY_SPACE}]+([A-Z])$")).unwrap());
+static BANK_DIMM: LazyLock<Regex> = LazyLock::new(|| Regex::new(&format!(r"(?i)^DIMM[{PY_SPACE}]+(\d+)$")).unwrap());
 
 fn number(digits: &str) -> Option<u64> {
     digits.parse().ok()
@@ -61,8 +67,8 @@ pub fn parse_slot(device_locator: &str, bank_label: &str) -> Option<String> {
     let text = device_locator;
     // Gigabyte AM5 separates the channel and socket into BankLabel and
     // DeviceLocator. Preserve the firmware's DIMM number, not query order.
-    let bank_channel = BANK_CHANNEL.captures(bank_label.trim());
-    let bank_dimm = BANK_DIMM.captures(text.trim());
+    let bank_channel = BANK_CHANNEL.captures(py_strip(bank_label));
+    let bank_dimm = BANK_DIMM.captures(py_strip(text));
     if let (Some(channel), Some(dimm)) = (bank_channel, bank_dimm) {
         return Some(format!("{}{}", channel[1].to_uppercase(), number(&dimm[1])?));
     }
@@ -274,12 +280,12 @@ pub fn rank_numeric(count: u32) -> String {
 ///   "Unknown IC"            -> (EM_DASH, EM_DASH)
 /// ```
 pub fn split_ic(label: Option<&str>) -> (String, String) {
-    let text = label.unwrap_or("").trim();
+    let text = py_strip(label.unwrap_or(""));
     if text.is_empty() || text == "Unknown IC" {
         return (EM_DASH.to_string(), EM_DASH.to_string());
     }
     if let Some(maker) = text.strip_suffix("(die unknown)") {
-        let maker = maker.trim();
+        let maker = py_strip(maker);
         return (if maker.is_empty() { EM_DASH } else { maker }.to_string(), EM_DASH.to_string());
     }
     match text.rsplit_once(' ') {
@@ -323,9 +329,9 @@ pub fn decode(entries: &[WmiObject]) -> Vec<DimmModule> {
             .map(|value| value.to_i64().unwrap_or(0))
             .unwrap_or(0)
             .div_euclid(1024 * 1024 * 1024);
-        let part_number = non_empty_or(memory.str_or_empty("PartNumber").trim(), "Unknown");
-        let tag = non_empty_or(memory.str_or_empty("Tag").trim(), "Unknown");
-        let module_manufacturer = memory.str_or_empty("Manufacturer").trim().to_string();
+        let part_number = non_empty_or(py_strip(&memory.str_or_empty("PartNumber")), "Unknown");
+        let tag = non_empty_or(py_strip(&memory.str_or_empty("Tag")), "Unknown");
+        let module_manufacturer = py_strip(&memory.str_or_empty("Manufacturer")).to_string();
         let memory_type = ["SMBIOSMemoryType", "MemoryType"]
             .iter()
             .filter_map(|field| memory.get(field).filter(|value| truthy(value)))
@@ -351,7 +357,7 @@ pub fn decode(entries: &[WmiObject]) -> Vec<DimmModule> {
             &extra_metadata,
         );
 
-        let device_locator = memory.str_or_empty("DeviceLocator").trim().to_string();
+        let device_locator = py_strip(&memory.str_or_empty("DeviceLocator")).to_string();
         let slot = parse_slot(&device_locator, &memory.str_or_empty("BankLabel"));
 
         // Firmware reads this off the module at POST. It is the one identity
@@ -359,7 +365,7 @@ pub fn decode(entries: &[WmiObject]) -> Vec<DimmModule> {
         // it is the only way to reach it: the SPD path that reads the serial
         // directly is DDR5-only. Firmware that leaves it blank, or fills it
         // with a placeholder of all zeroes or all Fs, is reporting nothing.
-        let mut serial_number = memory.str_or_empty("SerialNumber").trim().to_string();
+        let mut serial_number = py_strip(&memory.str_or_empty("SerialNumber")).to_string();
         if serial_number.trim_matches(['0', 'f', 'F']).is_empty() {
             serial_number = String::new();
         }
@@ -449,16 +455,16 @@ pub fn slots_used() -> Option<String> {
 
 /// The SPD identity read from this module: by serial, then part number.
 fn identity_for(module: &DimmModule, identities: &[SpdIdentity]) -> Option<usize> {
-    let serial = module.serial_number.trim().to_uppercase();
+    let serial = py_strip(&module.serial_number).to_uppercase();
     if !serial.is_empty() {
         for (index, identity) in identities.iter().enumerate() {
-            if identity.serial_number.trim().to_uppercase() == serial {
+            if py_strip(&identity.serial_number).to_uppercase() == serial {
                 return Some(index);
             }
         }
     }
-    let part = module.part_number.trim().to_uppercase();
-    identities.iter().position(|identity| identity.part_number.trim().to_uppercase() == part)
+    let part = py_strip(&module.part_number).to_uppercase();
+    identities.iter().position(|identity| py_strip(&identity.part_number).to_uppercase() == part)
 }
 
 /// Put the DRAM maker and die each module's own SPD reports on its label.
@@ -479,10 +485,10 @@ pub fn apply_spd_ic(modules: &[DimmModule], identities: &[SpdIdentity]) -> Vec<D
         let mut module = module.clone();
         if let Some(index) = identity_for(&module, &remaining) {
             let identity = remaining.remove(index);
-            let maker = identity.dram_manufacturer.trim().to_string();
+            let maker = py_strip(&identity.dram_manufacturer).to_string();
             let named = !maker.is_empty() && maker != EM_DASH;
             if named && !maker.to_lowercase().starts_with("0x") {
-                let mut die = identity.dram_die.as_deref().unwrap_or("").trim().to_string();
+                let mut die = py_strip(identity.dram_die.as_deref().unwrap_or("")).to_string();
                 if !die.ends_with("-die") {
                     let (table_maker, table_die) = split_ic(Some(&module.ic));
                     die = if table_maker == maker { table_die } else { EM_DASH.to_string() };
@@ -958,5 +964,17 @@ mod tests {
         let original = module("Unknown IC", "0B354996");
         apply_spd_ic(std::slice::from_ref(&original), &[identity("SK hynix", "A-die", "0B354996")]);
         assert_eq!(original.ic, "Unknown IC");
+    }
+
+    #[test]
+    fn whitespace_is_pythons_in_slot_names_and_ic_labels() {
+        // Python 1.1.0: `\s` and str.strip() take a no-break space and the
+        // 0x1C-0x1F separators as whitespace. parse_slot("DIMM 0",
+        // "P0 CHANNEL A") is "A0", and so is the same bank label with a
+        // trailing 0x1C; split_ic("x\x1c") is ("x", EM_DASH).
+        assert_eq!(parse_slot("DIMM 0", "P0 CHANNEL\u{a0}A").as_deref(), Some("A0"));
+        assert_eq!(parse_slot("DIMM 1", "P0 CHANNEL A\x1c").as_deref(), Some("A1"));
+        assert_eq!(parse_slot("DIMM\u{a0}A1", "").as_deref(), Some("A1"));
+        assert_eq!(split_ic(Some("x\x1c")), ("x".to_string(), EM_DASH.to_string()));
     }
 }

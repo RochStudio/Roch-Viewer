@@ -7,6 +7,7 @@ use crate::memo::Memo;
 use crate::sensors::ite_superio::{IteSuperIoReader, TEMPERATURE_MAX_C, TEMPERATURE_MIN_C};
 use crate::sensors::superio_lpc;
 use crate::sensors::voltage_rails::{rail_by_key, validate_voltage};
+use crate::system_identity::py_strip;
 use crate::wmi_util;
 
 static BOARD_IDENTITY: Memo<(String, String)> = Memo::new();
@@ -25,10 +26,7 @@ pub fn board_identity() -> (String, String) {
             };
             let manufacturer = field("Manufacturer")?;
             let product = field("Product")?;
-            // str.strip(), which also takes the - separators that
-            // Rust's trim() leaves on.
-            let strip = |text: &str| crate::system_identity::py_strip(text).to_uppercase();
-            Some((strip(&manufacturer), strip(&product)))
+            Some((py_strip(&manufacturer).to_uppercase(), py_strip(&product).to_uppercase()))
         };
         identity().unwrap_or_default()
     })
@@ -391,11 +389,10 @@ mod tests {
     }
 
     #[test]
-    fn identity_is_stripped_as_python_strips() {
-        // " x ".strip() is "x": Python's whitespace includes the four
-        // information separators, and a board name ending in one still
-        // names the board.
-        on_board("Gigabyte Technology Co., Ltd.", "X870 AORUS TACHYON ICE ");
+    fn identity_is_stripped_the_way_python_strip_does() {
+        // str.strip() takes the 0x1C-0x1F separators too, so Python 1.1.0
+        // still recognises the Tachyon from a product name ending in one.
+        on_board("Gigabyte Technology Co., Ltd.\x1c", "X870 AORUS TACHYON ICE\x1f");
         assert_eq!(
             board_identity(),
             ("GIGABYTE TECHNOLOGY CO., LTD.".to_string(), "X870 AORUS TACHYON ICE".to_string())

@@ -14,12 +14,12 @@ use crate::paths::{dedupe, exe_chain, find_in};
 pub const DLL_NAME: &str = "inpoutx64.dll";
 
 /// Every directory the driver might be in, nearest first.
+///
+/// Not the working directory: the Python never looked there in any mode, and
+/// a DLL this process loads elevated should not be picked up from wherever it
+/// happened to be started.
 pub fn search_directories() -> Vec<PathBuf> {
-    let mut directories = exe_chain();
-    if let Ok(cwd) = std::env::current_dir() {
-        directories.push(cwd);
-    }
-    dedupe(directories)
+    dedupe(exe_chain())
 }
 
 /// The driver's full path, or `None` when it is not in any of them.
@@ -66,5 +66,14 @@ mod tests {
     fn executable_directory_is_searched_first() {
         let dirs = search_directories();
         assert_eq!(dirs.first(), crate::paths::exe_directory().as_ref());
+    }
+
+    #[test]
+    fn the_working_directory_is_not_searched() {
+        // A test runs from the crate directory, which is not above the test
+        // binary in target/: Python 1.1.0 would not have looked there.
+        let cwd = std::env::current_dir().unwrap();
+        assert!(!crate::paths::exe_chain().contains(&cwd));
+        assert!(!search_directories().contains(&cwd));
     }
 }

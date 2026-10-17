@@ -562,8 +562,22 @@ fn lpcio_from(chip: Option<(&str, String)>) -> Option<String> {
 /// Python's `str.strip()` with no argument: Unicode whitespace plus the
 /// four separator controls Python also counts as space.
 pub(crate) fn py_strip(text: &str) -> &str {
-    text.trim_matches(|c: char| c.is_whitespace() || ('\x1c'..='\x1f').contains(&c))
+    text.trim_matches(py_isspace)
 }
+
+/// Python's `str.isspace()` for one character, which is also what `re`'s
+/// `\s` matches in a text pattern: Unicode whitespace plus the four
+/// separator controls (0x1C-0x1F) Python also counts as space.
+pub(crate) fn py_isspace(c: char) -> bool {
+    c.is_whitespace() || ('\x1c'..='\x1f').contains(&c)
+}
+
+/// The same set as the body of a regex character class. `regex-lite`'s
+/// `\s` is ASCII-only, so a pattern ported from Python's `\s` writes
+/// `[{PY_SPACE}]` instead, or the Python's matches on a no-break space or an
+/// ideographic space stop matching.
+pub(crate) const PY_SPACE: &str =
+    r"\t\n\x0B\x0C\r\x1C-\x1F \x{85}\x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}";
 
 /// Python's `int(text, radix)` for radix 10 or 16: surrounding whitespace,
 /// a sign, a `0x` prefix in base 16, and single underscores between digits.

@@ -9,6 +9,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use crate::memo::Memo;
+use crate::system_identity::{PY_SPACE, py_strip};
 use crate::wmi_util::{self, WmiValue};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -46,15 +47,18 @@ impl Platform {
 pub const DDR4_SMBIOS_TYPE: i64 = 26;
 pub const DDR5_SMBIOS_TYPE: i64 = 34;
 
+// The Python's `\s` is spelled `[{PY_SPACE}]`: regex-lite's own `\s` is
+// ASCII-only, and the Python's also matched a no-break space.
 static RYZEN_MODEL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"ryzen\s+(?:[3579]\s+)?(?:pro\s+)?(\d{4})([a-z0-9]*)").unwrap());
+    LazyLock::new(|| Regex::new(&format!(r"ryzen[{PY_SPACE}]+(?:[3579][{PY_SPACE}]+)?(?:pro[{PY_SPACE}]+)?(\d{{4}})([a-z0-9]*)")).unwrap());
 static LGA1700_MODEL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"core(?:\(tm\))?\s+i[3579]-?(\d{5})([a-z]*)\b").unwrap());
+    LazyLock::new(|| Regex::new(&format!(r"core(?:\(tm\))?[{PY_SPACE}]+i[3579]-?(\d{{5}})([a-z]*)\b")).unwrap());
 static LGA1851_MODEL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"core(?:\(tm\))?\s+ultra\s+[579]\s+(\d{3})([a-z]*)\b").unwrap());
+    LazyLock::new(|| Regex::new(&format!(r"core(?:\(tm\))?[{PY_SPACE}]+ultra[{PY_SPACE}]+[579][{PY_SPACE}]+(\d{{3}})([a-z]*)\b")).unwrap());
 
+/// `str(text or "").strip().lower()`.
 fn normalise(text: &str) -> String {
-    text.trim().to_lowercase()
+    py_strip(text).to_lowercase()
 }
 
 fn ryzen_model(name: &str) -> Option<(String, String)> {
@@ -174,9 +178,17 @@ pub fn detect_current_platform() -> Platform {
     // hardware, and the table builders ask for the same three moments later.
     // An unreachable WMI reads as empty, which classifies as unsupported --
     // the answer the Python gave when the query raised.
-    let processors = wmi_util::static_class("Win32_Processor");
-    let memories = wmi_util::static_class("Win32_PhysicalMemory");
-    let boards = wmi_util::static_class("Win32_BaseBoard");
+    //
+    // The Python ran the three queries inside one try, so any one of them
+    // raising classified the machine as unsupported -- the board's too, though
+    // nothing is read from it, and with no board the rest would classify.
+    let (Some(processors), Some(memories), Some(boards)) = (
+        wmi_util::static_class_checked("Win32_Processor"),
+        wmi_util::static_class_checked("Win32_PhysicalMemory"),
+        wmi_util::static_class_checked("Win32_BaseBoard"),
+    ) else {
+        return Platform::Unsupported;
+    };
     let processor = processors.first();
     let board = boards.first();
     // `SMBIOSMemoryType or MemoryType`: a zero SMBIOS type falls through. One
@@ -326,5 +338,32 @@ mod tests {
     fn detection_without_wmi_is_unsupported() {
         FakeWmi::new().failing("Win32_Processor").install();
         assert_eq!(detect_current_platform(), Platform::Unsupported);
+    }
+
+    #[test]
+    fn a_failing_board_query_is_unsupported_like_the_pythons_try() {
+        // Python 1.1.0: detect_current_platform with Win32_BaseBoard raising
+        // and an i9-14900K on DDR5 returns "unsupported", since all three
+        // queries share one try; an empty board list still classifies.
+        let wmi = || {
+            FakeWmi::new()
+                .class(
+                    "Win32_Processor",
+                    vec![WmiObject::new().with("Manufacturer", "GenuineIntel").with("Name", "Intel(R) Core(TM) i9-14900K")],
+                )
+                .class("Win32_PhysicalMemory", vec![WmiObject::new().with("SMBIOSMemoryType", 34i64)])
+        };
+        wmi().failing("Win32_BaseBoard").install();
+        assert_eq!(detect_current_platform(), Platform::Unsupported);
+        wmi().class("Win32_BaseBoard", vec![]).install();
+        assert_eq!(detect_current_platform(), Platform::Lga1700Ddr5);
+    }
+
+    #[test]
+    fn cpu_names_are_stripped_and_spaced_as_python_reads_them() {
+        // Python's strip() and `\s` take a no-break space and the 0x1C-0x1F
+        // separators: the first is LGA1700 DDR5 and the second AM5 in 1.1.0.
+        assert_eq!(classify_platform("GenuineIntel", "Intel Core\u{a0}i5-14600KF", &[34], ""), Platform::Lga1700Ddr5);
+        assert_eq!(classify_platform("AMD\x1c", "AMD Ryzen 9 9950X", &[34], ""), Platform::Am5);
     }
 }
