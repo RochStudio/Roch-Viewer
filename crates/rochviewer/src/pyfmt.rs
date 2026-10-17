@@ -17,18 +17,41 @@ pub fn float_str(value: f64) -> String {
         return if value.is_sign_negative() { "-0.0".into() } else { "0.0".into() };
     }
     let abs = value.abs();
+    let exp10 = format!("{abs:e}").split_once('e').and_then(|(_, e)| e.parse::<i32>().ok()).unwrap_or(0);
     if (1e-4..1e16).contains(&abs) {
         // Rust's Display is shortest-round-trip like Python's repr, but drops
         // the ".0" of a whole number.
-        let text = format!("{value}");
+        let mut text = format!("{value}");
+        if significant_digits(&text) == 17 {
+            // Both pick the shortest digits that read back as the same
+            // float, but when that takes all 17 and the true value sits
+            // exactly between two of them, Python takes the even one
+            // (191966.68188476562) where Rust's shortest form does not.
+            // Fixed-precision formatting rounds the exact value half to
+            // even, which is Python's choice.
+            let decimals = (16 - exp10).max(0) as usize;
+            text = format!("{value:.decimals$}");
+        }
         if text.contains('.') { text } else { format!("{text}.0") }
     } else {
-        let text = format!("{value:e}");
+        let mut text = format!("{value:e}");
+        if significant_digits(text.split_once('e').map_or(text.as_str(), |(m, _)| m)) == 17 {
+            text = format!("{value:.16e}");
+        }
         let (mantissa, exponent) = text.split_once('e').unwrap_or((&text, "0"));
         let exp: i32 = exponent.parse().unwrap_or(0);
         let sign = if exp < 0 { '-' } else { '+' };
         format!("{mantissa}e{sign}{:02}", exp.abs())
     }
+}
+
+/// Digits in a decimal string from the first non-zero one, sign and point
+/// aside.
+fn significant_digits(text: &str) -> usize {
+    text.chars()
+        .filter(char::is_ascii_digit)
+        .skip_while(|c| *c == '0')
+        .count()
 }
 
 /// Python's `round(x, ndigits)` for a float.
@@ -78,6 +101,13 @@ mod tests {
         assert_eq!(float_str(1e16), "1e+16");
         assert_eq!(float_str(1.5e-5), "1.5e-05");
         assert_eq!(float_str(-2.0), "-2.0");
+        // Seventeen digits on an exact tie: Python's repr takes the even one.
+        assert_eq!(float_str(191966.681884765625), "191966.68188476562");
+        assert_eq!(float_str(123456.789012345678), "123456.78901234567");
+        assert_eq!(float_str(1e15 + 0.3), "1000000000000000.2");
+        assert_eq!(float_str(1.0 / 3.0), "0.3333333333333333");
+        assert_eq!(float_str(2.0 / 3.0), "0.6666666666666666");
+        assert_eq!(float_str(5e-324 * 3.0), "1.5e-323");
     }
 
     #[test]
