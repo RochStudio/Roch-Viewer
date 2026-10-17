@@ -29,7 +29,7 @@
 //! Deliberately free of any hardware access so the UI row builder and the
 //! tests can use it without the driver.
 
-use crate::pyfmt::PyFloat;
+use crate::amd::py_float::PyFloat;
 
 /// One displayable limit plus the range that makes a reading believable.
 #[derive(Clone, Copy, Debug, PartialEq)]

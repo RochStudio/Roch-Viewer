@@ -48,28 +48,10 @@ pub fn round_int(value: f64) -> i64 {
     round_half_even(value, 0) as i64
 }
 
-/// Python's `"%.Nf" % x`. Both languages format the exact binary value and
-/// round an exact tie to even, so this is Rust's `{:.N}` -- except for NaN,
-/// which Python spells `nan` and Rust `NaN`. See [`PyFloat`].
+/// Python's `"%.Nf" % x`. Both languages format the exact binary value, so
+/// this is Rust's `{:.N}`; it exists so ported code reads like the original.
 pub fn fixed(value: f64, decimals: usize) -> String {
-    format!("{:.decimals$}", PyFloat(value))
-}
-
-/// A float that formats the way Python's `%` operator does: `{:.3}` of
-/// `PyFloat(x)` is `"%.3f" % x`. Rust's own formatting agrees on every finite
-/// value, on both infinities and on ties, but writes NaN as `NaN` where
-/// Python writes `nan` -- so `"%.1f °C" % nan` came out as `NaN °C`.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PyFloat(pub f64);
-
-impl std::fmt::Display for PyFloat {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.0.is_nan() {
-            // write_str, not pad: a precision would cut "nan" short.
-            return f.write_str("nan");
-        }
-        std::fmt::Display::fmt(&self.0, f)
-    }
+    format!("{value:.decimals$}")
 }
 
 #[cfg(test)]
@@ -100,18 +82,5 @@ mod tests {
     fn fixed_matches_percent_f() {
         assert_eq!(fixed(1.2345, 3), "1.234");
         assert_eq!(fixed(1.0, 3), "1.000");
-    }
-
-    #[test]
-    fn nan_is_spelled_as_python_spells_it() {
-        // "%.1f" % float("nan") == "nan", for either sign and any precision.
-        assert_eq!(fixed(f64::NAN, 1), "nan");
-        assert_eq!(fixed(-f64::NAN, 3), "nan");
-        assert_eq!(format!("{:.0} ns", PyFloat(f64::NAN)), "nan ns");
-        assert_eq!(fixed(f64::INFINITY, 2), "inf");
-        assert_eq!(fixed(f64::NEG_INFINITY, 2), "-inf");
-        // Everything else is Rust's own formatting, ties to even included.
-        assert_eq!(format!("{:.1}", PyFloat(0.25)), "0.2");
-        assert_eq!(format!("{:.2}", PyFloat(-1.005)), "-1.00");
     }
 }

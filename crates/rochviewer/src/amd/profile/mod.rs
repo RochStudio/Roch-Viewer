@@ -61,7 +61,8 @@ use crate::amd::timings::{ALL_OFFSETS, DecodedChannel, Registers, UMC_BASES, Umc
 use crate::hardware::driver_path::DLL_NAME;
 use crate::memo::{Memo, MemoMap};
 use crate::platform_profiles::{is_granite_ridge_cpu, is_raphael_cpu};
-use crate::pyfmt::{PyFloat, float_str, round_int};
+use crate::amd::py_float::PyFloat;
+use crate::pyfmt::{float_str, round_int};
 use crate::row::{ActionFn, Extra, PredFn, Row, Side, Value};
 use crate::sensors::am5_board_rails::{BOARD_FANS, BOARD_VOLTAGES};
 use crate::sensors::voltage_rails::{

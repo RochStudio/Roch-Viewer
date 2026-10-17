@@ -50,7 +50,8 @@ use crate::hardware::pci_mcfg::{ecam_address, get_mcfg_table, parse_mcfg, select
 use crate::hardware::{HwError, HwResult, hw};
 use crate::memo::Memo;
 use crate::platform_profiles::{is_granite_ridge_cpu, is_raphael_cpu};
-use crate::pyfmt::{PyFloat, round_half_even};
+use crate::amd::py_float::PyFloat;
+use crate::pyfmt::round_half_even;
 
 use super::smn::{
     AMD_VENDOR_ID, DEFAULT_MUTEX_NAME, NamedPciMutex, PciMutex, RSMU_ARG0, RSMU_MSG, RSMU_RSP,
