@@ -3135,8 +3135,9 @@ fn dimm_slots_strip_python_whitespace() {
 }
 
 /// The Rust table over a hashed register space against the Python 1.1.0 one
-/// over the same space (_shared/intel-scratch/fz/py_fuzz.py, then mkfix.py, beside the
-/// notes). Values the fixture took from the machine rather than the map --
+/// over the same space (_shared/intel-scratch/fz/py_fuzz.py, then mkfix.py,
+/// beside the worktrees). Values the fixture took from the machine rather
+/// than the map --
 /// registry, NVML, Super I/O -- are null there and compared by shape only.
 fn assert_hashed_parity(expected: &'static str) {
     let expected: serde_json::Value = serde_json::from_str(expected).expect("fixture parses");
