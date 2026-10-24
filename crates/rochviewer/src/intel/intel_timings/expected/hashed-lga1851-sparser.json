@@ -21,7 +21,7 @@
 ["System Info", "Clocks", "Right", "DRAM Ratio", "DRAM Ratio", false, false, "6"],
 ["System Info", "Clocks", "Right", "QCLK Ratio", "QCLK Ratio", false, false, "133.33 MHz"],
 ["System Info", "Clocks", "Right", "BCLK", "Bus Clock", false, false, "302010.368 MHz"],
-["System Info", "Clocks", "Right", "Core Ratio", "Core Ratio", false, false, "—"],
+["System Info", "Clocks", "Right", "Core Ratio", "Core Ratio", false, false, null],
 ["System Info", "Clocks", "Right", "Uncore Ratio", "Uncore Ratio", false, false, "—"],
 ["System Info", "Clocks", "Right", "MCLK", "MCLK", false, false, "200 MHz"],
 ["System Info", "Clocks", "Right", "UCLK", "UCLK", false, false, "100 MHz"],

@@ -2972,7 +2972,9 @@ fn hashed_table(config: &Hashed) -> Vec<serde_json::Value> {
         rows.iter()
             .filter(|row| !row.extra.contains_key(super::sensors::PARENT_ROW_KEY))
             .map(|got| {
-                let value = if got.tab == "Sensors" || got.tab == "CPU" {
+                // These rows depend on Windows CPU topology or performance
+                // counters, not the synthetic register map or WMI inventory.
+                let value = if got.tab == "Sensors" || got.tab == "CPU" || matches!(got.name.as_str(), "Core Types" | "Core Ratio") {
                     serde_json::Value::Null
                 } else {
                     crate::display_values::read_value(got, None, "N/A").into()
@@ -3144,7 +3146,7 @@ fn dimm_slots_strip_python_whitespace() {
 /// over the same space (_shared/intel-scratch/fz/py_fuzz.py, then mkfix.py,
 /// beside the worktrees). Values the fixture took from the machine rather
 /// than the map --
-/// registry, NVML, Super I/O, Windows CPU topology -- are null there and
+/// registry, NVML, Super I/O, Windows CPU topology and counters -- are null there and
 /// compared by shape only. Core-type decoding has its own synthetic tests.
 fn assert_hashed_parity(expected: &'static str) {
     let expected: serde_json::Value = serde_json::from_str(expected).expect("fixture parses");
