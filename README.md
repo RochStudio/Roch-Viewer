@@ -8,11 +8,11 @@ A read-only Windows tool for memory timings, hardware details and live telemetry
 
 Windows 10/11 x64. No Python, .NET or Rust installation needed to run.
 
-1. Download `RochViewer-unsigned-no-driver` from a successful `main` build in [GitHub Actions](https://github.com/RochStudio/Roch-Viewer/actions/workflows/tests.yml) and extract it.
+1. Download `RochViewer.exe` from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/latest).
 2. Place the separately obtained [inpoutx64.dll](https://www.highrez.co.uk/downloads/inpout32/) beside `RochViewer.exe`.
 3. Open the viewer and accept the administrator prompt.
 
-Readings depend on your hardware, BIOS and driver access. See the [reference](docs/reference.md) for support and driver details. The tagged v1.1.0 release is the older Python build.
+Readings depend on your hardware, BIOS and driver access. See the [reference](docs/reference.md) for support and driver details.
 
 ## Build
 

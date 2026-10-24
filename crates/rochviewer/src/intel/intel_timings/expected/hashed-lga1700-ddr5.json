@@ -7,7 +7,7 @@
 ["System Info", "Processor", "Left", "Code Name", "Code Name", false, false, "Raptor Lake"],
 ["System Info", "Processor", "Left", "Technology", "Technology", false, false, "10 nm"],
 ["System Info", "Processor", "Left", "Cores / Threads", "Cores / Threads", false, false, "8 / 32"],
-["System Info", "Processor", "Left", "Core Types", "Core Types", false, false, "6P + 0E"],
+["System Info", "Processor", "Left", "Core Types", "Core Types", false, false, null],
 ["System Info", "Processor", "Left", "Microcode", "Microcode", false, false, null],
 ["System Info", "Motherboard", "Left", "Manufacturer", "Manufacturer", false, false, "Gigabyte Technology Co., Ltd."],
 ["System Info", "Motherboard", "Left", "Model", "Model", false, false, "Z790 AORUS MASTER"],

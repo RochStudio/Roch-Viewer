@@ -3144,7 +3144,8 @@ fn dimm_slots_strip_python_whitespace() {
 /// over the same space (_shared/intel-scratch/fz/py_fuzz.py, then mkfix.py,
 /// beside the worktrees). Values the fixture took from the machine rather
 /// than the map --
-/// registry, NVML, Super I/O -- are null there and compared by shape only.
+/// registry, NVML, Super I/O, Windows CPU topology -- are null there and
+/// compared by shape only. Core-type decoding has its own synthetic tests.
 fn assert_hashed_parity(expected: &'static str) {
     let expected: serde_json::Value = serde_json::from_str(expected).expect("fixture parses");
     let text = |key: &str| expected[key].as_str().expect(key).to_string();
