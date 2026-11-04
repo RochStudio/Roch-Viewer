@@ -315,9 +315,18 @@ pub fn get_cpu_name() -> String {
 pub fn get_total_physical_memory(platform: Platform) -> String {
     let installed: i64 =
         static_class("Win32_PhysicalMemory").iter().filter_map(|module| module.int("Capacity")).sum();
-    let memory_bytes = (installed > 0)
-        .then_some(installed)
-        .or_else(|| first("Win32_ComputerSystem").and_then(|system| system.int("TotalPhysicalMemory")));
+    let addressable = first("Win32_ComputerSystem").and_then(|system| system.int("TotalPhysicalMemory"));
+    // What the OS can address is the installed memory less what the firmware
+    // held back, so it is a floor under the real figure, never above it. An
+    // inventory that comes to less than that floor is missing a module --
+    // firmware that lists one of a pair would have halved the reading -- and
+    // the floor is then the better of two imperfect answers.
+    let memory_bytes = match (installed, addressable) {
+        (installed, Some(addressable)) if installed >= addressable => Some(installed),
+        (_, Some(addressable)) => Some(addressable),
+        (installed, None) if installed > 0 => Some(installed),
+        _ => None,
+    };
     match memory_bytes {
         Some(memory_bytes) => {
             let memory_gb = round_int(memory_bytes as f64 / (1024f64 * 1024.0 * 1024.0));
@@ -553,9 +562,20 @@ static RADEON_CACHE: Memo<Option<Arc<crate::gpu::radeon::RadeonGpu>>> = Memo::ne
 /// left every row of the Graphics block on a dash -- board, code name,
 /// revision, cores, memory and driver -- under a GPU row naming the Radeon
 /// at the top of it.
+///
+/// Which reader answers is decided once, for the whole block, rather than
+/// per row: a machine holding both cards would otherwise take the fields
+/// NVML knows from one and the rest from the other, and print a board
+/// manufacturer that belongs to neither of the cards beside it. A row the
+/// chosen reader cannot answer stays empty, which is the honest reading of
+/// "this card did not say".
 pub fn gpu_field(field: &str) -> Option<String> {
     let ids: Vec<String> = real_display_adapters().iter().map(|adapter| adapter.str_or_empty("PNPDeviceID")).collect();
-    crate::gpu::nvidia_gpu::read_gpu(false, Some(&ids)).get(field).cloned().or_else(|| radeon_field(&ids, field))
+    let nvidia = crate::gpu::nvidia_gpu::read_gpu(false, Some(&ids));
+    if !nvidia.is_empty() {
+        return nvidia.get(field).cloned();
+    }
+    radeon_field(&ids, field)
 }
 
 /// The same field from a Radeon, under the keys the Intel rows ask for.

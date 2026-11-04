@@ -3143,6 +3143,21 @@ fn capacity_is_the_sum_of_the_installed_modules() {
 }
 
 #[test]
+fn capacity_falls_back_when_the_inventory_is_short_of_what_the_os_addresses() {
+    // Firmware that lists one of a pair. The sum is not zero, so a check for
+    // zero alone kept it, and a 64 GB machine read 32GB -- worse than the
+    // reading it replaced.
+    FakeWmi::new()
+        .class(
+            "Win32_PhysicalMemory",
+            vec![WmiObject::new().with("Capacity", (32u64 * 1024 * 1024 * 1024).to_string())],
+        )
+        .class("Win32_ComputerSystem", vec![WmiObject::new().with("TotalPhysicalMemory", "68148305920")])
+        .install();
+    assert_eq!(get_total_physical_memory(Platform::Lga1851), "63GB");
+}
+
+#[test]
 fn capacity_falls_back_to_the_os_total_when_no_module_is_listed() {
     FakeWmi::new()
         .class("Win32_PhysicalMemory", vec![])
@@ -3164,7 +3179,9 @@ fn an_empty_socket_does_not_count_towards_capacity() {
                 WmiObject::new().with("Capacity", "0"),
             ],
         )
-        .class("Win32_ComputerSystem", vec![WmiObject::new().with("TotalPhysicalMemory", "68148305920")])
+        // A machine with the one module in it, so the reserved ranges come
+        // off 16 GiB rather than off a figure the inventory cannot reach.
+        .class("Win32_ComputerSystem", vec![WmiObject::new().with("TotalPhysicalMemory", "16909336576")])
         .install();
     assert_eq!(get_total_physical_memory(Platform::Lga1851), "16GB");
 }
