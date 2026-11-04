@@ -14,7 +14,7 @@ use regex::Regex;
 use super::ddr5_spd::SpdIdentity;
 use super::dram_ic::identify_dram_ic;
 use crate::memo::Memo;
-use crate::system_identity::{PY_SPACE, py_strip};
+use crate::system_identity::{SPACE_CLASS, trim_spaces};
 use crate::wmi_util::{self, WmiObject, WmiValue};
 
 pub const EM_DASH: &str = "—";
@@ -42,17 +42,17 @@ pub const EM_DASH: &str = "—";
 // right and the two sticks cannot swap -- which is the failure that mattered.
 // ASUS ROG MAXIMUS Z790 APEX (LGA1700 DDR5) writes this shape.
 //
-// The Python's `\s` is spelled `[{PY_SPACE}]` here: regex-lite's own `\s` is
+// The Python's `\s` is spelled `[{SPACE_CLASS}]` here: regex-lite's own `\s` is
 // ASCII-only, and the Python's matched a no-break space too.
 static SLOT_LETTER_NUMBER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(&format!(r"(?i)DIMM[{PY_SPACE}_-]*([A-Za-z])(\d+)")).unwrap());
+    LazyLock::new(|| Regex::new(&format!(r"(?i)DIMM[{SPACE_CLASS}_-]*([A-Za-z])(\d+)")).unwrap());
 static SLOT_CHANNEL_INDEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(&format!(r"(?i)CHANNEL[{PY_SPACE}_-]*([A-Za-z]).*?DIMM[{PY_SPACE}_-]*(\d+)")).unwrap());
+    LazyLock::new(|| Regex::new(&format!(r"(?i)CHANNEL[{SPACE_CLASS}_-]*([A-Za-z]).*?DIMM[{SPACE_CLASS}_-]*(\d+)")).unwrap());
 static SLOT_CONTROLLER_INDEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(&format!(r"(?i)CONTROLLER[{PY_SPACE}_-]*(\d+).*?DIMM[{PY_SPACE}_-]*(\d+)")).unwrap());
+    LazyLock::new(|| Regex::new(&format!(r"(?i)CONTROLLER[{SPACE_CLASS}_-]*(\d+).*?DIMM[{SPACE_CLASS}_-]*(\d+)")).unwrap());
 static BANK_CHANNEL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(&format!(r"(?i)^P\d+[{PY_SPACE}]+CHANNEL[{PY_SPACE}]+([A-Z])$")).unwrap());
-static BANK_DIMM: LazyLock<Regex> = LazyLock::new(|| Regex::new(&format!(r"(?i)^DIMM[{PY_SPACE}]+(\d+)$")).unwrap());
+    LazyLock::new(|| Regex::new(&format!(r"(?i)^P\d+[{SPACE_CLASS}]+CHANNEL[{SPACE_CLASS}]+([A-Z])$")).unwrap());
+static BANK_DIMM: LazyLock<Regex> = LazyLock::new(|| Regex::new(&format!(r"(?i)^DIMM[{SPACE_CLASS}]+(\d+)$")).unwrap());
 
 fn number(digits: &str) -> Option<u64> {
     digits.parse().ok()
@@ -67,8 +67,8 @@ pub fn parse_slot(device_locator: &str, bank_label: &str) -> Option<String> {
     let text = device_locator;
     // Gigabyte AM5 separates the channel and socket into BankLabel and
     // DeviceLocator. Preserve the firmware's DIMM number, not query order.
-    let bank_channel = BANK_CHANNEL.captures(py_strip(bank_label));
-    let bank_dimm = BANK_DIMM.captures(py_strip(text));
+    let bank_channel = BANK_CHANNEL.captures(trim_spaces(bank_label));
+    let bank_dimm = BANK_DIMM.captures(trim_spaces(text));
     if let (Some(channel), Some(dimm)) = (bank_channel, bank_dimm) {
         return Some(format!("{}{}", channel[1].to_uppercase(), number(&dimm[1])?));
     }
@@ -280,12 +280,12 @@ pub fn rank_numeric(count: u32) -> String {
 ///   "Unknown IC"            -> (EM_DASH, EM_DASH)
 /// ```
 pub fn split_ic(label: Option<&str>) -> (String, String) {
-    let text = py_strip(label.unwrap_or(""));
+    let text = trim_spaces(label.unwrap_or(""));
     if text.is_empty() || text == "Unknown IC" {
         return (EM_DASH.to_string(), EM_DASH.to_string());
     }
     if let Some(maker) = text.strip_suffix("(die unknown)") {
-        let maker = py_strip(maker);
+        let maker = trim_spaces(maker);
         return (if maker.is_empty() { EM_DASH } else { maker }.to_string(), EM_DASH.to_string());
     }
     match text.rsplit_once(' ') {
@@ -329,9 +329,9 @@ pub fn decode(entries: &[WmiObject]) -> Vec<DimmModule> {
             .map(|value| value.to_i64().unwrap_or(0))
             .unwrap_or(0)
             .div_euclid(1024 * 1024 * 1024);
-        let part_number = non_empty_or(py_strip(&memory.str_or_empty("PartNumber")), "Unknown");
-        let tag = non_empty_or(py_strip(&memory.str_or_empty("Tag")), "Unknown");
-        let module_manufacturer = py_strip(&memory.str_or_empty("Manufacturer")).to_string();
+        let part_number = non_empty_or(trim_spaces(&memory.str_or_empty("PartNumber")), "Unknown");
+        let tag = non_empty_or(trim_spaces(&memory.str_or_empty("Tag")), "Unknown");
+        let module_manufacturer = trim_spaces(&memory.str_or_empty("Manufacturer")).to_string();
         let memory_type = ["SMBIOSMemoryType", "MemoryType"]
             .iter()
             .filter_map(|field| memory.get(field).filter(|value| truthy(value)))
@@ -357,7 +357,7 @@ pub fn decode(entries: &[WmiObject]) -> Vec<DimmModule> {
             &extra_metadata,
         );
 
-        let device_locator = py_strip(&memory.str_or_empty("DeviceLocator")).to_string();
+        let device_locator = trim_spaces(&memory.str_or_empty("DeviceLocator")).to_string();
         let slot = parse_slot(&device_locator, &memory.str_or_empty("BankLabel"));
 
         // Firmware reads this off the module at POST. It is the one identity
@@ -365,7 +365,7 @@ pub fn decode(entries: &[WmiObject]) -> Vec<DimmModule> {
         // it is the only way to reach it: the SPD path that reads the serial
         // directly is DDR5-only. Firmware that leaves it blank, or fills it
         // with a placeholder of all zeroes or all Fs, is reporting nothing.
-        let mut serial_number = py_strip(&memory.str_or_empty("SerialNumber")).to_string();
+        let mut serial_number = trim_spaces(&memory.str_or_empty("SerialNumber")).to_string();
         if serial_number.trim_matches(['0', 'f', 'F']).is_empty() {
             serial_number = String::new();
         }
@@ -453,18 +453,50 @@ pub fn slots_used() -> Option<String> {
     Some(format!("{used} of {total}"))
 }
 
-/// The SPD identity read from this module: by serial, then part number.
-fn identity_for(module: &DimmModule, identities: &[SpdIdentity]) -> Option<usize> {
-    let serial = py_strip(&module.serial_number).to_uppercase();
-    if !serial.is_empty() {
-        for (index, identity) in identities.iter().enumerate() {
-            if py_strip(&identity.serial_number).to_uppercase() == serial {
-                return Some(index);
-            }
-        }
+/// A value that actually names one module, or `None`.
+///
+/// Not every field that holds text identifies anything: SMBIOS writes
+/// "Unknown" where the firmware gave it no part number, and an SPD serial of
+/// all zeros is the same non-answer in digits. Matching on either pairs
+/// modules by a word they merely share.
+fn identifying(value: &str) -> Option<String> {
+    let value = trim_spaces(value).to_uppercase();
+    if value.is_empty() || value == "UNKNOWN" || value.chars().all(|c| c == '0') {
+        return None;
     }
-    let part = py_strip(&module.part_number).to_uppercase();
-    identities.iter().position(|identity| py_strip(&identity.part_number).to_uppercase() == part)
+    Some(value)
+}
+
+/// The SPD identity read from this module: by serial, then part number, and
+/// failing both by position.
+///
+/// The Z890 bench needs that last step. Its firmware writes "Unknown" for the
+/// part number and no serial at all, while the modules' own SPD leaves the
+/// part field blank and the serial zeroed -- so neither side offers a key and
+/// the SK hynix the SPD does report was dropped, leaving the selector reading
+/// "Unknown (32GB,2R,-,-)" next to an SPD tab naming the maker. Position is
+/// only used where both the module and the candidate are unkeyed, and the
+/// caller consumes each identity as it matches, so the pairing stays one to
+/// one. In a mixed kit of two unkeyed modules it can still swap their makers
+/// round; that is a worse answer than naming them in slot order would be, and
+/// a better one than naming neither.
+fn identity_for(module: &DimmModule, identities: &[SpdIdentity]) -> Option<usize> {
+    let unkeyed = |identity: &SpdIdentity| {
+        identifying(&identity.serial_number).is_none() && identifying(&identity.part_number).is_none()
+    };
+    if let Some(serial) = identifying(&module.serial_number)
+        && let Some(index) =
+            identities.iter().position(|identity| identifying(&identity.serial_number).as_deref() == Some(&serial))
+    {
+        return Some(index);
+    }
+    if let Some(part) = identifying(&module.part_number) {
+        return identities.iter().position(|identity| identifying(&identity.part_number).as_deref() == Some(&part));
+    }
+    if identifying(&module.serial_number).is_none() {
+        return identities.iter().position(unkeyed);
+    }
+    None
 }
 
 /// Put the DRAM maker and die each module's own SPD reports on its label.
@@ -485,10 +517,21 @@ pub fn apply_spd_ic(modules: &[DimmModule], identities: &[SpdIdentity]) -> Vec<D
         let mut module = module.clone();
         if let Some(index) = identity_for(&module, &remaining) {
             let identity = remaining.remove(index);
-            let maker = py_strip(&identity.dram_manufacturer).to_string();
+            // The SPD's own name for the module's maker, where SMBIOS has
+            // none or only the long marketing string. JEP106 gives the short
+            // form the selector has room for; a raw ID is no better than what
+            // SMBIOS already said, so it is left alone.
+            let module_maker = trim_spaces(&identity.module_manufacturer).to_string();
+            if !module_maker.is_empty()
+                && module_maker != EM_DASH
+                && !module_maker.to_lowercase().starts_with("0x")
+            {
+                module.module_manufacturer = module_maker;
+            }
+            let maker = trim_spaces(&identity.dram_manufacturer).to_string();
             let named = !maker.is_empty() && maker != EM_DASH;
             if named && !maker.to_lowercase().starts_with("0x") {
-                let mut die = py_strip(identity.dram_die.as_deref().unwrap_or("")).to_string();
+                let mut die = trim_spaces(identity.dram_die.as_deref().unwrap_or("")).to_string();
                 if !die.ends_with("-die") {
                     let (table_maker, table_die) = split_ic(Some(&module.ic));
                     die = if table_maker == maker { table_die } else { EM_DASH.to_string() };
@@ -949,6 +992,53 @@ mod tests {
         assert_eq!(kept[0].ic, "Samsung B-die");
         let dropped = apply_spd_ic(&[module("Samsung B-die", "0B354996")], &[identity("Micron", "0x00", "0B354996")]);
         assert_eq!(split_ic(Some(&dropped[0].ic)), pair("Micron", EM_DASH));
+    }
+
+    #[test]
+    fn a_module_neither_side_names_is_still_matched_to_its_spd() {
+        // The Z890 bench: SMBIOS writes "Unknown" and no serial, the SPD
+        // leaves the part blank and the serial zeroed. Neither key matches,
+        // and the maker the SPD does report used to be dropped.
+        let unkeyed = DimmModule { part_number: "Unknown".into(), ic: "Unknown IC".into(), ..DimmModule::default() };
+        let spd = SpdIdentity {
+            part_number: String::new(),
+            serial_number: "00000000".into(),
+            module_manufacturer: "Silicon Power".into(),
+            dram_manufacturer: "SK hynix".into(),
+            dram_die: Some("0x00".into()),
+            ..SpdIdentity::default()
+        };
+        let labelled = apply_spd_ic(&[unkeyed], &[spd]);
+        assert_eq!(split_ic(Some(&labelled[0].ic)), pair("SK hynix", EM_DASH));
+        assert_eq!(labelled[0].module_manufacturer, "Silicon Power");
+    }
+
+    #[test]
+    fn an_unkeyed_module_does_not_take_a_keyed_modules_spd() {
+        // Position is the last resort, not a free-for-all: the identity that
+        // names a serial belongs to the module carrying it.
+        let unkeyed = DimmModule { part_number: "Unknown".into(), ic: "Unknown IC".into(), ..DimmModule::default() };
+        let keyed = module("Unknown IC", "0B354996");
+        let named = identity("SK hynix", "M-die", "0B354996");
+        let anonymous = SpdIdentity {
+            part_number: String::new(),
+            serial_number: "00000000".into(),
+            dram_manufacturer: "Micron".into(),
+            dram_die: Some("0x00".into()),
+            ..SpdIdentity::default()
+        };
+        let labelled = apply_spd_ic(&[unkeyed, keyed], &[named, anonymous]);
+        assert_eq!(split_ic(Some(&labelled[0].ic)), pair("Micron", EM_DASH));
+        assert_eq!(labelled[1].ic, "SK hynix M-die");
+    }
+
+    #[test]
+    fn a_placeholder_is_not_an_identity() {
+        assert_eq!(identifying("Unknown"), None);
+        assert_eq!(identifying("  unknown "), None);
+        assert_eq!(identifying("00000000"), None);
+        assert_eq!(identifying(""), None);
+        assert_eq!(identifying("0B354996"), Some("0B354996".to_string()));
     }
 
     #[test]

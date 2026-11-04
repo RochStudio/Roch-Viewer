@@ -137,6 +137,31 @@ pub const LGA1700_DDR5_TAB_WINDOW_SIZES: &[(&str, (f32, f32))] = &[
     ("Voltages", (700.0, 750.0)),
 ];
 
+/// LGA1851, measured on the Z890 bench: the pages whose base size does not
+/// hold their content there.
+///
+/// Arrow Lake's Training tab carries the widest mode-register wording of any
+/// platform ("Package Output Driver Test Mode", "Timer Stops at 2048th
+/// clocks") in a third column that also runs the longest, and the base 1010
+/// x 800 cut both -- the column's values were clipped against the frame and
+/// its last rows fell past the bottom edge, with no scrollbar to reach
+/// either. Its three panels need 1023px across and 673 of content, so the
+/// window needs 1051 x 826.
+///
+/// IMC is the other way round: it asked for 1100px of height for 518px of
+/// content, which on a 1080p screen opened a window capped at 960 and left
+/// 400px of empty panel under both columns. 529 x 637 is what it needs; the
+/// width stays at the base 750 so the window does not jump narrower than the
+/// pages either side of it.
+///
+/// Summary needs 787px of height for its three bordered blocks, 12 more than
+/// the 775 it had, which cut the foot of the panels on this platform alone.
+pub const LGA1851_TAB_WINDOW_SIZES: &[(&str, (f32, f32))] = &[
+    ("Summary", (775.0, 790.0)),
+    ("Training", (1060.0, 840.0)),
+    ("IMC", (750.0, 660.0)),
+];
+
 /// Each AM5 page at the least size that holds it, measured on the X870
 /// bench.
 pub const AM5_TAB_WINDOW_SIZES: &[(&str, (f32, f32))] = &[
@@ -172,6 +197,7 @@ pub const AM5_TAB_WINDOW_SIZES: &[(&str, (f32, f32))] = &[
 pub fn tab_window_sizes(platform: Platform) -> Vec<(&'static str, (f32, f32))> {
     let overlay: &[(&str, (f32, f32))] = match platform {
         Platform::Lga1700Ddr5 => LGA1700_DDR5_TAB_WINDOW_SIZES,
+        Platform::Lga1851 => LGA1851_TAB_WINDOW_SIZES,
         Platform::Am5 => AM5_TAB_WINDOW_SIZES,
         _ => &[],
     };

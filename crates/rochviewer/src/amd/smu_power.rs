@@ -322,7 +322,7 @@ mod tests {
 
     fn assert_almost_equal(actual: f64, expected: f64, places: i32) {
         assert!(
-            crate::pyfmt::round_half_even(actual - expected, places) == 0.0,
+            crate::numfmt::round_half_even(actual - expected, places) == 0.0,
             "{actual} != {expected} to {places} places"
         );
     }

@@ -22,11 +22,11 @@
 use std::collections::BTreeMap;
 
 use crate::amd::adl::read_memory;
-use crate::pyfmt;
+use crate::numfmt;
 use crate::system_identity::registry::RegKey;
 use crate::system_identity::{
-    PcieLink, RegValue, adapter_identity, board_vendor, find_display_path, pcie_link, py_int,
-    py_strip, resizable_bar_megabytes,
+    AdapterIdentity, PcieLink, RegValue, adapter_identity, board_vendor, find_display_path, pcie_link, parse_int,
+    trim_spaces, resizable_bar_megabytes,
 };
 use crate::wmi_util;
 
@@ -70,6 +70,17 @@ pub const GPU_SILICON: &[((u16, u8), Silicon)] = &[(
         bus_width: "256 bit",
     },
 )];
+
+/// What a device id names on its own, whatever cut of the silicon a board
+/// carries: the die and the process it is built on.
+///
+/// Separate from [`GPU_SILICON`] because these two survive the thing that
+/// makes the rest unsafe to state. Navi 31 answers 0x744C at revision 0xCC
+/// as the RX 7900 GRE, XT and XTX alike, and those differ in shader count
+/// and bus width -- so the die and the node are named here for the family,
+/// and the per-board counts stay keyed on the pair and unset until a board
+/// is measured. The Z890 bench's Sapphire RX 7900 XT is the 0x744C entry.
+pub const GPU_FAMILY: &[(u16, (&str, &str))] = &[(0x744C, ("Navi 31", "5 nm"))];
 
 /// Below this the BAR is the 256 MB legacy window every card has had since
 /// PCI. Anything larger means the firmware sized it to the card's memory,
@@ -137,18 +148,30 @@ impl RadeonGpu {
     }
 }
 
-/// The display class key's values for the first real adapter.
-fn registry_adapter() -> BTreeMap<String, RegValue> {
-    read_registry_adapter().unwrap_or_default()
+/// The display class key's values for the installed card.
+fn registry_adapter(identity: &AdapterIdentity) -> BTreeMap<String, RegValue> {
+    read_registry_adapter(identity).unwrap_or_default()
 }
 
-fn read_registry_adapter() -> Result<BTreeMap<String, RegValue>, String> {
+/// The class subkey whose `MatchingDeviceId` names this card.
+///
+/// Taking the first subkey that reports memory was wrong on any machine that
+/// has held more than one card: Windows keeps a numbered subkey per adapter
+/// it has ever installed, and the one in slot 0000 need not be the one in the
+/// slot. The Z890 bench has five, and the first answered 15.92 GiB for a card
+/// that is not there, so a 20 GB Radeon read as 16 GB, with the memory type
+/// and vendor of the stale entry beside it. Matching on the PCI identity
+/// picks the card that is; the old behaviour stays as the fallback for
+/// firmware that writes no `MatchingDeviceId`.
+fn read_registry_adapter(identity: &AdapterIdentity) -> Result<BTreeMap<String, RegValue>, String> {
     let parent = RegKey::open_local_machine(DISPLAY_CLASS_KEY)?;
+    let wanted = format!("ven_{:04x}&dev_{:04x}", identity.vendor_id, identity.device_id);
+    let mut fallback = BTreeMap::new();
     for index in 0..16 {
         let Ok(name) = parent.enum_key(index) else {
             break;
         };
-        // str.isdigit(): every character a digit, and at least one of them.
+        // Every character a digit, and at least one of them.
         if name.is_empty() || !name.chars().all(|c| c.is_ascii_digit()) {
             continue;
         }
@@ -158,11 +181,17 @@ fn read_registry_adapter() -> Result<BTreeMap<String, RegValue>, String> {
             let (value_name, value) = key.enum_value(slot)?;
             values.insert(value_name, value);
         }
-        if values.get("HardwareInformation.qwMemorySize").is_some_and(RegValue::is_truthy) {
+        if !values.get("HardwareInformation.qwMemorySize").is_some_and(RegValue::is_truthy) {
+            continue;
+        }
+        if registry_text(values.get("MatchingDeviceId")).to_lowercase().contains(&wanted) {
             return Ok(values);
         }
+        if fallback.is_empty() {
+            fallback = values;
+        }
     }
-    Ok(BTreeMap::new())
+    Ok(fallback)
 }
 
 /// Render the adapter's memory the way a card is sold.
@@ -179,7 +208,7 @@ pub fn memory_size_text(byte_count: u64) -> Option<String> {
 
 /// `"%d GB" % round(int(byte_count) / (1024 ** 3))`.
 fn gigabytes_text(byte_count: u64) -> String {
-    format!("{} GB", pyfmt::round_int(byte_count as f64 / 1073741824.0))
+    format!("{} GB", numfmt::round_int(byte_count as f64 / 1073741824.0))
 }
 
 /// Python's `int(value)` on a registry value: a number as itself, text and
@@ -188,13 +217,13 @@ fn gigabytes_text(byte_count: u64) -> String {
 fn registry_int(value: &RegValue) -> Result<u64, String> {
     let parsed = match value {
         RegValue::Int(number) => return Ok(*number),
-        RegValue::Text(text) => py_int(text, 10),
-        RegValue::Bytes(bytes) => std::str::from_utf8(bytes).ok().and_then(|text| py_int(text, 10)),
+        RegValue::Text(text) => parse_int(text, 10),
+        RegValue::Bytes(bytes) => std::str::from_utf8(bytes).ok().and_then(|text| parse_int(text, 10)),
         _ => None,
     };
     parsed
         .and_then(|number| u64::try_from(number).ok())
-        .ok_or_else(|| format!("invalid literal for int(): {}", value.py_str()))
+        .ok_or_else(|| format!("invalid literal for int(): {}", value.display_text()))
 }
 
 /// Render the BAR size as the verdict plus the reading behind it.
@@ -240,10 +269,10 @@ fn registry_text(value: Option<&RegValue>) -> String {
                 bytes.chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect();
             char::decode_utf16(units).filter_map(Result::ok).collect()
         }
-        Some(value) if value.is_truthy() => value.py_str(),
+        Some(value) if value.is_truthy() => value.display_text(),
         _ => String::new(),
     };
-    py_strip(text.trim_matches('\0')).to_string()
+    trim_spaces(text.trim_matches('\0')).to_string()
 }
 
 /// WMI datetime yyyymmddHHMMSS -> yyyy-mm-dd, as the BIOS date reads.
@@ -279,7 +308,7 @@ pub fn read_gpu(pnp_device_ids: Option<&[String]>) -> Result<Option<RadeonGpu>, 
     };
     found.board_manufacturer = board_vendor(Some(identity.subsystem_vendor_id));
 
-    let registry = registry_adapter();
+    let registry = registry_adapter(&identity);
     let name = registry_text(registry.get("HardwareInformation.AdapterString"));
     if !name.is_empty() {
         found.name = Some(name);
@@ -307,6 +336,12 @@ pub fn read_gpu(pnp_device_ids: Option<&[String]>) -> Result<Option<RadeonGpu>, 
         found.tmus = Some(silicon.tmus);
         found.memory_type = Some(silicon.memory_type.into());
         found.bus_width = Some(silicon.bus_width.into());
+    }
+
+    // The die and its node, for a card whose exact cut is not listed above.
+    if let Some((_, (code_name, technology))) = GPU_FAMILY.iter().find(|(id, _)| *id == identity.device_id) {
+        found.code_name.get_or_insert_with(|| (*code_name).into());
+        found.technology.get_or_insert_with(|| (*technology).into());
     }
 
     let path = find_display_path(AMD_VENDOR_ID, 0, 0);
@@ -353,7 +388,7 @@ fn driver_details() -> (Option<String>, Option<String>) {
             continue;
         }
         let version = adapter.str_or_empty("DriverVersion");
-        let version = py_strip(&version);
+        let version = trim_spaces(&version);
         let version = if version.is_empty() { None } else { Some(version.to_string()) };
         let date = driver_date_text(adapter.text("DriverDate").as_deref());
         return (version, date);
@@ -465,5 +500,21 @@ mod tests {
         assert_eq!(rops_tmus_text(Some(&found)).as_deref(), Some("128 / 256"));
         assert_eq!(rops_tmus_text(Some(&RadeonGpu::default())), None);
         assert_eq!(rops_tmus_text(None), None);
+    }
+
+    #[test]
+    fn a_card_only_the_family_names_gets_its_die_and_node_and_nothing_else() {
+        // The Z890 bench's Sapphire RX 7900 XT. 0x744C is Navi 31 whichever
+        // cut is on the board, so the die and the node are named and the
+        // shader count and bus width stay absent rather than guessed from a
+        // device id three different cards answer to.
+        let ids = vec![r"PCI\VEN_1002&DEV_744C&SUBSYS_471E1DA2&REV_CC\6&0".to_string()];
+        let found = read_gpu(Some(&ids)).unwrap().unwrap();
+        assert_eq!(found.revision_text, "CC");
+        assert_eq!(found.board_manufacturer.as_deref(), Some("Sapphire Technology"));
+        assert_eq!(found.code_name.as_deref(), Some("Navi 31"));
+        assert_eq!(found.technology.as_deref(), Some("5 nm"));
+        assert_eq!(found.text("cores"), None);
+        assert_eq!(found.text("bus_width"), None);
     }
 }

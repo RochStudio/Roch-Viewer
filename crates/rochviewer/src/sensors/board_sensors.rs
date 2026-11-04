@@ -32,7 +32,7 @@ use std::sync::Arc;
 use crate::hardware::HwResult;
 use crate::intel::intel_timings::get_motherboard_display;
 use crate::memo::Memo;
-use crate::pyfmt::round_int;
+use crate::numfmt::round_int;
 use crate::sensors::ite_superio::IteSuperIoReader;
 use crate::sensors::nct679x::{self, Nct679xReader};
 use crate::sensors::superio_lpc::{SuperIoReader, decode_sensor_volts};

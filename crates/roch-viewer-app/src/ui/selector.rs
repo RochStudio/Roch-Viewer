@@ -18,9 +18,20 @@ use super::theme::{self, Palette};
 pub const SELECTOR_HEIGHT: f32 = 28.0;
 
 /// Part number followed by size, rank, DRAM maker and DRAM die.
+///
+/// Where the firmware has no part number it writes "Unknown", and some kits
+/// leave the SPD's part field blank too -- the Z890 bench's Silicon Power
+/// modules do both. The module's maker is still known there, from the SPD's
+/// JEP106 ID or SMBIOS, and naming it beats printing "Unknown" at a user who
+/// can read the vendor off the stick.
 pub fn module_description(module: &DimmModule) -> String {
     let (dram_manufacturer, dram_die) = split_ic(Some(&module.ic));
-    let part = if module.part_number.is_empty() { "Unknown" } else { &module.part_number };
+    let named_part = !module.part_number.is_empty() && module.part_number != "Unknown";
+    let part = match (named_part, module.module_manufacturer.trim()) {
+        (true, _) => &module.part_number,
+        (false, maker) if !maker.is_empty() => maker,
+        _ => "Unknown",
+    };
     let capacity = if module.capacity.is_empty() { NOT_AVAILABLE } else { &module.capacity };
     format!("{part} ({capacity}, {}, {dram_manufacturer}, {dram_die})", rank_numeric(module.rank_count))
 }
@@ -333,6 +344,24 @@ mod tests {
         let mut stick = module("A1", "TMXFL1680838KWK");
         stick.rank = "SR".into();
         assert_eq!(module_description(&stick), "TMXFL1680838KWK (16GB, 1R, SK hynix, A-die)");
+    }
+
+    #[test]
+    fn a_module_with_no_part_number_is_named_by_its_maker() {
+        // The Z890 bench: SMBIOS writes "Unknown" for the part number and the
+        // SPD's part field is blank, but both name the maker.
+        let mut stick = module("A1", "Unknown");
+        stick.module_manufacturer = "Silicon Power".into();
+        assert_eq!(module_description(&stick), "Silicon Power (16GB, 1R, SK hynix, A-die)");
+
+        stick.part_number = String::new();
+        assert_eq!(module_description(&stick), "Silicon Power (16GB, 1R, SK hynix, A-die)");
+    }
+
+    #[test]
+    fn a_module_with_neither_part_number_nor_maker_still_reads_unknown() {
+        let stick = module("A1", "Unknown");
+        assert_eq!(module_description(&stick), "Unknown (16GB, 1R, SK hynix, A-die)");
     }
 
     #[test]

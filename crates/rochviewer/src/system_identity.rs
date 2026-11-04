@@ -143,7 +143,7 @@ pub fn windows_version_values() -> BTreeMap<&'static str, RegValue> {
 pub fn os_name() -> Option<String> {
     let systems = wmi_util::query("Win32_OperatingSystem").ok()?;
     let system = systems.first()?;
-    let mut caption = py_strip(&system.str_or_empty("Caption")).to_string();
+    let mut caption = trim_spaces(&system.str_or_empty("Caption")).to_string();
     if caption.is_empty() {
         return None;
     }
@@ -156,7 +156,7 @@ pub fn os_name() -> Option<String> {
         }
     }
     let architecture = system.str_or_empty("OSArchitecture");
-    let architecture = py_strip(&architecture);
+    let architecture = trim_spaces(&architecture);
     if !architecture.is_empty() {
         // WMI says "64-bit"; CPU-Z, and everyone else, says x64.
         caption += if architecture.contains("64") { " (x64)" } else { " (x86)" };
@@ -169,10 +169,10 @@ pub fn os_name() -> Option<String> {
         .or_else(|| values.get("ReleaseId"))
         .filter(|value| value.is_truthy());
     if let Some(display_version) = display_version {
-        caption += &format!(" {}", display_version.py_str());
+        caption += &format!(" {}", display_version.display_text());
     }
     let build = system.str_or_empty("BuildNumber");
-    let build = py_strip(&build);
+    let build = trim_spaces(&build);
     if !build.is_empty() {
         caption += &format!(" Build {build}");
         if let Some(RegValue::Int(revision)) = values.get("UBR") {
@@ -444,13 +444,13 @@ pub fn pci_device_and_revision(device: u8, function: u8) -> Option<(u16, u8)> {
 /// from intel_timings was enough to pull that whole module into the release
 /// build. A shared decoder belongs somewhere shippable.
 pub fn decode_wmi_processor_signature(processor_id: Option<&str>) -> Result<(u32, u32, u32), String> {
-    let text = py_strip(processor_id.unwrap_or(""));
+    let text = trim_spaces(processor_id.unwrap_or(""));
     let chars: Vec<char> = text.chars().collect();
     if chars.len() < 8 {
         return Err("WMI ProcessorId is unavailable".into());
     }
     let tail: String = chars[chars.len() - 8..].iter().collect();
-    let eax = py_int(&tail, 16).ok_or_else(|| "WMI ProcessorId is invalid".to_string())?;
+    let eax = parse_int(&tail, 16).ok_or_else(|| "WMI ProcessorId is invalid".to_string())?;
     let base_family = (eax >> 8) & 0xF;
     let extended_family = (eax >> 20) & 0xFF;
     let family = if base_family == 0xF { base_family + extended_family } else { base_family };
@@ -559,30 +559,33 @@ fn lpcio_from(chip: Option<(&str, String)>) -> Option<String> {
     }
 }
 
-/// Python's `str.strip()` with no argument: Unicode whitespace plus the
-/// four separator controls Python also counts as space.
-pub(crate) fn py_strip(text: &str) -> &str {
-    text.trim_matches(py_isspace)
+/// Trim both ends of a firmware string.
+///
+/// Wider than `str::trim`, which leaves the information separators in place:
+/// SMBIOS and the registry hand back values wrapped in 0x1C-0x1F, and a slot
+/// label that still carries one reads as a different label.
+pub(crate) fn trim_spaces(text: &str) -> &str {
+    text.trim_matches(is_space)
 }
 
-/// Python's `str.isspace()` for one character, which is also what `re`'s
-/// `\s` matches in a text pattern: Unicode whitespace plus the four
-/// separator controls (0x1C-0x1F) Python also counts as space.
-pub(crate) fn py_isspace(c: char) -> bool {
+/// Whether a character is space for this viewer's purposes: Unicode
+/// whitespace, plus the four information separators (0x1C-0x1F) firmware
+/// embeds in its strings.
+pub(crate) fn is_space(c: char) -> bool {
     c.is_whitespace() || ('\x1c'..='\x1f').contains(&c)
 }
 
-/// The same set as the body of a regex character class. `regex-lite`'s
-/// `\s` is ASCII-only, so a pattern ported from Python's `\s` writes
-/// `[{PY_SPACE}]` instead, or the Python's matches on a no-break space or an
-/// ideographic space stop matching.
-pub(crate) const PY_SPACE: &str =
+/// The same set as the body of a regex character class. `regex-lite`'s `\s`
+/// is ASCII-only, so a pattern writes `[{SPACE_CLASS}]` instead, or it stops
+/// matching on a no-break space or an ideographic space.
+pub(crate) const SPACE_CLASS: &str =
     r"\t\n\x0B\x0C\r\x1C-\x1F \x{85}\x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}";
 
-/// Python's `int(text, radix)` for radix 10 or 16: surrounding whitespace,
-/// a sign, a `0x` prefix in base 16, and single underscores between digits.
-pub(crate) fn py_int(text: &str, radix: u32) -> Option<i64> {
-    let text = py_strip(text);
+/// Parse an integer in base 10 or 16, as firmware and the registry write
+/// them: surrounding whitespace, a sign, a `0x` prefix in base 16, and
+/// single underscores between digits.
+pub(crate) fn parse_int(text: &str, radix: u32) -> Option<i64> {
+    let text = trim_spaces(text);
     let (negative, rest) = match text.as_bytes().first() {
         Some(b'-') => (true, &text[1..]),
         Some(b'+') => (false, &text[1..]),
@@ -621,7 +624,7 @@ pub mod registry {
     };
     use windows::core::{PCWSTR, PWSTR};
 
-    /// A registry value converted the way Python's `winreg` converts it.
+    /// A registry value, converted to the shape the rows read it in.
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub enum RegValue {
         /// An empty value of a type `winreg` returns as bytes (`None` there).
@@ -667,7 +670,8 @@ pub mod registry {
             }
         }
 
-        /// Python truthiness of the converted value.
+        /// Whether the value says anything: a non-zero number, or text, a
+        /// list or bytes with something in them.
         pub fn is_truthy(&self) -> bool {
             match self {
                 RegValue::None => false,
@@ -678,8 +682,8 @@ pub mod registry {
             }
         }
 
-        /// Python's `str()` of the converted value.
-        pub fn py_str(&self) -> String {
+        /// The value as a row prints it.
+        pub fn display_text(&self) -> String {
             match self {
                 RegValue::None => "None".into(),
                 RegValue::Int(value) => value.to_string(),
@@ -1160,6 +1164,6 @@ mod tests {
             RegValue::Multi(vec!["a".into(), "b".into()])
         );
         assert_eq!(RegValue::from_raw(REG_BINARY, &[]), RegValue::None);
-        assert_eq!(RegValue::Bytes(vec![0x41, 0x00, 0x27]).py_str(), "b\"A\\x00'\"");
+        assert_eq!(RegValue::Bytes(vec![0x41, 0x00, 0x27]).display_text(), "b\"A\\x00'\"");
     }
 }

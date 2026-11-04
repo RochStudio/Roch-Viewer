@@ -23,7 +23,7 @@
 //! run. The window lives in the `roch-viewer-app` crate.
 
 pub mod memo;
-pub mod pyfmt;
+pub mod numfmt;
 pub mod wmi_util;
 
 pub mod paths;

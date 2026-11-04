@@ -58,10 +58,10 @@ static NUMERIC_RE: LazyLock<Regex> =
 // Python's `\s` on a str is every character str.isspace() accepts; over the
 // Latin-1 range that is these, which is one more than Unicode White_Space
 // (0x1C-0x1F, the information separators).
-const PY_SPACE: &str = r"\t\n\x0B\x0C\r\x1C-\x1F \x{85}\x{A0}";
+const SPACE_CLASS: &str = r"\t\n\x0B\x0C\r\x1C-\x1F \x{85}\x{A0}";
 
 static FALLBACK_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(&format!(r"(?i)(ComboAm5PI[{PY_SPACE}]+\d+\.\d+(?:\.\d+){{0,3}}[A-Za-z0-9]*)"))
+    Regex::new(&format!(r"(?i)(ComboAm5PI[{SPACE_CLASS}]+\d+\.\d+(?:\.\d+){{0,3}}[A-Za-z0-9]*)"))
         .expect("valid fallback pattern")
 });
 

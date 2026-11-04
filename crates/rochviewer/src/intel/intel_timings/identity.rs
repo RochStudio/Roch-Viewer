@@ -4,7 +4,7 @@
 //! the machine is running, and most cost a WMI query, so they are read once
 //! and cached; see the note above `get_cpu_name`.
 
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
 
@@ -14,8 +14,8 @@ use crate::hardware::read::read_physical_memory_int;
 use crate::memo::Memo;
 use crate::memory::ddr_generation::{DdrGeneration, detect_ddr_generation};
 use crate::platform_profiles::Platform;
-use crate::pyfmt::round_int;
-use crate::system_identity::{self, RegValue, py_int, py_strip};
+use crate::numfmt::round_int;
+use crate::system_identity::{self, RegValue, parse_int, trim_spaces};
 use crate::wmi_util::{WmiObject, WmiValue, static_class};
 
 // Intel client CPUID models, and the process node each is built on. Family 6
@@ -70,7 +70,7 @@ fn first(class_name: &str) -> Option<WmiObject> {
 
 /// `(getattr(obj, field, "") or "").strip()`.
 fn stripped(object: &WmiObject, field: &str) -> String {
-    py_strip(&object.str_or_empty(field)).to_string()
+    trim_spaces(&object.str_or_empty(field)).to_string()
 }
 
 /// Python truthiness of a WMI value: `value or default` falls through on these.
@@ -303,8 +303,21 @@ pub fn get_cpu_name() -> String {
     })
 }
 
+/// The installed memory, as the modules themselves report it.
+///
+/// `Win32_ComputerSystem.TotalPhysicalMemory` is what the OS can address, not
+/// what is installed: the firmware's reserved ranges come off it first. On the
+/// Z890 bench two 32 GB modules left 68,148,305,920 bytes there -- 63.468 GiB,
+/// which printed as 63GB beside an SPD tab that said 32 GB a module. The
+/// modules' own capacities sum to the 64 GiB that is actually in the board, so
+/// they are preferred, and the OS figure stays as the fallback for firmware
+/// that lists no modules at all.
 pub fn get_total_physical_memory(platform: Platform) -> String {
-    let memory_bytes = first("Win32_ComputerSystem").and_then(|system| system.int("TotalPhysicalMemory"));
+    let installed: i64 =
+        static_class("Win32_PhysicalMemory").iter().filter_map(|module| module.int("Capacity")).sum();
+    let memory_bytes = (installed > 0)
+        .then_some(installed)
+        .or_else(|| first("Win32_ComputerSystem").and_then(|system| system.int("TotalPhysicalMemory")));
     match memory_bytes {
         Some(memory_bytes) => {
             let memory_gb = round_int(memory_bytes as f64 / (1024f64 * 1024.0 * 1024.0));
@@ -443,7 +456,7 @@ pub fn get_motherboard_display() -> String {
         .filter(|part| !part.is_empty())
         .collect();
     let joined = parts.join(" ");
-    let joined = py_strip(&joined);
+    let joined = trim_spaces(&joined);
     if joined.is_empty() { "Unknown".into() } else { joined.to_string() }
 }
 
@@ -527,13 +540,43 @@ fn real_display_adapters() -> Vec<WmiObject> {
         .collect()
 }
 
+/// The installed Radeon, read once: `Some(None)` when there is none.
+static RADEON_CACHE: Memo<Option<Arc<crate::gpu::radeon::RadeonGpu>>> = Memo::new();
+
 /// One value from the graphics card, or `None` if it did not answer.
 ///
 /// The adapter ids come from the WMI class this module has already queried
 /// and cached, so the card module needs no connection of its own.
+///
+/// Both readers are asked, because an Intel board takes whichever card is
+/// put in it. The NVIDIA reader answers nothing at all for a Radeon, which
+/// left every row of the Graphics block on a dash -- board, code name,
+/// revision, cores, memory and driver -- under a GPU row naming the Radeon
+/// at the top of it.
 pub fn gpu_field(field: &str) -> Option<String> {
     let ids: Vec<String> = real_display_adapters().iter().map(|adapter| adapter.str_or_empty("PNPDeviceID")).collect();
-    crate::gpu::nvidia_gpu::read_gpu(false, Some(&ids)).get(field).cloned()
+    crate::gpu::nvidia_gpu::read_gpu(false, Some(&ids)).get(field).cloned().or_else(|| radeon_field(&ids, field))
+}
+
+/// The same field from a Radeon, under the keys the Intel rows ask for.
+fn radeon_field(ids: &[String], field: &str) -> Option<String> {
+    let card = match RADEON_CACHE.get() {
+        Some(card) => card,
+        None => {
+            let card = crate::gpu::radeon::read_gpu(Some(ids)).ok().flatten().map(Arc::new);
+            RADEON_CACHE.set(card.clone());
+            card
+        }
+    }?;
+    match field {
+        // The shader count is written the way the AMD tab writes it, and the
+        // revision as the bare hex byte the card reports, which is the
+        // spelling both this project and GPU-Z use for it.
+        "cores" => card.cores.map(|cores| format!("{cores} Unified")),
+        "revision" => card.text("revision_text"),
+        "vbios_version" => card.text("vbios"),
+        _ => card.text(field),
+    }
 }
 
 pub fn get_bios_version() -> String {
@@ -545,7 +588,7 @@ pub fn get_bios_version() -> String {
     let version = primary
         .or_else(|| bios.get("Version").filter(|v| truthy(v)).and_then(WmiValue::to_text))
         .unwrap_or_default();
-    let version = py_strip(&version);
+    let version = trim_spaces(&version);
     if version.is_empty() { "Unknown".into() } else { version.to_string() }
 }
 
@@ -599,11 +642,11 @@ pub fn parse_first_number(value: Option<&str>) -> Option<f64> {
     if number.is_empty() {
         return None;
     }
-    py_float(&number)
+    parse_float(&number)
 }
 
-/// Python's `float(text)` for the digits, dots and minus signs this sees.
-fn py_float(text: &str) -> Option<f64> {
+/// Parse the digits, dots and minus signs this sees as a float.
+fn parse_float(text: &str) -> Option<f64> {
     text.parse::<f64>().ok()
 }
 
@@ -643,19 +686,19 @@ pub fn get_windows_update_revision() -> Option<i64> {
 pub(super) fn update_revision_from(value: Option<RegValue>) -> Option<i64> {
     match value? {
         RegValue::Int(value) => i64::try_from(value).ok(),
-        RegValue::Text(text) => py_int(&text, 10),
+        RegValue::Text(text) => parse_int(&text, 10),
         // int() takes bytes too: ASCII digits, with only ASCII whitespace
         // around them.
         RegValue::Bytes(bytes) => {
             let text = std::str::from_utf8(&bytes).ok().filter(|text| text.is_ascii())?;
             let text = text.trim_matches(|c: char| matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c'));
-            // py_int would also strip \x1c-\x1f, which int() of a str does
+            // parse_int would also strip \x1c-\x1f, which int() of a str does
             // and int() of bytes does not.
             let separator = |c: char| ('\x1c'..='\x1f').contains(&c);
             if text.starts_with(separator) || text.ends_with(separator) {
                 return None;
             }
-            py_int(text, 10)
+            parse_int(text, 10)
         }
         _ => None,
     }
@@ -684,10 +727,10 @@ pub(super) fn display_version_from(
         found => found,
     };
     let text = match version {
-        Some(value) if value.is_truthy() => value.py_str(),
+        Some(value) if value.is_truthy() => value.display_text(),
         _ => String::new(),
     };
-    let text = py_strip(&text);
+    let text = trim_spaces(&text);
     if text.is_empty() { None } else { Some(text.to_string()) }
 }
 
@@ -745,8 +788,8 @@ fn os_name_and_version() -> (Option<String>, Option<String>) {
     let Some(found) = OS_ARCHITECTURE_SPLIT.find(&combined) else {
         return (Some(combined), None);
     };
-    let edition = py_strip(&combined[..found.end()]).to_string();
-    let version = py_strip(&combined[found.end()..]).to_string();
+    let edition = trim_spaces(&combined[..found.end()]).to_string();
+    let version = trim_spaces(&combined[found.end()..]).to_string();
     (Some(edition), if version.is_empty() { None } else { Some(version) })
 }
 
@@ -893,7 +936,7 @@ pub const DDR4_SPD_FIELDS: &[&str] = &["serial_number", "manufacture_date", "dra
 
 fn named_or_nothing(module: &crate::memory::dimm_inventory::DimmModule, field: &str) -> Option<String> {
     let value = module.get(field).unwrap_or_default();
-    let value = py_strip(&value);
+    let value = trim_spaces(&value);
     if value.is_empty() || value.to_lowercase() == "unknown" { None } else { Some(value.to_string()) }
 }
 

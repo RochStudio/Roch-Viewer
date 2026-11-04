@@ -35,7 +35,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use super::smn::SmnTransport;
-use crate::pyfmt::float_str;
+use crate::numfmt::float_str;
 
 /// A register snapshot: offset (relative to the channel base) -> value.
 pub type Registers = BTreeMap<u32, u32>;

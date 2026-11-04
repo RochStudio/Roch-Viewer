@@ -53,6 +53,10 @@ pub const JEP106_VENDORS: &[((u32, u8), &str)] = &[
     // same module "V-Color Technology Inc"; this is the name the module itself
     // carries, and what CPU-Z shows against it.
     ((7, 0x6D), "V-Color Technology"),
+    // Bank 7 code 0xD3, read as 0x86D3 on the Z890 kit, whose SPD part number
+    // field is blank -- so this ID is the only name the module carries. SMBIOS
+    // calls it "Silicon Power Computer & Communications", which agrees.
+    ((7, 0xD3), "Silicon Power"),
     // The devices on a DDR5 module besides its DRAM: its SPD hub and its PMIC.
     // Named from the JEP106 list (OpenOCD's jep106.inc carries it): bank 1
     // code 0x33 is IDT and bank 11 code 0x0C Richtek Power, read here as

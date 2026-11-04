@@ -53,6 +53,7 @@
 //! The reader implements [`SmbusReader`], the contract the DDR5 device
 //! readers drive either platform's bus through.
 
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::hardware::pci_mcfg::{McfgAllocation, default_allocation, ecam_address};
@@ -216,10 +217,37 @@ pub fn default_ecam_allocation() -> Result<McfgAllocation, String> {
     default_allocation(0, SMBUS_BUS)
 }
 
-/// Read one dword from the SMBus function's PCI configuration space.
-fn config_dword(allocation: &McfgAllocation, function: u8, offset: u16) -> Result<u32, SmbusError> {
-    let address = ecam_address(allocation, SMBUS_BUS, SMBUS_DEVICE, function, offset).map_err(SmbusError::Refused)?;
+/// Read one dword from an SMBus function's PCI configuration space.
+fn config_dword(allocation: &McfgAllocation, bus: u8, function: u8, offset: u16) -> Result<u32, SmbusError> {
+    let address = ecam_address(allocation, bus, SMBUS_DEVICE, function, offset).map_err(SmbusError::Refused)?;
     read_dword(address)
+}
+
+/// The bus the controller was last found on, tried first on the next call.
+///
+/// Only an ordering hint: the function it points at is validated in full
+/// before its BAR is used, so a stale hint costs one extra miss and can
+/// never return the wrong device.
+static LAST_BUS: AtomicU16 = AtomicU16::new(NO_BUS_HINT);
+const NO_BUS_HINT: u16 = u16::MAX;
+
+/// The buses to search, the likeliest first: the hint, then the bus every
+/// validated board used, then the rest of the allocation.
+fn search_order(allocation: &McfgAllocation) -> Vec<u8> {
+    let hint = LAST_BUS.load(Ordering::Relaxed);
+    let mut buses: Vec<u8> = Vec::new();
+    let preferred = [(hint != NO_BUS_HINT).then_some(hint as u8), Some(SMBUS_BUS)];
+    for bus in preferred.into_iter().flatten() {
+        if allocation.start_bus <= bus && bus <= allocation.end_bus && !buses.contains(&bus) {
+            buses.push(bus);
+        }
+    }
+    for bus in allocation.start_bus..=allocation.end_bus {
+        if !buses.contains(&bus) {
+            buses.push(bus);
+        }
+    }
+    buses
 }
 
 /// The controller's I/O base, or [`SmbusError::Unavailable`].
@@ -247,41 +275,64 @@ pub fn find_smbus_base(allocation: Option<McfgAllocation>, mutex: Option<&dyn Bu
     let mut reasons = Vec::new();
     {
         let _held = mutex.acquire()?;
-        for function in SMBUS_FUNCTIONS {
-            let identity = config_dword(&allocation, function, PCI_VENDOR_OFFSET)?;
-            if identity == 0xFFFF_FFFF || identity == 0x0000_0000 {
-                reasons.push(format!("00:1F.{function} absent"));
-                continue;
-            }
-            if (identity & 0xFFFF) != INTEL_VENDOR_ID {
-                reasons.push(format!("00:1F.{function} vendor 0x{:04X}", identity & 0xFFFF));
-                continue;
-            }
+        // Device 31 is the PCH, but the PCH is not always on bus 0. A Z890
+        // AORUS TACHYON ICE enumerates its whole PCH on bus 0x80 -- SMBus at
+        // 80:1F.4, class 0x0C05, BAR4 assigned and I/O enabled -- and reading
+        // only 00:1F.x there found nothing, which blanked every SPD and PMIC
+        // row while the timings beside them read fine. So every bus in the
+        // allocation is searched, the likeliest first, and the function is
+        // still identified by vendor and class before its BAR is trusted.
+        for bus in search_order(&allocation) {
+            for function in SMBUS_FUNCTIONS {
+                // A read that fails is the ECAM window not answering for that
+                // bus, not a verdict on the device: say so once and move on
+                // rather than abandoning the search.
+                let identity = match config_dword(&allocation, bus, function, PCI_VENDOR_OFFSET) {
+                    Ok(identity) => identity,
+                    Err(error) => {
+                        reasons.push(format!("{bus:02X}:1F.{function} unreadable ({error})"));
+                        continue;
+                    }
+                };
+                if identity == 0xFFFF_FFFF || identity == 0x0000_0000 {
+                    // Absent is the normal answer for all but one bus, so it
+                    // is only worth reporting for the bus the caller expects.
+                    if bus == SMBUS_BUS {
+                        reasons.push(format!("00:1F.{function} absent"));
+                    }
+                    continue;
+                }
+                if (identity & 0xFFFF) != INTEL_VENDOR_ID {
+                    reasons.push(format!("{bus:02X}:1F.{function} vendor 0x{:04X}", identity & 0xFFFF));
+                    continue;
+                }
 
-            let class_dword = config_dword(&allocation, function, PCI_CLASS_OFFSET)?;
-            if ((class_dword >> 16) & 0xFFFF) != SMBUS_CLASS_CODE {
-                reasons.push(format!("00:1F.{function} class 0x{:04X}", (class_dword >> 16) & 0xFFFF));
-                continue;
-            }
+                let class_dword = config_dword(&allocation, bus, function, PCI_CLASS_OFFSET)?;
+                if ((class_dword >> 16) & 0xFFFF) != SMBUS_CLASS_CODE {
+                    reasons.push(format!("{bus:02X}:1F.{function} class 0x{:04X}", (class_dword >> 16) & 0xFFFF));
+                    continue;
+                }
 
-            let command = config_dword(&allocation, function, PCI_COMMAND_OFFSET)?;
-            if command & PCI_COMMAND_IO_SPACE == 0 {
-                reasons.push(format!("00:1F.{function} I/O space disabled"));
-                continue;
-            }
+                let command = config_dword(&allocation, bus, function, PCI_COMMAND_OFFSET)?;
+                if command & PCI_COMMAND_IO_SPACE == 0 {
+                    reasons.push(format!("{bus:02X}:1F.{function} I/O space disabled"));
+                    continue;
+                }
 
-            let bar = config_dword(&allocation, function, PCI_BAR4_OFFSET)?;
-            if bar & BAR_IO_SPACE_FLAG == 0 {
-                reasons.push(format!("00:1F.{function} BAR4 is not I/O"));
-                continue;
-            }
+                let bar = config_dword(&allocation, bus, function, PCI_BAR4_OFFSET)?;
+                if bar & BAR_IO_SPACE_FLAG == 0 {
+                    reasons.push(format!("{bus:02X}:1F.{function} BAR4 is not I/O"));
+                    continue;
+                }
 
-            let base = bar & SMBUS_BASE_MASK;
-            if base == 0 {
-                reasons.push(format!("00:1F.{function} BAR4 unassigned"));
-                continue;
+                let base = bar & SMBUS_BASE_MASK;
+                if base == 0 {
+                    reasons.push(format!("{bus:02X}:1F.{function} BAR4 unassigned"));
+                    continue;
+                }
+                LAST_BUS.store(bus as u16, Ordering::Relaxed);
+                return Ok(base as u16);
             }
-            return Ok(base as u16);
         }
     }
 
@@ -778,11 +829,16 @@ mod tests {
     /// A fake config space at the ECAM addresses; anything else reads all
     /// ones, as an absent function does.
     fn install_config_space(by_function: &[(u8, &[(u16, u32)])]) {
+        install_config_space_on(0, by_function);
+    }
+
+    /// The same, with the PCH on a bus of the caller's choosing.
+    fn install_config_space_on(bus: u8, by_function: &[(u8, &[(u16, u32)])]) {
         let mut fake = FakeHardware::new();
         fake.unmapped_reads_ones = true;
         for (function, registers) in by_function {
             for (offset, value) in registers.iter() {
-                let address = ecam_address(&ALLOCATION, 0, 0x1F, *function, *offset).unwrap();
+                let address = ecam_address(&ALLOCATION, bus, 0x1F, *function, *offset).unwrap();
                 fake = fake.with_dword(address, *value);
             }
         }
@@ -981,6 +1037,25 @@ mod tests {
     #[test]
     fn the_smbus_function_is_found_and_its_bar_masked() {
         install_config_space(&[(4, &GOOD_FUNCTION_4), (3, &AUDIO_FUNCTION_3)]);
+        assert_eq!(find_smbus_base(Some(ALLOCATION), Some(&NullMutex)), Ok(BASE));
+    }
+
+    #[test]
+    fn the_smbus_function_is_found_when_the_pch_is_not_on_bus_zero() {
+        // A Z890 AORUS TACHYON ICE enumerates its whole PCH on bus 0x80, SMBus
+        // included. Searching 00:1F.x alone found nothing there, and every SPD
+        // and PMIC row read blank while the timings beside them were fine.
+        install_config_space_on(0x80, &[(4, &GOOD_FUNCTION_4), (3, &AUDIO_FUNCTION_3)]);
+        assert_eq!(find_smbus_base(Some(ALLOCATION), Some(&NullMutex)), Ok(BASE));
+    }
+
+    #[test]
+    fn a_bus_without_the_controller_is_not_mistaken_for_one() {
+        // Only bus 0x80 answers; the hint left by the search above must not
+        // make an empty bus look like a hit.
+        install_config_space_on(0x80, &[(4, &GOOD_FUNCTION_4)]);
+        assert_eq!(find_smbus_base(Some(ALLOCATION), Some(&NullMutex)), Ok(BASE));
+        install_config_space(&[(4, &GOOD_FUNCTION_4)]);
         assert_eq!(find_smbus_base(Some(ALLOCATION), Some(&NullMutex)), Ok(BASE));
     }
 

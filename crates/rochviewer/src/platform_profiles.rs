@@ -9,7 +9,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use crate::memo::Memo;
-use crate::system_identity::{PY_SPACE, py_strip};
+use crate::system_identity::{SPACE_CLASS, trim_spaces};
 use crate::wmi_util::{self, WmiValue};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -47,18 +47,18 @@ impl Platform {
 pub const DDR4_SMBIOS_TYPE: i64 = 26;
 pub const DDR5_SMBIOS_TYPE: i64 = 34;
 
-// The Python's `\s` is spelled `[{PY_SPACE}]`: regex-lite's own `\s` is
+// The Python's `\s` is spelled `[{SPACE_CLASS}]`: regex-lite's own `\s` is
 // ASCII-only, and the Python's also matched a no-break space.
 static RYZEN_MODEL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(&format!(r"ryzen[{PY_SPACE}]+(?:[3579][{PY_SPACE}]+)?(?:pro[{PY_SPACE}]+)?(\d{{4}})([a-z0-9]*)")).unwrap());
+    LazyLock::new(|| Regex::new(&format!(r"ryzen[{SPACE_CLASS}]+(?:[3579][{SPACE_CLASS}]+)?(?:pro[{SPACE_CLASS}]+)?(\d{{4}})([a-z0-9]*)")).unwrap());
 static LGA1700_MODEL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(&format!(r"core(?:\(tm\))?[{PY_SPACE}]+i[3579]-?(\d{{5}})([a-z]*)\b")).unwrap());
+    LazyLock::new(|| Regex::new(&format!(r"core(?:\(tm\))?[{SPACE_CLASS}]+i[3579]-?(\d{{5}})([a-z]*)\b")).unwrap());
 static LGA1851_MODEL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(&format!(r"core(?:\(tm\))?[{PY_SPACE}]+ultra[{PY_SPACE}]+[579][{PY_SPACE}]+(\d{{3}})([a-z]*)\b")).unwrap());
+    LazyLock::new(|| Regex::new(&format!(r"core(?:\(tm\))?[{SPACE_CLASS}]+ultra[{SPACE_CLASS}]+[579][{SPACE_CLASS}]+(\d{{3}})([a-z]*)\b")).unwrap());
 
 /// `str(text or "").strip().lower()`.
 fn normalise(text: &str) -> String {
-    py_strip(text).to_lowercase()
+    trim_spaces(text).to_lowercase()
 }
 
 fn ryzen_model(name: &str) -> Option<(String, String)> {

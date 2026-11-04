@@ -10,7 +10,7 @@ use crate::hardware::read::{DynamicParams, FieldRead, read_field, read_physical_
 use crate::memo::{Memo, MemoMap};
 use crate::memory::ddr_generation::{DdrGeneration, detect_ddr_generation};
 use crate::platform_profiles::Platform;
-use crate::pyfmt::{float_str, round_half_even, round_int};
+use crate::numfmt::{float_str, round_half_even, round_int};
 use crate::row::ReadSpec;
 
 use super::formulas::{self, Table, lookup};
@@ -41,17 +41,17 @@ pub const MHZ_DECIMALS: usize = 3;
 
 /// Python's `round(x, ndigits)` for a float and `ndigits >= 1`.
 ///
-/// Python rounds the float's exact binary value half to even, which is what
-/// Rust's `{:.N}` does when it formats; scaling first, as
-/// `pyfmt::round_half_even` does, turns 99.65 (stored a hair above) into an
-/// exact tie at 996.5 and rounds it down, where Python gives 99.7.
-fn py_round(value: f64, ndigits: usize) -> f64 {
+/// Rust's `{:.N}` rounds the float's exact binary value half to even, which
+/// is what the readings want; scaling first, as `numfmt::round_half_even`
+/// does, turns 99.65 (stored a hair above) into an exact tie at 996.5 and
+/// rounds it down to 99.6, where the right answer is 99.7.
+fn round_to_decimals(value: f64, ndigits: usize) -> f64 {
     format!("{value:.ndigits$}").parse().unwrap_or(value)
 }
 
 /// A megahertz reading, written the way the rest of the column is.
 pub fn mhz(value: f64, decimals: usize) -> String {
-    let rounded = py_round(value, decimals);
+    let rounded = round_to_decimals(value, decimals);
     let text = format!("{rounded:.decimals$}");
     let text = text.trim_end_matches('0');
     format!("{} MHz", text.trim_end_matches('.'))
@@ -1189,7 +1189,7 @@ pub(crate) fn speed_from(bclk: f64, ratio: u64, raw_multiplier: u64, raw_gear: u
     // is DDR5-8000 reading as 7998 one moment and 8000 the next. Rounded
     // to 0.1 MHz the wander goes and a real BCLK change -- 102.5 MHz, say
     // -- still shows in full.
-    let bclk = py_round(bclk, 1);
+    let bclk = round_to_decimals(bclk, 1);
     let qclk_ratio = match raw_multiplier {
         0 => 133.333333,
         1 => 100.0,

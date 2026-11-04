@@ -623,6 +623,43 @@ fn live() -> (Backend, Values) {
 }
 
 #[test]
+#[ignore = "bench report"]
+fn report_tab_sizes() {
+    let (backend, values) = live();
+    let palette = Palette::new(true);
+    let labels = BTreeMap::new();
+    let ctx = TabContext { backend: &backend, values: &values, palette: &palette, selected: None, channel_labels: &labels };
+    let plan = summary::summary_plan(&backend.rows, backend.platform);
+    with_ui(|ui| {
+        println!("platform {:?}", backend.platform);
+        for tab in tab_names_for(&backend.rows) {
+            if tab == "SPD" {
+                continue;
+            }
+            let (width, height) = window_size_for_tab(backend.platform, &tab, None);
+            let chrome = Chrome::new(Rect::from_min_size(pos2(0.0, 0.0), vec2(width, height)), false);
+            let area = chrome.content(&tab);
+            let needed = if tab == "Summary" {
+                summary::needed_size(ui, &ctx, &plan)
+            } else {
+                let geometry = detail_geometry(ui, &ctx, &tab, area);
+                vec2(geometry.needed_width(), geometry.needed_height())
+            };
+            // What the window would have to be for the content to fit.
+            let window_w = width - area.width() + needed.x;
+            let window_h = height - area.height() + needed.y;
+            println!(
+                "{tab:<12} window {width:>6.0}x{height:<6.0} content needs {:>6.1}x{:<6.1} (has {:>6.1}x{:<6.1}) -> window {window_w:>6.0}x{window_h:<6.0}",
+                needed.x,
+                needed.y,
+                area.width(),
+                area.height()
+            );
+        }
+    });
+}
+
+#[test]
 #[ignore = "needs hardware"]
 fn every_unscrolled_tab_fits_the_window() {
     // Without a scrollbar, content past the bottom or right edge is cut off

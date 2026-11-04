@@ -16,8 +16,8 @@ use std::fmt;
 use super::ddr5_spd::{EM_DASH, decode_jep106_id, decode_manufacture_date};
 use super::ddr5_telemetry::{ReaderFactory, SpdBytes};
 use super::dimm_inventory::DimmModule;
-use crate::pyfmt;
-use crate::system_identity::py_strip;
+use crate::numfmt;
+use crate::system_identity::trim_spaces;
 
 /// One displayed value: what the Python dicts held.
 #[derive(Clone, Debug, PartialEq)]
@@ -209,7 +209,7 @@ fn data_rate(tck_ps: i64) -> Result<i64, DecodeError> {
             nearest = value;
         }
     }
-    Ok(if (nearest as f64 - raw).abs() <= 40.0 { nearest } else { pyfmt::round_int(raw / 100.0) * 100 })
+    Ok(if (nearest as f64 - raw).abs() <= 40.0 { nearest } else { numfmt::round_int(raw / 100.0) * 100 })
 }
 
 fn supported_cls(values: &SpdBytes, start: u32) -> Vec<i64> {
@@ -239,7 +239,7 @@ fn profile(
     if tck_ps == 0 {
         return Ok(None);
     }
-    let clock_mhz = pyfmt::round_int(1_000_000.0 / tck_ps as f64);
+    let clock_mhz = numfmt::round_int(1_000_000.0 / tck_ps as f64);
     let data_rate = data_rate(tck_ps)?;
     Ok(Some(SpdProfile::from([
         ("name", SpdValue::Text(name)),
@@ -310,7 +310,7 @@ pub fn decode_ddr4_base(values: &SpdBytes) -> Result<Option<SpdRecord>, DecodeEr
     record.set(
         "max_bandwidth",
         if tck_ps != 0 {
-            format!("DDR4-{} ({} MHz)", data_rate(tck_ps)?, pyfmt::round_int(1_000_000.0 / tck_ps as f64))
+            format!("DDR4-{} ({} MHz)", data_rate(tck_ps)?, numfmt::round_int(1_000_000.0 / tck_ps as f64))
         } else {
             EM_DASH.to_string()
         },
@@ -536,7 +536,7 @@ fn ddr5_rate(tck_ps: i64) -> i64 {
             return rate;
         }
     }
-    pyfmt::round_int(2_000_000.0 / tck_ps as f64 / 100.0) * 100
+    numfmt::round_int(2_000_000.0 / tck_ps as f64 / 100.0) * 100
 }
 
 /// (VDD, VDDQ, VPP) from the base block, `None` for a code not defined.
@@ -864,13 +864,13 @@ pub fn join_slots(mut modules: Vec<SpdRecord>, inventory: &[DimmModule]) -> Vec<
     remaining.sort_by_key(|item| item.slot.clone().unwrap_or_default());
     for module in modules.iter_mut() {
         let mut matched: Option<usize> = None;
-        let serial = py_strip(&module.text("serial_number").unwrap_or_default()).to_string();
+        let serial = trim_spaces(&module.text("serial_number").unwrap_or_default()).to_string();
         if !(serial.is_empty() || serial == "0" || serial == EM_DASH) {
-            matched = remaining.iter().position(|item| py_strip(&item.serial_number) == serial);
+            matched = remaining.iter().position(|item| trim_spaces(&item.serial_number) == serial);
         }
         if matched.is_none() {
-            let part = py_strip(&module.text("part_number").unwrap_or_default()).to_uppercase();
-            matched = remaining.iter().position(|item| py_strip(&item.part_number).to_uppercase() == part);
+            let part = trim_spaces(&module.text("part_number").unwrap_or_default()).to_uppercase();
+            matched = remaining.iter().position(|item| trim_spaces(&item.part_number).to_uppercase() == part);
         }
         if matched.is_none() && !remaining.is_empty() {
             matched = Some(0);

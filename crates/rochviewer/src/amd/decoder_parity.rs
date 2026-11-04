@@ -35,7 +35,7 @@ fn umc_json(value: &Option<UmcValue>) -> Json {
         Some(UmcValue::Int(number)) => json!(number),
         Some(UmcValue::Bool(flag)) => json!(flag),
         Some(UmcValue::Text(text)) => json!(text),
-        Some(UmcValue::Float(number)) => json!({ "float": crate::pyfmt::float_str(*number) }),
+        Some(UmcValue::Float(number)) => json!({ "float": crate::numfmt::float_str(*number) }),
     }
 }
 

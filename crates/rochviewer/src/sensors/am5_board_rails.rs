@@ -7,7 +7,7 @@ use crate::memo::Memo;
 use crate::sensors::ite_superio::{IteSuperIoReader, TEMPERATURE_MAX_C, TEMPERATURE_MIN_C};
 use crate::sensors::superio_lpc;
 use crate::sensors::voltage_rails::{rail_by_key, validate_voltage};
-use crate::system_identity::py_strip;
+use crate::system_identity::trim_spaces;
 use crate::wmi_util;
 
 static BOARD_IDENTITY: Memo<(String, String)> = Memo::new();
@@ -26,7 +26,7 @@ pub fn board_identity() -> (String, String) {
             };
             let manufacturer = field("Manufacturer")?;
             let product = field("Product")?;
-            Some((py_strip(&manufacturer).to_uppercase(), py_strip(&product).to_uppercase()))
+            Some((trim_spaces(&manufacturer).to_uppercase(), trim_spaces(&product).to_uppercase()))
         };
         identity().unwrap_or_default()
     })
@@ -141,7 +141,7 @@ pub fn fan_rpm(low: Option<u8>, high: Option<u8>) -> Option<i64> {
     if count == 0 || count == 0xFFFF {
         return None;
     }
-    Some(crate::pyfmt::round_int(TACH_CLOCK as f64 / (2 * count) as f64))
+    Some(crate::numfmt::round_int(TACH_CLOCK as f64 / (2 * count) as f64))
 }
 
 /// A thermistor reading in Celsius, or `None` for an unconnected probe.

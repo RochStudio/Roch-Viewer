@@ -40,7 +40,7 @@
 ["System Info", "Graphics", "Right", "Resizable BAR", "Resizable BAR", false, false, null],
 ["System Info", "Graphics", "Right", "Driver Version", "Driver Version", false, false, null],
 ["System Info", "Graphics", "Right", "Driver Date", "Driver Date", false, false, null],
-["SPD", "System", "FullWidth", "Memory Capacity", "Capacity", false, false, "32GB"],
+["SPD", "System", "FullWidth", "Memory Capacity", "Capacity", false, false, "16GB"],
 ["SPD", "System", "FullWidth", "Channels", "Channels", false, false, "Single Channel"],
 ["Summary", "General", "Left", "Uncore", "Ring Clock", false, false, "115396183.971 MHz"],
 ["CPU", "Frequency", "Left", "IMC Frequency", "IMC Frequency", false, false, null],

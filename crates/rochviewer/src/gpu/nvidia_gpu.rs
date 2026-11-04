@@ -48,8 +48,8 @@ use libloading::os::windows::{
 use regex::Regex;
 
 use crate::memo::Memo;
-use crate::pyfmt;
-use crate::system_identity::{AdapterIdentity, parse_pnp_identity, py_strip};
+use crate::numfmt;
+use crate::system_identity::{AdapterIdentity, parse_pnp_identity, trim_spaces};
 use crate::wmi_util;
 
 pub const NVIDIA_VENDOR_ID: u16 = 0x10DE;
@@ -189,7 +189,7 @@ fn symbol<T: Copy>(library: &Library, name: &str) -> Option<T> {
 fn c_text(buffer: &[u8]) -> String {
     let end = buffer.iter().position(|b| *b == 0).unwrap_or(buffer.len());
     let text: String = buffer[..end].iter().filter(|b| b.is_ascii()).map(|b| *b as char).collect();
-    py_strip(&text).to_string()
+    trim_spaces(&text).to_string()
 }
 
 /// Ask WMI for the display adapters, when the caller has not already.
@@ -197,7 +197,7 @@ fn own_pnp_device_ids() -> Result<Vec<String>, String> {
     let mut found = Vec::new();
     for adapter in wmi_util::query("Win32_VideoController")? {
         let name = adapter.str_or_empty("Name");
-        let name = py_strip(&name);
+        let name = trim_spaces(&name);
         if !name.is_empty() && !name.contains("Basic Display") {
             found.push(adapter.str_or_empty("PNPDeviceID"));
         }
@@ -642,7 +642,7 @@ fn read_gpu_uncached(pnp_device_ids: Option<&[String]>) -> Result<GpuInfo, Strin
     if let Some(frame_buffer_kb) = nvapi.unsigned("frame_buffer_kb").filter(|kb| *kb != 0) {
         found.insert(
             "memory_size",
-            format!("{} GB", pyfmt::round_int(frame_buffer_kb as f64 / 1048576.0)),
+            format!("{} GB", numfmt::round_int(frame_buffer_kb as f64 / 1048576.0)),
         );
     }
     if let Some(width) = nvapi.unsigned("ram_bus_width").filter(|width| *width != 0) {

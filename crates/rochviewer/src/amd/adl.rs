@@ -18,7 +18,7 @@
 use std::collections::BTreeMap;
 use std::ffi::{c_char, c_void};
 
-use crate::system_identity::{PciLocation, py_strip};
+use crate::system_identity::{PciLocation, trim_spaces};
 
 pub const ADL_MAX_PATH: usize = 256;
 pub const ADL_OK: i32 = 0;
@@ -354,7 +354,7 @@ fn fixed_text(field: &[c_char]) -> String {
         .filter(u8::is_ascii)
         .map(char::from)
         .collect();
-    py_strip(&text).to_string()
+    trim_spaces(&text).to_string()
 }
 
 /// One PMLog integer as display text, in the unit the row is named for.

@@ -353,6 +353,76 @@ fn assert_register_map_parity(platform: Platform, expected: &'static str, memory
 }
 
 #[test]
+#[ignore = "fixture regeneration: FZ_OUT"]
+fn dump_register_map_lga1851() {
+    // Regenerates expected/mem-lga1851.json from the same inputs the parity
+    // test reads it with, keeping every value the old file compared by shape
+    // alone null, matched on the row rather than its position so an added
+    // row does not shift the nulls off the rows they belong to.
+    let Ok(out) = std::env::var("FZ_OUT") else {
+        eprintln!("dump_register_map_lga1851: set FZ_OUT to run it");
+        return;
+    };
+    let platform = Platform::Lga1851;
+    let old: serde_json::Value =
+        serde_json::from_str(include_str!("expected/mem-lga1851.json")).expect("fixture parses");
+    let cpu = old["cpu"].as_str().expect("cpu").to_string();
+    let header_cpu = cpu.clone();
+    let nulls: std::collections::HashSet<String> = old["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .filter_map(|row| {
+            let row = row.as_array().expect("row");
+            row[7].is_null().then(|| format!("{}|{}|{}|{}", row[0], row[1], row[2], row[3]))
+        })
+        .collect();
+
+    let rows = on_fresh_thread(move || {
+        stub_wmi_for(platform)
+            .class(
+                "Win32_Processor",
+                vec![WmiObject::new()
+                    .with("Name", cpu.as_str())
+                    .with("Manufacturer", "GenuineIntel")
+                    .with("NumberOfCores", 8i64)
+                    .with("NumberOfLogicalProcessors", 32i64)],
+            )
+            .install();
+        memory_hardware(include_str!("expected/memory-lga1851.json"));
+        build_timings(platform)
+            .iter()
+            .filter(|row| !row.extra.contains_key(super::sensors::PARENT_ROW_KEY))
+            .map(|got| {
+                let key = format!("{:?}|{:?}|{:?}|{:?}", got.tab, got.category, got.column, got.name);
+                let value = if nulls.contains(&key) {
+                    serde_json::Value::Null
+                } else {
+                    crate::display_values::read_value(got, None, "N/A").into()
+                };
+                serde_json::json!([got.tab, got.category, got.column, got.name, got.label(), got.is_dual(), got.live, value])
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let body: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            let fields: Vec<String> =
+                row.as_array().expect("row").iter().map(|field| serde_json::to_string(field).unwrap()).collect();
+            format!("[{}]", fields.join(", "))
+        })
+        .collect();
+    let text = format!(
+        "{{\"platform\": {}, \"cpu\": {}, \"rows\": [\n{}\n]}}\n",
+        serde_json::to_string(platform.id()).unwrap(),
+        serde_json::to_string(&header_cpu).unwrap(),
+        body.join(",\n")
+    );
+    std::fs::write(out, text).unwrap();
+}
+
+#[test]
 fn register_map_parity_lga1700_ddr4() {
     assert_register_map_parity(DDR4, include_str!("expected/mem-lga1700-ddr4.json"), include_str!("expected/memory-lga1700.json"));
 }
@@ -2972,9 +3042,20 @@ fn hashed_table(config: &Hashed) -> Vec<serde_json::Value> {
         rows.iter()
             .filter(|row| !row.extra.contains_key(super::sensors::PARENT_ROW_KEY))
             .map(|got| {
-                // These rows depend on Windows CPU topology or performance
-                // counters, not the synthetic register map or WMI inventory.
-                let value = if got.tab == "Sensors" || got.tab == "CPU" || matches!(got.name.as_str(), "Core Types" | "Core Ratio") {
+                // Whatever the row reads from the machine rather than from the
+                // synthetic register map or the WMI inventory: the live
+                // counters and sensors, the rails behind the SMBus, the card,
+                // and the handful of registry and firmware readings. A
+                // fixture cannot carry those -- they are whatever the bench
+                // that wrote it happened to answer -- so they are compared by
+                // shape alone.
+                // The card's own name is the exception in Graphics: it comes
+                // from the stub's video-controller inventory, where the rows
+                // under it come from the driver on the bench.
+                let value = if matches!(got.tab.as_str(), "Sensors" | "CPU" | "Voltages")
+                    || (got.category == "Graphics" && got.name != "GPU")
+                    || matches!(got.name.as_str(), "Core Types" | "Core Ratio" | "OS" | "OS Version" | "Microcode" | "LPCIO")
+                {
                     serde_json::Value::Null
                 } else {
                     crate::display_values::read_value(got, None, "N/A").into()
@@ -3008,14 +3089,84 @@ fn hashed_register_dump() {
         layout: &layout,
         pid: &pid,
     });
-    let body: Vec<String> = rows.iter().map(|row| serde_json::to_string(row).unwrap()).collect();
+    // Written as the fixtures beside it are: every input that produced the
+    // table in the header, so a file can be regenerated from itself, and one
+    // row a line with a space after each comma. Without the inputs the output
+    // was not a fixture -- `assert_hashed_parity` reads the seed and the
+    // mode back out of the file -- and without the spacing a regenerated
+    // fixture differed from the one it replaced on all 322 lines, which
+    // hides the handful that actually moved.
+    let row_text = |row: &serde_json::Value| {
+        let fields: Vec<String> =
+            row.as_array().expect("row").iter().map(|field| serde_json::to_string(field).unwrap()).collect();
+        format!("[{}]", fields.join(", "))
+    };
+    let body: Vec<String> = rows.iter().map(row_text).collect();
+    let quoted = |text: &str| serde_json::to_string(text).unwrap();
     let text = format!(
-        "{{\"platform\": {}, \"cpu\": {}, \"rows\": [\n{}\n]}}\n",
-        serde_json::to_string(platform.id()).unwrap(),
-        serde_json::to_string(&var("FZ_CPU")).unwrap(),
+        "{{\"platform\": {}, \"cpu\": {}, \"seed\": {}, \"mode\": {}, \"profile\": {}, \"layout\": {}, \"pid\": {}, \"rows\": [\n{}\n]}}\n",
+        quoted(platform.id()),
+        quoted(&var("FZ_CPU")),
+        var("FZ_SEED"),
+        quoted(&var("FZ_MODE")),
+        quoted(&profile),
+        quoted(&layout),
+        quoted(&pid),
         body.join(",\n")
     );
     std::fs::write(var("FZ_OUT"), text).unwrap();
+}
+
+// --- Installed capacity, which deliberately differs from Python 1.1.0.
+//
+// Python read Win32_ComputerSystem.TotalPhysicalMemory, which is what the OS
+// can address rather than what is installed. On the Z890 bench 64 GiB of
+// modules reported 63.468 GiB there and the Summary printed 63GB beside an
+// SPD tab reading 32 GB a module. The hashed fixtures for the four-DIMM and
+// one-DIMM layouts carry the new sums for the same reason: their stub said
+// 32GB whatever the inventory held.
+
+#[test]
+fn capacity_is_the_sum_of_the_installed_modules() {
+    FakeWmi::new()
+        .class(
+            "Win32_PhysicalMemory",
+            vec![
+                WmiObject::new().with("Capacity", (32u64 * 1024 * 1024 * 1024).to_string()),
+                WmiObject::new().with("Capacity", (32u64 * 1024 * 1024 * 1024).to_string()),
+            ],
+        )
+        // What the OS can address, a reserved range short of the 64 GiB fitted.
+        .class("Win32_ComputerSystem", vec![WmiObject::new().with("TotalPhysicalMemory", "68148305920")])
+        .install();
+    assert_eq!(get_total_physical_memory(Platform::Lga1851), "64GB");
+}
+
+#[test]
+fn capacity_falls_back_to_the_os_total_when_no_module_is_listed() {
+    FakeWmi::new()
+        .class("Win32_PhysicalMemory", vec![])
+        .class(
+            "Win32_ComputerSystem",
+            vec![WmiObject::new().with("TotalPhysicalMemory", (32u64 * 1024 * 1024 * 1024).to_string())],
+        )
+        .install();
+    assert_eq!(get_total_physical_memory(Platform::Lga1851), "32GB");
+}
+
+#[test]
+fn an_empty_socket_does_not_count_towards_capacity() {
+    FakeWmi::new()
+        .class(
+            "Win32_PhysicalMemory",
+            vec![
+                WmiObject::new().with("Capacity", (16u64 * 1024 * 1024 * 1024).to_string()),
+                WmiObject::new().with("Capacity", "0"),
+            ],
+        )
+        .class("Win32_ComputerSystem", vec![WmiObject::new().with("TotalPhysicalMemory", "68148305920")])
+        .install();
+    assert_eq!(get_total_physical_memory(Platform::Lga1851), "16GB");
 }
 
 // --- Parity fixes found by the audit against Python 1.1.0.

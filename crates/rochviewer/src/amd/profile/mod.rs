@@ -61,8 +61,8 @@ use crate::amd::timings::{ALL_OFFSETS, DecodedChannel, Registers, UMC_BASES, Umc
 use crate::hardware::driver_path::DLL_NAME;
 use crate::memo::{Memo, MemoMap};
 use crate::platform_profiles::{is_granite_ridge_cpu, is_raphael_cpu};
-use crate::amd::py_float::PyFloat;
-use crate::pyfmt::{float_str, round_int};
+use crate::amd::float_text::FloatText;
+use crate::numfmt::{float_str, round_int};
 use crate::row::{ActionFn, Extra, PredFn, Row, Side, Value};
 use crate::sensors::am5_board_rails::{BOARD_FANS, BOARD_VOLTAGES};
 use crate::sensors::voltage_rails::{
@@ -81,17 +81,16 @@ mod scenarios;
 
 pub const EM_DASH: &str = "—";
 
-/// Python's `str.strip()` with no argument, which this profile ported as
-/// `trim()`. The two disagree on the four information separators,
-/// ``-``: Python strips them as whitespace and Rust keeps them, so a
-/// firmware string ending in one read differently.
-trait PyStrip {
-    fn py_strip(&self) -> &str;
+/// `str::trim`, widened to the four information separators 0x1C-0x1F that
+/// firmware embeds in its strings and `trim` leaves in place. A value ending
+/// in one read as a different value until this trimmed it.
+trait TrimSpaces {
+    fn trim_spaces(&self) -> &str;
 }
 
-impl PyStrip for str {
-    fn py_strip(&self) -> &str {
-        crate::system_identity::py_strip(self)
+impl TrimSpaces for str {
+    fn trim_spaces(&self) -> &str {
+        crate::system_identity::trim_spaces(self)
     }
 }
 
@@ -182,7 +181,7 @@ impl Reading {
             Reading::Float(value) => Some(*value),
             Reading::Bool(value) => Some(if *value { 1.0 } else { 0.0 }),
             Reading::Text(text) => {
-                let text = text.py_strip();
+                let text = text.trim_spaces();
                 text.parse::<f64>().ok().filter(|_| !text.is_empty())
             }
             Reading::Dash => None,
@@ -195,7 +194,7 @@ impl Reading {
             Reading::Int(value) => Some(*value),
             Reading::Float(value) if value.is_finite() => Some(value.trunc() as i64),
             Reading::Bool(value) => Some(*value as i64),
-            Reading::Text(text) => text.py_strip().parse().ok(),
+            Reading::Text(text) => text.trim_spaces().parse().ok(),
             _ => None,
         }
     }
@@ -703,7 +702,7 @@ impl Am5Runtime {
                         let parts: Vec<String> = r
                             .iter()
                             .map(|(channel, celsius)| {
-                                format!("Ch{} {:.1} C", channel.to_uppercase(), PyFloat(*celsius))
+                                format!("Ch{} {:.1} C", channel.to_uppercase(), FloatText(*celsius))
                             })
                             .collect();
                         format!("DDR5 SPD hub READ-ONLY — {}", parts.join(", "))
@@ -971,7 +970,7 @@ impl Am5Runtime {
         let mut state = lock(&self.agesa);
         if !state.attempted {
             state.attempted = true;
-            let version = guarded(read_agesa_version_inpout).unwrap_or_default().py_strip().to_string();
+            let version = guarded(read_agesa_version_inpout).unwrap_or_default().trim_spaces().to_string();
             state.agesa = if version.is_empty() { None } else { Some(version) };
         }
         state.agesa.clone().unwrap_or_else(|| EM_DASH.to_string())
@@ -1289,7 +1288,7 @@ fn format_umc_channel(
 /// would have raised.
 fn decimal_text(value: &Reading, decimals: usize, suffix: &str) -> String {
     match value.as_f64() {
-        Some(number) => format!("{:.decimals$}{suffix}", PyFloat(number)),
+        Some(number) => format!("{:.decimals$}{suffix}", FloatText(number)),
         None => EM_DASH.to_string(),
     }
 }
@@ -1377,7 +1376,7 @@ fn thermal_limit_only(runtime: &Arc<Am5Runtime>) -> Getter {
         };
         match power.temperatures.get("cpu_limit") {
             None => EM_DASH.to_string(),
-            Some(limit) => format!("{:.1} °C", PyFloat(*limit)),
+            Some(limit) => format!("{:.1} °C", FloatText(*limit)),
         }
     })
 }
@@ -1560,7 +1559,7 @@ fn read_system_info(field: &str) -> String {
 /// raised and the reading fell back to the em dash.
 fn first_text(class_name: &str, field: &str) -> Result<Option<String>, ()> {
     let objects = wmi_util::query(class_name).map_err(|_| ())?;
-    Ok(objects.first().map(|object| object.str_or_empty(field).py_strip().to_string()))
+    Ok(objects.first().map(|object| object.str_or_empty(field).trim_spaces().to_string()))
 }
 
 /// One WMI reading through the shared connection.
@@ -1568,12 +1567,12 @@ fn read_system_info_from(field: &str) -> String {
     let attempt = || -> Result<String, ()> {
         match field {
             "cpu" => {
-                let name = processor_facts().text("name").unwrap_or_default().py_strip().to_string();
+                let name = processor_facts().text("name").unwrap_or_default().trim_spaces().to_string();
                 Ok(if name.is_empty() { EM_DASH.into() } else { name })
             }
             "manufacturer" => {
                 let maker =
-                    processor_facts().text("manufacturer").unwrap_or_default().py_strip().to_string();
+                    processor_facts().text("manufacturer").unwrap_or_default().trim_spaces().to_string();
                 Ok(if maker.is_empty() { EM_DASH.into() } else { maker })
             }
             "l3_cache" => Ok(cache_text(processor_facts().get("l3_kb"))),
@@ -1591,7 +1590,7 @@ fn read_system_info_from(field: &str) -> String {
                 let Some(board) = boards.first() else {
                     return Ok(EM_DASH.into());
                 };
-                Ok(board.text("Product").ok_or(())?.py_strip().to_string())
+                Ok(board.text("Product").ok_or(())?.trim_spaces().to_string())
             }
             "board_revision" => {
                 let version = first_text("Win32_BaseBoard", "Version")?.unwrap_or_default();
@@ -1604,7 +1603,7 @@ fn read_system_info_from(field: &str) -> String {
                 let Some(board) = boards.first() else {
                     return Ok(EM_DASH.into());
                 };
-                let vendor = board.str_or_empty("Manufacturer").py_strip().to_string();
+                let vendor = board.str_or_empty("Manufacturer").trim_spaces().to_string();
                 Ok(if vendor.is_empty() { EM_DASH.into() } else { vendor })
             }
             "bios" => {
@@ -1612,7 +1611,7 @@ fn read_system_info_from(field: &str) -> String {
                 let Some(first) = bios.first() else {
                     return Ok(EM_DASH.into());
                 };
-                Ok(first.text("SMBIOSBIOSVersion").ok_or(())?.py_strip().to_string())
+                Ok(first.text("SMBIOSBIOSVersion").ok_or(())?.trim_spaces().to_string())
             }
             "bios_date" => {
                 // The version string alone does not say how old a build is,
@@ -1633,7 +1632,7 @@ fn read_system_info_from(field: &str) -> String {
             "agesa" => {
                 // Filled by Am5Runtime::agesa() via physical marker scan; keep a
                 // direct fallback here for any non-runtime callers.
-                let version = read_agesa_version_inpout().py_strip().to_string();
+                let version = read_agesa_version_inpout().trim_spaces().to_string();
                 Ok(if version.is_empty() { EM_DASH.into() } else { version })
             }
             "bclk" => {
@@ -1653,7 +1652,7 @@ fn read_system_info_from(field: &str) -> String {
             "gpu" => {
                 let mut names: Vec<String> = Vec::new();
                 for adapter in wmi_util::query("Win32_VideoController").map_err(|_| ())? {
-                    let name = adapter.str_or_empty("Name").py_strip().to_string();
+                    let name = adapter.str_or_empty("Name").trim_spaces().to_string();
                     // Skip the fallback driver Windows installs before the
                     // real one; it is not the card in the machine.
                     if !name.is_empty() && !name.contains("Basic Display") && !names.contains(&name) {
@@ -1667,8 +1666,8 @@ fn read_system_info_from(field: &str) -> String {
                 let Some(system) = systems.first() else {
                     return Ok(EM_DASH.into());
                 };
-                let caption = system.str_or_empty("Caption").py_strip().replace("Microsoft ", "");
-                let build = system.str_or_empty("BuildNumber").py_strip().to_string();
+                let caption = system.str_or_empty("Caption").trim_spaces().replace("Microsoft ", "");
+                let build = system.str_or_empty("BuildNumber").trim_spaces().to_string();
                 Ok(if build.is_empty() { caption } else { format!("{caption} (build {build})") })
             }
             "memory" => {
@@ -1723,7 +1722,7 @@ fn dimm_value(field: &'static str) -> Getter {
                 }
             }
             return shared_value(&read_modules(false), |module| {
-                let maker = module.module_manufacturer.py_strip().to_lowercase();
+                let maker = module.module_manufacturer.trim_spaces().to_lowercase();
                 if maker.is_empty() || maker == "unknown" {
                     None
                 } else {
@@ -1886,7 +1885,7 @@ pub const BOARD_REVISION_PLACEHOLDERS: &[&str] =
 
 /// The board revision, or the em dash where the firmware left none.
 pub fn board_revision_text(version: Option<&str>) -> String {
-    let version = version.unwrap_or("").py_strip();
+    let version = version.unwrap_or("").trim_spaces();
     if version.is_empty() || BOARD_REVISION_PLACEHOLDERS.contains(&version.to_lowercase().as_str()) {
         return EM_DASH.into();
     }
@@ -1897,7 +1896,7 @@ pub fn board_revision_text(version: Option<&str>) -> String {
 pub fn cache_text(kilobytes: Option<&WmiValue>) -> String {
     let Some(kilobytes) = kilobytes.and_then(|value| match value {
         // int() of a float string raises; of a whole float it truncates.
-        WmiValue::Str(text) => text.py_strip().parse::<i64>().ok(),
+        WmiValue::Str(text) => text.trim_spaces().parse::<i64>().ok(),
         other => other.to_i64(),
     }) else {
         return EM_DASH.into();
@@ -1934,7 +1933,7 @@ fn silicon_value(index: usize) -> Getter {
 }
 
 fn cpu_package() -> String {
-    let value = processor_facts().text("socket").unwrap_or_default().py_strip().to_string();
+    let value = processor_facts().text("socket").unwrap_or_default().trim_spaces().to_string();
     if value.is_empty() { EM_DASH.into() } else { value }
 }
 
@@ -2023,7 +2022,7 @@ fn identity(reader: &str) -> String {
 /// so "(x64)\x1f 24H2" or "(x64)" then a no-break space split there and did
 /// not split here.
 fn os_architecture_end(text: &str) -> Option<usize> {
-    let is_space = |c: char| c.is_whitespace() || ('\x1c'..='\x1f').contains(&c);
+    let is_space = crate::system_identity::is_space;
     text.char_indices().find_map(|(start, _)| {
         let rest = &text[start..];
         let tag = rest.get(..5)?.to_ascii_lowercase();
@@ -2046,7 +2045,7 @@ pub fn os_part(index: usize) -> String {
     let Some(end) = os_architecture_end(&text) else {
         return if index == 0 { text } else { EM_DASH.into() };
     };
-    let part = if index == 0 { text[..end].py_strip() } else { text[end..].py_strip() };
+    let part = if index == 0 { text[..end].trim_spaces() } else { text[end..].trim_spaces() };
     if part.is_empty() { EM_DASH.into() } else { part.to_string() }
 }
 
@@ -2120,7 +2119,7 @@ fn dram_ratio(runtime: &Am5Runtime) -> String {
     }
     // Two decimals at most, and none that are zero: 64, not 64.00,
     // while an off-100 base clock still shows its 59.7.
-    format!("{:.2}", PyFloat(2.0 * mclk / base)).trim_end_matches('0').trim_end_matches('.').to_string()
+    format!("{:.2}", FloatText(2.0 * mclk / base)).trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
 fn temperature(runtime: &Arc<Am5Runtime>, key: &'static str) -> Getter {
@@ -2131,7 +2130,7 @@ fn temperature(runtime: &Arc<Am5Runtime>, key: &'static str) -> Getter {
         };
         match power.temperatures.get(key) {
             None => EM_DASH.into(),
-            Some(celsius) => format!("{:.1} °C", PyFloat(*celsius)),
+            Some(celsius) => format!("{:.1} °C", FloatText(*celsius)),
         }
     })
 }
@@ -2141,7 +2140,7 @@ pub fn dimm_temperature(runtime: &Arc<Am5Runtime>, channel: &'static str) -> Val
     let runtime = runtime.clone();
     lazy(getter(move || match runtime.dimm_temperatures().get(channel) {
         None => EM_DASH.into(),
-        Some(celsius) => format!("{:.1} °C", PyFloat(*celsius)),
+        Some(celsius) => format!("{:.1} °C", FloatText(*celsius)),
     }))
 }
 
@@ -2181,7 +2180,7 @@ fn format_refi_ns(runtime: &Arc<Am5Runtime>, channel: Option<&'static str>) -> G
         if megahertz <= 0.0 {
             return EM_DASH.into();
         }
-        format!("{:.0} ns", PyFloat(cycles / megahertz * 1000.0))
+        format!("{:.0} ns", FloatText(cycles / megahertz * 1000.0))
     })
 }
 
@@ -2210,14 +2209,14 @@ fn format_rfc_ns(runtime: &Arc<Am5Runtime>, channel: Option<&'static str>) -> Ge
             return EM_DASH.into();
         };
         if refresh_is_normal(&runtime, channel) {
-            return format!("{:.0} ns", PyFloat(primary));
+            return format!("{:.0} ns", FloatText(primary));
         }
         let same_bank = read("tRFCsb_ns");
         if same_bank.is_dash() {
-            return format!("{:.0} ns", PyFloat(primary));
+            return format!("{:.0} ns", FloatText(primary));
         }
         match same_bank.as_f64() {
-            Some(same_bank) => format!("{:.0}/{:.0} ns", PyFloat(primary), PyFloat(same_bank)),
+            Some(same_bank) => format!("{:.0}/{:.0} ns", FloatText(primary), FloatText(same_bank)),
             None => EM_DASH.into(),
         }
     })
@@ -2396,7 +2395,7 @@ fn voltage_snapshot_rows(runtime: &Arc<Am5Runtime>) -> Vec<Row> {
                     values.insert(
                         format!("{channel}{key}"),
                         match raw {
-                            Some(raw) => format!("{:.3} V", PyFloat(raw / 1000.0)),
+                            Some(raw) => format!("{:.3} V", FloatText(raw / 1000.0)),
                             None => EM_DASH.into(),
                         },
                     );
@@ -2461,8 +2460,9 @@ fn voltage_snapshot_rows(runtime: &Arc<Am5Runtime>) -> Vec<Row> {
     rows
 }
 
-/// Python's `str.splitlines()`: every line boundary Python recognises.
-fn py_splitlines(text: &str) -> Vec<&str> {
+/// Split on every line boundary, the Unicode ones included: firmware text
+/// arrives with more than newlines in it.
+fn split_lines(text: &str) -> Vec<&str> {
     let mut lines = Vec::new();
     let mut start = 0;
     let mut chars = text.char_indices().peekable();
@@ -2498,11 +2498,11 @@ fn py_splitlines(text: &str) -> Vec<&str> {
 /// tabs already carries the explanation. Split on ". " rather than "." for
 /// the reason the notice gives: the first sentence ends in a filename.
 pub fn status_headline(text: &str) -> String {
-    let lines = py_splitlines(text.py_strip());
+    let lines = split_lines(text.trim_spaces());
     let Some(first) = lines.first() else {
         return String::new();
     };
-    first.split(". ").next().unwrap_or("").py_strip().trim_end_matches('.').to_string()
+    first.split(". ").next().unwrap_or("").trim_spaces().trim_end_matches('.').to_string()
 }
 
 /// Why no transport could read, when the driver is that reason.
@@ -2524,7 +2524,7 @@ fn driver_problem(statuses: &[&str]) -> Option<String> {
 /// its headline is kept: the line should grow exactly when it has something
 /// to say.
 pub fn status_tail(text: &str, prefix: &str, ok: &str) -> String {
-    let text = text.py_strip();
+    let text = text.trim_spaces();
     if text.is_empty() {
         return EM_DASH.into();
     }
@@ -2532,7 +2532,7 @@ pub fn status_tail(text: &str, prefix: &str, ok: &str) -> String {
         return status_headline(text);
     }
     match text.split_once('—') {
-        Some((_label, tail)) if !tail.py_strip().is_empty() => tail.py_strip().to_string(),
+        Some((_label, tail)) if !tail.trim_spaces().is_empty() => tail.trim_spaces().to_string(),
         _ => ok.to_string(),
     }
 }
@@ -2544,13 +2544,13 @@ static HEX_NUMBER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"0x[0-9A-Fa-f]
 /// The version is the gate: a BIOS shipping a different one blanks every rail
 /// and every power reading, so it is the first thing worth seeing.
 pub fn pm_table_segment(status: &str) -> String {
-    let status = status.py_strip();
+    let status = status.trim_spaces();
     if !status.starts_with("RSMU") {
         let headline = status_headline(status);
         return if headline.is_empty() { EM_DASH.into() } else { headline };
     }
     let (head, detail) = match status.split_once('—') {
-        Some((head, tail)) => (head, tail.py_strip().replace("rail(s)", "rails")),
+        Some((head, tail)) => (head, tail.trim_spaces().replace("rail(s)", "rails")),
         None => (status, String::new()),
     };
     let version = HEX_NUMBER.find(head).map(|found| found.as_str()).unwrap_or("?");
@@ -2632,7 +2632,7 @@ fn thermal_limit(runtime: &Arc<Am5Runtime>) -> Getter {
         else {
             return EM_DASH.into();
         };
-        format!("{:.1} / {:.1} °C", PyFloat(*current), PyFloat(*limit))
+        format!("{:.1} / {:.1} °C", FloatText(*current), FloatText(*limit))
     })
 }
 
@@ -2740,7 +2740,7 @@ fn board_temperature(runtime: &Arc<Am5Runtime>, key: &'static str) -> Getter {
     let runtime = runtime.clone();
     getter(move || match runtime.board_temperatures().get(key) {
         None => EM_DASH.into(),
-        Some(celsius) => format!("{:.1} °C", PyFloat(*celsius)),
+        Some(celsius) => format!("{:.1} °C", FloatText(*celsius)),
     })
 }
 
@@ -2772,8 +2772,8 @@ enum BoardForm {
 impl BoardForm {
     fn apply(self, value: f64) -> String {
         match self {
-            BoardForm::Celsius => format!("{:.1} °C", PyFloat(value)),
-            BoardForm::Volts => format!("{:.3} V", PyFloat(value)),
+            BoardForm::Celsius => format!("{:.1} °C", FloatText(value)),
+            BoardForm::Volts => format!("{:.3} V", FloatText(value)),
             BoardForm::Rpm => format!("{} RPM", value.trunc() as i64),
         }
     }

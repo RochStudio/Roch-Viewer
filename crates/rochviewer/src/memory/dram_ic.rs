@@ -10,14 +10,14 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use crate::system_identity::py_isspace;
+use crate::system_identity::is_space;
 
 /// `re.sub(r"\s+", "", value.upper())`. Python's `\s` is every character
 /// `str.isspace()` accepts -- a no-break space, an ideographic space, the
 /// 0x1C-0x1F separators -- where regex-lite's is ASCII only, so the filter is
 /// written out rather than left to the regex.
 fn clean(value: &str) -> String {
-    value.to_uppercase().chars().filter(|c| !py_isspace(*c)).collect()
+    value.to_uppercase().chars().filter(|c| !is_space(*c)).collect()
 }
 
 fn joined(values: &[&str]) -> String {

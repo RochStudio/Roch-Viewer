@@ -36,7 +36,7 @@ impl WmiValue {
             WmiValue::Bool(b) => Some(if *b { "True".into() } else { "False".into() }),
             WmiValue::Int(i) => Some(i.to_string()),
             WmiValue::UInt(u) => Some(u.to_string()),
-            WmiValue::Float(f) => Some(crate::pyfmt::float_str(*f)),
+            WmiValue::Float(f) => Some(crate::numfmt::float_str(*f)),
             WmiValue::Str(s) => Some(s.clone()),
             WmiValue::Array(items) => Some(format!(
                 "({})",

@@ -12,7 +12,7 @@ pub mod apob;
 pub mod fch_smbus;
 pub mod power_metrics;
 pub mod profile;
-pub mod py_float;
+pub mod float_text;
 pub mod smn;
 pub mod smn_mcfg;
 pub mod smu_clocks;

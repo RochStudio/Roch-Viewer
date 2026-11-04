@@ -1,11 +1,13 @@
-//! Python-compatible text formatting.
+//! How this viewer writes numbers.
 //!
-//! Display strings are compared against what the Python version printed, so
-//! the few places Rust's defaults differ are written out here once:
-//! `str(float)` keeps a trailing `.0` and switches to exponent form outside
-//! [1e-4, 1e16), and `round()` rounds half to even.
+//! Rust's own defaults differ from the format the readings are published in,
+//! so the rules are written out here once: a float keeps a trailing `.0` on a
+//! whole number and switches to exponent form outside [1e-4, 1e16), and
+//! rounding is half to even on the value's exact binary form.
 
-/// Python's `str(x)` / `repr(x)` for a float.
+/// A float as this viewer prints it: the shortest digits that read back as
+/// the same value, a trailing `.0` on a whole number, and exponent form
+/// outside [1e-4, 1e16).
 pub fn float_str(value: f64) -> String {
     if value.is_nan() {
         return "nan".into();
@@ -19,16 +21,15 @@ pub fn float_str(value: f64) -> String {
     let abs = value.abs();
     let exp10 = format!("{abs:e}").split_once('e').and_then(|(_, e)| e.parse::<i32>().ok()).unwrap_or(0);
     if (1e-4..1e16).contains(&abs) {
-        // Rust's Display is shortest-round-trip like Python's repr, but drops
-        // the ".0" of a whole number.
+        // Rust's Display already picks the shortest round-tripping digits,
+        // but drops the ".0" of a whole number.
         let mut text = format!("{value}");
         if significant_digits(&text) == 17 {
-            // Both pick the shortest digits that read back as the same
-            // float, but when that takes all 17 and the true value sits
-            // exactly between two of them, Python takes the even one
-            // (191966.68188476562) where Rust's shortest form does not.
+            // When the shortest form takes all 17 digits and the true value
+            // sits exactly between two of them, the even one is wanted
+            // (191966.68188476562); Rust's shortest form picks the other.
             // Fixed-precision formatting rounds the exact value half to
-            // even, which is Python's choice.
+            // even, so the digits come from there.
             let decimals = (16 - exp10).max(0) as usize;
             text = format!("{value:.decimals$}");
         }
@@ -54,14 +55,14 @@ fn significant_digits(text: &str) -> usize {
         .count()
 }
 
-/// Python's `round(x, ndigits)` for a float.
+/// Round a float to `ndigits`, half to even.
 ///
-/// Python rounds the float's exact binary value, half to even only on a true
-/// tie: 99.65 is stored a hair above 99.65, so it becomes 99.7. Scaling by
-/// ten first (996.5, an exact tie after the multiply) and rounding that gave
-/// 99.6 -- which is how BCLK 99.65 MHz once made DDR5-7976 read 7968. Rust's
-/// fixed-precision formatting works from the exact value with the same tie
-/// rule, so the digits come from there.
+/// The rounding is of the value's exact binary form, so half to even applies
+/// only on a true tie: 99.65 is stored a hair above 99.65 and so becomes
+/// 99.7. Scaling by ten first (996.5, an exact tie after the multiply) and
+/// rounding that gave 99.6 -- which is how BCLK 99.65 MHz once made DDR5-7976
+/// read 7968. Rust's fixed-precision formatting works from the exact value
+/// with the same tie rule, so the digits come from there.
 pub fn round_half_even(value: f64, ndigits: i32) -> f64 {
     if !value.is_finite() {
         return value;
@@ -77,13 +78,16 @@ pub fn round_half_even(value: f64, ndigits: i32) -> f64 {
     result * factor
 }
 
-/// Python's `round(x)` with no digits: an integer, half to even.
+/// Round to a whole number, half to even.
 pub fn round_int(value: f64) -> i64 {
     round_half_even(value, 0) as i64
 }
 
-/// Python's `"%.Nf" % x`. Both languages format the exact binary value, so
-/// this is Rust's `{:.N}`; it exists so ported code reads like the original.
+/// A float to a fixed number of decimals.
+///
+/// Rust's `{:.N}` formats the exact binary value, which is what the readings
+/// want; this names the operation where it is used as a value rather than in
+/// a format string.
 pub fn fixed(value: f64, decimals: usize) -> String {
     format!("{value:.decimals$}")
 }
@@ -93,7 +97,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn floats_match_python_str() {
+    fn floats_print_in_the_viewers_format() {
         assert_eq!(float_str(1.0), "1.0");
         assert_eq!(float_str(1.25), "1.25");
         assert_eq!(float_str(0.1 + 0.2), "0.30000000000000004");
@@ -101,7 +105,7 @@ mod tests {
         assert_eq!(float_str(1e16), "1e+16");
         assert_eq!(float_str(1.5e-5), "1.5e-05");
         assert_eq!(float_str(-2.0), "-2.0");
-        // Seventeen digits on an exact tie: Python's repr takes the even one.
+        // Seventeen digits on an exact tie: the even one is wanted.
         assert_eq!(float_str(191966.681884765625), "191966.68188476562");
         assert_eq!(float_str(123456.789012345678), "123456.78901234567");
         assert_eq!(float_str(1e15 + 0.3), "1000000000000000.2");
@@ -115,8 +119,9 @@ mod tests {
         assert_eq!(round_half_even(2.5, 0), 2.0);
         assert_eq!(round_half_even(3.5, 0), 4.0);
         assert_eq!(round_half_even(1.234, 2), 1.23);
-        // Stored above the tie, as Python sees it: round(99.65, 1) == 99.7,
-        // round(2.675, 2) == 2.67 (stored below), round(0.125, 2) == 0.12.
+        // What the stored value actually is decides these: 99.65 sits above
+        // the tie and gives 99.7, 2.675 sits below and gives 2.67, and 0.125
+        // is a true tie, so half to even gives 0.12.
         assert_eq!(round_half_even(99.65, 1), 99.7);
         assert_eq!(round_half_even(2.675, 2), 2.67);
         assert_eq!(round_half_even(0.125, 2), 0.12);

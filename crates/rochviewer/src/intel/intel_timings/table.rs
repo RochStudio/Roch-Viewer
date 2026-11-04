@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::hardware::read::DynamicParams;
 
+use crate::platform_profiles::Platform;
 use super::build::Build;
 use super::dict::{T, V, bits, lazy, no_bits, opt, text};
 use super::identity::{detect_dual_channel_memory, get_cpu_name, get_motherboard_name, get_total_physical_memory};
@@ -200,6 +201,17 @@ fn rtl_spacer(category: &str, column: &str) -> T {
 pub(crate) fn declared(b: &Build) -> Vec<T> {
     let f = &b.f;
     let platform = b.platform;
+    // Which command class the controller programmed the command-bus mode
+    // registers under -- RTT Park and the CA/CS/CK ODT groups.
+    //
+    // The table at 0xE600 keys an entry on the register and a two-bit command
+    // in bits 23:22, and a row that asks for the wrong one matches nothing and
+    // is dropped, which is why these eight rows had never appeared on an
+    // Arrow Lake bench. Dumping the table on the Z890 shows why: its 64
+    // entries hold RTT Park (0x08), RTT Park DQS (0x06), CA ODT A (0x05) and
+    // CS ODT A (0x02) under command 0, and every command 1 entry it has is
+    // for register 0x00. LGA1700 keeps the 1 it was verified with.
+    let command_bus_mr = if platform == Platform::Lga1851 { 0 } else { 1 };
     let mut rows = vec![
         val("CPU", text(get_cpu_name()), "General", "CPU", "Left", false),
         val("Motherboard", opt(get_motherboard_name()), "General", "CPU", "Left", false),
@@ -383,15 +395,15 @@ pub(crate) fn declared(b: &Build) -> Vec<T> {
         training_mr("RTT WR", "RTT", 0x22, 3, 3, 0, f.rtt_wr.clone()),
         training_mr("RTT NOM RD", "RTT", 0x23, 3, 3, 0, f.rtt_nom_rd.clone()),
         training_mr("RTT NOM WR", "RTT", 0x23, 0, 3, 0, f.rtt_nom_wr.clone()),
-        training_mr("RTT PARK", "RTT", 0x08, 0, 3, 1, f.rtt_park.clone()),
-        training_mr("RTT PARK DQS", "RTT", 0x06, 0, 3, 1, f.dqs_rtt_park.clone()),
+        training_mr("RTT PARK", "RTT", 0x08, 0, 3, command_bus_mr, f.rtt_park.clone()),
+        training_mr("RTT PARK DQS", "RTT", 0x06, 0, 3, command_bus_mr, f.dqs_rtt_park.clone()),
         training_mr("RTT LOOPBACK", "RTT", 0x24, 0, 3, 0, f.rtt_loopback.clone()),
-        training_mr("CA ODT GROUP A", "ODT", 0x05, 0, 3, 1, f.ca_odt.clone()),
-        training_mr("CS ODT GROUP A", "ODT", 0x02, 0, 3, 1, f.cs_odt.clone()),
-        training_mr("CK ODT GROUP A", "ODT", 0x01, 0, 3, 1, f.ck_odt.clone()),
-        training_mr("CA ODT GROUP B", "ODT", 0x07, 0, 3, 1, f.ca_odt.clone()),
-        training_mr("CS ODT GROUP B", "ODT", 0x04, 0, 3, 1, f.cs_odt.clone()),
-        training_mr("CK ODT GROUP B", "ODT", 0x03, 0, 3, 1, f.ck_odt.clone()),
+        training_mr("CA ODT GROUP A", "ODT", 0x05, 0, 3, command_bus_mr, f.ca_odt.clone()),
+        training_mr("CS ODT GROUP A", "ODT", 0x02, 0, 3, command_bus_mr, f.cs_odt.clone()),
+        training_mr("CK ODT GROUP A", "ODT", 0x01, 0, 3, command_bus_mr, f.ck_odt.clone()),
+        training_mr("CA ODT GROUP B", "ODT", 0x07, 0, 3, command_bus_mr, f.ca_odt.clone()),
+        training_mr("CS ODT GROUP B", "ODT", 0x04, 0, 3, command_bus_mr, f.cs_odt.clone()),
+        training_mr("CK ODT GROUP B", "ODT", 0x03, 0, 3, command_bus_mr, f.ck_odt.clone()),
         training_mr("PULL UP", "RON", 0x05, 1, 2, 0, f.ron.clone()),
         training_mr("PULL DN", "RON", 0x05, 6, 2, 0, f.ron.clone()),
         reg("WrDS Up", 0x2CE8, "VREF", "Training", 0, 8, "Right"),
