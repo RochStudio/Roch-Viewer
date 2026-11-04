@@ -58,6 +58,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::hardware::pci_mcfg::{McfgAllocation, default_allocation, ecam_address};
 use crate::hardware::{self, Hardware};
+use crate::memo::Memo;
 use crate::memory::ddr5_telemetry::{
     BusMutex, NamedBusMutex, SmbusError, SmbusOptions, SmbusReader, SpdBytes, monotonic, sleep_seconds,
 };
@@ -231,6 +232,14 @@ fn config_dword(allocation: &McfgAllocation, bus: u8, function: u8, offset: u16)
 static LAST_BUS: AtomicU16 = AtomicU16::new(NO_BUS_HINT);
 const NO_BUS_HINT: u16 = u16::MAX;
 
+/// What the search found for this machine, the failure included.
+///
+/// Only ever set once configuration space actually answered. Called before
+/// the driver is up, the scan reads nothing and concludes nothing is there,
+/// and caching that would leave the viewer saying so for the rest of the
+/// session -- the same trap `mode_register_table_populated` sidesteps.
+static BASE_CACHE: Memo<Result<u16, String>> = Memo::new();
+
 /// The buses to search, the likeliest first: the hint, then the bus every
 /// validated board used, then the rest of the allocation.
 fn search_order(allocation: &McfgAllocation) -> Vec<u8> {
@@ -259,6 +268,18 @@ fn search_order(allocation: &McfgAllocation) -> Vec<u8> {
 /// `allocation` defaults to the firmware's, `mutex` to the shared PCI
 /// configuration mutex.
 pub fn find_smbus_base(allocation: Option<McfgAllocation>, mutex: Option<&dyn BusMutex>) -> Result<u16, SmbusError> {
+    // A caller that supplied neither is the viewer asking about this machine,
+    // and the answer cannot change while it runs. Worth remembering because
+    // the readers build themselves per read -- the rails, the SPD and the
+    // telemetry all call `new_reader` -- and a board with no controller would
+    // otherwise walk all 256 buses every time, holding a mutex other
+    // monitoring tools wait on.
+    let cacheable = allocation.is_none() && mutex.is_none();
+    if cacheable
+        && let Some(cached) = BASE_CACHE.get()
+    {
+        return cached.map_err(SmbusError::Unavailable);
+    }
     let allocation = match allocation {
         Some(allocation) => allocation,
         None => default_ecam_allocation().map_err(SmbusError::Bus)?,
@@ -273,6 +294,9 @@ pub fn find_smbus_base(allocation: Option<McfgAllocation>, mutex: Option<&dyn Bu
     };
 
     let mut reasons = Vec::new();
+    // Whether configuration space answered at all, which separates "this
+    // machine has no Intel SMBus controller" from "nothing could be read".
+    let mut readable = false;
     {
         let _held = mutex.acquire()?;
         // Device 31 is the PCH, but the PCH is not always on bus 0. A Z890
@@ -286,14 +310,22 @@ pub fn find_smbus_base(allocation: Option<McfgAllocation>, mutex: Option<&dyn Bu
             for function in SMBUS_FUNCTIONS {
                 // A read that fails is the ECAM window not answering for that
                 // bus, not a verdict on the device: say so once and move on
-                // rather than abandoning the search.
-                let identity = match config_dword(&allocation, bus, function, PCI_VENDOR_OFFSET) {
-                    Ok(identity) => identity,
+                // rather than abandoning the search. Every read here does
+                // this, not the vendor alone -- one unreadable dword on an
+                // early bus used to abandon the whole scan, which on this
+                // board would have given up before reaching the bus the
+                // controller is actually on.
+                let mut read = |offset: u16, reasons: &mut Vec<String>| match config_dword(&allocation, bus, function, offset) {
+                    Ok(value) => {
+                        readable = true;
+                        Some(value)
+                    }
                     Err(error) => {
-                        reasons.push(format!("{bus:02X}:1F.{function} unreadable ({error})"));
-                        continue;
+                        reasons.push(format!("{bus:02X}:1F.{function} unreadable at 0x{offset:02X} ({error})"));
+                        None
                     }
                 };
+                let Some(identity) = read(PCI_VENDOR_OFFSET, &mut reasons) else { continue };
                 if identity == 0xFFFF_FFFF || identity == 0x0000_0000 {
                     // Absent is the normal answer for all but one bus, so it
                     // is only worth reporting for the bus the caller expects.
@@ -307,19 +339,19 @@ pub fn find_smbus_base(allocation: Option<McfgAllocation>, mutex: Option<&dyn Bu
                     continue;
                 }
 
-                let class_dword = config_dword(&allocation, bus, function, PCI_CLASS_OFFSET)?;
+                let Some(class_dword) = read(PCI_CLASS_OFFSET, &mut reasons) else { continue };
                 if ((class_dword >> 16) & 0xFFFF) != SMBUS_CLASS_CODE {
                     reasons.push(format!("{bus:02X}:1F.{function} class 0x{:04X}", (class_dword >> 16) & 0xFFFF));
                     continue;
                 }
 
-                let command = config_dword(&allocation, bus, function, PCI_COMMAND_OFFSET)?;
+                let Some(command) = read(PCI_COMMAND_OFFSET, &mut reasons) else { continue };
                 if command & PCI_COMMAND_IO_SPACE == 0 {
                     reasons.push(format!("{bus:02X}:1F.{function} I/O space disabled"));
                     continue;
                 }
 
-                let bar = config_dword(&allocation, bus, function, PCI_BAR4_OFFSET)?;
+                let Some(bar) = read(PCI_BAR4_OFFSET, &mut reasons) else { continue };
                 if bar & BAR_IO_SPACE_FLAG == 0 {
                     reasons.push(format!("{bus:02X}:1F.{function} BAR4 is not I/O"));
                     continue;
@@ -331,6 +363,9 @@ pub fn find_smbus_base(allocation: Option<McfgAllocation>, mutex: Option<&dyn Bu
                     continue;
                 }
                 LAST_BUS.store(bus as u16, Ordering::Relaxed);
+                if cacheable {
+                    BASE_CACHE.set(Ok(base as u16));
+                }
                 return Ok(base as u16);
             }
         }
@@ -339,7 +374,20 @@ pub fn find_smbus_base(allocation: Option<McfgAllocation>, mutex: Option<&dyn Bu
     if reasons.is_empty() {
         reasons.push("none".to_string());
     }
-    Err(SmbusError::Unavailable(format!("No Intel SMBus controller found ({})", reasons.join("; "))))
+    // Only the first few reasons: a 256-bus sweep of a board that answers
+    // every function would otherwise build a line nothing can read.
+    let listed = reasons.len().min(8);
+    let mut message = format!("No Intel SMBus controller found ({})", reasons[..listed].join("; "));
+    if reasons.len() > listed {
+        message.push_str(&format!("; and {} more", reasons.len() - listed));
+    }
+    // Remembered only when configuration space answered: a scan that read
+    // nothing has found nothing out, and would otherwise pin that verdict
+    // for the session.
+    if cacheable && readable {
+        BASE_CACHE.set(Err(message.clone()));
+    }
+    Err(SmbusError::Unavailable(message))
 }
 
 /// The backend's reader factory: `PchSmbusReader()` with every default.
@@ -1056,6 +1104,28 @@ mod tests {
         install_config_space_on(0x80, &[(4, &GOOD_FUNCTION_4)]);
         assert_eq!(find_smbus_base(Some(ALLOCATION), Some(&NullMutex)), Ok(BASE));
         install_config_space(&[(4, &GOOD_FUNCTION_4)]);
+        assert_eq!(find_smbus_base(Some(ALLOCATION), Some(&NullMutex)), Ok(BASE));
+    }
+
+    #[test]
+    fn an_unreadable_function_does_not_end_the_search() {
+        // Unmapped reads fail here rather than answering ones, so 10:1F.4
+        // has a vendor and nothing behind it. Abandoning the scan on that
+        // read -- which is what propagating it did -- gave up before the bus
+        // the controller is actually on.
+        //
+        // 0x40 holds the controller rather than the 0x80 the other tests
+        // use, and the decoy sits below it: the bus hint is process-wide, so
+        // a controller on a bus another test may have left pointed at could
+        // be found before the decoy is ever read, and the test would pass
+        // whether or not the read is tolerated.
+        let mut fake = FakeHardware::new();
+        let at = |bus: u8, offset: u16| ecam_address(&ALLOCATION, bus, 0x1F, 4, offset).unwrap();
+        fake = fake.with_dword(at(0x10, 0x00), 0x7A23_8086);
+        for (offset, value) in GOOD_FUNCTION_4 {
+            fake = fake.with_dword(at(0x40, offset), value);
+        }
+        fake.install();
         assert_eq!(find_smbus_base(Some(ALLOCATION), Some(&NullMutex)), Ok(BASE));
     }
 
