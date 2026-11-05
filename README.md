@@ -1,8 +1,8 @@
-# Roch Viewer 1.1.1
+# Roch Viewer 1.1.2
 
 A read-only tool for memory timings, hardware details and live telemetry on Intel LGA1700, Intel LGA1851 and AMD AM5, on Windows and Linux. Built in Rust, with customizable themes and Summary layouts.
 
-![Roch Viewer 1.1.1](assets/screenshots/roch-viewer-1.1.1.png)
+![Roch Viewer 1.1.2](assets/screenshots/roch-viewer-1.1.2.png)
 
 ## Supported platforms
 
@@ -18,13 +18,13 @@ On Linux, every platform builds and passes its tests, but only LGA1851 has been 
 
 ### Linux
 
-No driver to fetch. With [Rust stable](https://rustup.rs):
+No driver to fetch, and no Rust needed. It needs glibc 2.35 or newer, which means Ubuntu 22.04, Debian 12, Fedora 36 or anything since.
 
-```bash
-cargo xtask install
-```
+1. Download `RochViewer-1.1.2-linux-x86_64.tar.gz` from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/latest) and unpack it.
+2. In the folder it unpacks to, run `./rochviewer install`. That adds it to your launcher and to `~/.local/bin`.
+3. Open the viewer and accept the password prompt.
 
-Open it from your launcher, or run `rochviewer`, and accept the password prompt. See the [Linux guide](docs/linux.md) for how to stop being asked, what differs from Windows and what has been verified on hardware.
+See the [Linux guide](docs/linux.md) for how to stop being asked, what differs from Windows and what has been verified on hardware.
 
 ### Windows
 
@@ -38,7 +38,7 @@ Readings depend on your hardware, BIOS and driver access. See the [reference](do
 
 ## Build
 
-On Linux, stable Rust is all it needs: `cargo build --release --locked`, then `target/release/RochViewer`.
+On Linux, stable Rust is all it needs. `cargo xtask install` builds it and adds it to your launcher, or `cargo build --release --locked` leaves it at `target/release/RochViewer`.
 
 On Windows, with stable Rust and Visual Studio C++ Build Tools installed:
 

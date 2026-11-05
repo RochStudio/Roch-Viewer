@@ -25,6 +25,8 @@
 #[cfg(not(windows))]
 mod command_line;
 #[cfg(not(windows))]
+mod linux_install;
+#[cfg(not(windows))]
 mod linux_setup;
 mod ui;
 

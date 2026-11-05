@@ -11,7 +11,7 @@ path = "src/main.rs"
 [dependencies]
 eframe = { version = "0.37.0", default-features = false, features = ["glow"] }
 png = "0.18.1"
-rochviewer = { version = "1.1.1", path = "../rochviewer" }
+rochviewer = { version = "1.1.2", path = "../rochviewer" }
 serde_json = "1.0.154"
 
 [target.'cfg(windows)'.dependencies]

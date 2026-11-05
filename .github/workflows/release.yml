@@ -1,0 +1,134 @@
+name: release
+
+# Pushing a version tag builds both systems' packages from that exact commit, runs
+# the tests on each, and leaves a draft release holding them. Nothing is public
+# until a person has tried the files on real hardware, which a runner has none of,
+# and pressed Publish.
+#
+# Running it by hand is a rehearsal: everything but the release, with the packages
+# left as this run's artifacts.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The tag, the version and the release notes have to agree
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          echo "Cargo.toml says $version, and the tag is $GITHUB_REF_NAME"
+          test "$GITHUB_REF_NAME" = "v$version"
+          test -f "docs/releases/$version.md"
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # No build cache in a release: what ships is built from nothing but this commit.
+      - name: Run the tests
+        run: cargo test --workspace --locked
+
+      - name: Build
+        run: cargo build --release --locked -p roch-viewer-app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: target/release/RochViewer.exe
+          if-no-files-found: error
+
+  linux:
+    needs: version
+    # The oldest runner on purpose. A Linux binary only starts on a glibc at least as
+    # new as the one it was built against, whatever it actually calls: built on an
+    # up-to-date Arch machine it needs 2.43, and will not start on Ubuntu 24.04.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run the tests
+        run: cargo test --workspace --locked
+
+      - name: Build
+        run: cargo build --release --locked -p roch-viewer-app
+
+      - name: Check how old a system it will run on
+        # What the README promises. A runner that moved on would otherwise narrow it
+        # without anybody noticing.
+        run: |
+          newest=$(objdump -T target/release/RochViewer | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -n 1)
+          echo "It needs $newest"
+          test "$(printf '%s\n' "$newest" GLIBC_2.35 | sort -V | tail -n 1)" = GLIBC_2.35
+
+      - name: Package
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          name="RochViewer-$version-linux-x86_64"
+          mkdir "$name"
+          cp target/release/RochViewer "$name/rochviewer"
+          cp LICENSE THIRD_PARTY_NOTICES.txt docs/linux.md "$name/"
+          tar -czf "$name.tar.gz" "$name"
+          echo "PACKAGE_FOLDER=$name" >> "$GITHUB_ENV"
+
+      - name: Try the package
+        # There is no memory controller here to read and no desktop to open a window
+        # on, but the program can start, and can install itself.
+        working-directory: ${{ env.PACKAGE_FOLDER }}
+        run: |
+          ./rochviewer --version
+          ROCHVIEWER_NO_HELPER=1 ./rochviewer dump "$RUNNER_TEMP/dump.json"
+          ./rochviewer install --prefix "$RUNNER_TEMP/prefix"
+          "$RUNNER_TEMP/prefix/bin/rochviewer" --version
+          test -f "$RUNNER_TEMP/prefix/share/applications/RochViewer.desktop"
+          test -f "$RUNNER_TEMP/prefix/share/icons/hicolor/256x256/apps/RochViewer.png"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: RochViewer-*-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  draft:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: packages
+        run: sha256sum * > SHA256SUMS.txt
+
+      - name: Create the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" packages/* \
+            --draft \
+            --verify-tag \
+            --title "Roch Viewer $version" \
+            --notes-file "docs/releases/$version.md"

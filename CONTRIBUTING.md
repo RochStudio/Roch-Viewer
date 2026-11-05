@@ -48,6 +48,25 @@ of the hardware, and `ROCHVIEWER_DEMO="tab:Timings;open:Telemetry"`, to walk the
 window where nothing can click it. See [docs/linux.md](docs/linux.md) for the rules
 the helper enforces and how it shares hardware with the kernel.
 
+## Releasing
+
+1. Set the new version in the workspace `Cargo.toml` and the `rochviewer`
+   dependency in `crates/roch-viewer-app/Cargo.toml`, and update the README's
+   heading, screenshot and package name, and the changelog.
+2. Write the release notes in `docs/releases/<version>.md`.
+3. Push a `v<version>` tag.
+
+`.github/workflows/release.yml` then tests and builds both systems from that
+commit and leaves a draft release holding `RochViewer.exe`, the Linux package and
+`SHA256SUMS.txt`. A runner has no memory controller, so **try both files on real
+hardware before pressing Publish**, and say in the notes what was checked. To
+rehearse without a tag, run the workflow by hand: the packages are then that run's
+artifacts and no release is made.
+
+Build the Linux package there rather than by hand. A Linux binary needs a glibc at
+least as new as the one it was built against, so one built on a current machine
+will not start on most others.
+
 ## Layout
 
 A Cargo workspace of two crates. `crates/rochviewer` is everything that reads

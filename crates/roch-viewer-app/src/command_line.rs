@@ -11,6 +11,8 @@ Roch Viewer: a read-only memory-controller and timing viewer.
 
   rochviewer                 open the window
   rochviewer dump [FILE]     every row as JSON, to FILE or the terminal
+  rochviewer install         add it to your launcher, for this user (--prefix PATH to choose where)
+  rochviewer uninstall       take it out again
   rochviewer setup           (as root) stop asking for access at each launch
   rochviewer setup --status  whether that is set up
   rochviewer setup --undo    (as root) remove it
@@ -30,6 +32,8 @@ pub fn run() -> Option<i32> {
     Some(match first {
         HELPER_ARG => helper::serve(),
         "dump" => dump(arguments.get(1).map(String::as_str)),
+        "install" => crate::linux_install::install(&arguments[1..]),
+        "uninstall" => crate::linux_install::uninstall(&arguments[1..]),
         "setup" => crate::linux_setup::run(&arguments[1..]),
         "--version" | "-V" => {
             println!("{} {}", rochviewer::version::APP_NAME, rochviewer::version::VERSION);

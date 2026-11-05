@@ -1,9 +1,11 @@
 # Changelog
 
-## Unreleased
+## 1.1.2 (2026-11-05)
 
 - Linux: the same window and readings as on Windows, on Wayland and X11, with no driver to fetch. A small helper reads the registers as root and the window stays an ordinary process; `pkexec` asks at each launch, or `rochviewer setup` stops it asking. Verified on a Z890 AORUS TACHYON ICE with a Core Ultra 7 270K Plus and two RX 7900 XTs; other platforms have not been run on hardware yet. See [docs/linux.md](docs/linux.md).
-- Linux: `cargo xtask install` installs `rochviewer`, a launcher entry and the icon for one user, and `rochviewer dump` writes every row as JSON.
+- Linux: a release package to download. Unpack it and `./rochviewer install` adds it to your launcher for one user, with no Rust needed; `cargo xtask install` does the same from source. `rochviewer dump` writes every row as JSON.
+- Releases: built, tested and checksummed by GitHub Actions for both systems from the tagged commit, and left as a draft until they have been tried on real hardware.
+- Updated the header and Windows file/product version to 1.1.2.
 
 ## 1.1.1 (2026-10-24)
 

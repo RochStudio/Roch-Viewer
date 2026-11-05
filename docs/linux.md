@@ -8,13 +8,23 @@ Verified on a Gigabyte Z890 AORUS TACHYON ICE with a Core Ultra 7 270K Plus, DDR
 
 ## Install
 
-You need [Rust stable](https://rustup.rs). No other development packages are required.
+**From a release.** Download `RochViewer-<version>-linux-x86_64.tar.gz` from [Releases](https://github.com/RochStudio/Roch-Viewer/releases/latest), unpack it, and in the folder it unpacks to run:
+
+```bash
+./rochviewer install
+```
+
+It needs glibc 2.35 or newer, which means Ubuntu 22.04, Debian 12, Fedora 36 or anything since. `SHA256SUMS.txt` on the release page holds the package's checksum.
+
+**From source.** You need [Rust stable](https://rustup.rs). No other development packages are required.
 
 ```bash
 cargo xtask install
 ```
 
-This builds a release binary and installs it for your user, with no root needed:
+A binary built this way needs the glibc of the machine that built it, so on a very current system it may not start on an older one.
+
+Either way it installs for your user, with no root needed:
 
 | File | What |
 | --- | --- |
@@ -22,7 +32,7 @@ This builds a release binary and installs it for your user, with no root needed:
 | `~/.local/share/applications/RochViewer.desktop` | The launcher entry |
 | `~/.local/share/icons/hicolor/256x256/apps/RochViewer.png` | The icon |
 
-Use `--prefix PATH` to install somewhere else, and `cargo xtask uninstall` to remove them.
+Use `--prefix PATH` to install somewhere else, and `rochviewer uninstall` to remove them.
 
 ## Access
 
@@ -69,6 +79,8 @@ Run the setup again after updating the viewer. A helper left over from an older 
 ```text
 rochviewer                 open the window
 rochviewer dump [FILE]     every row as JSON, to FILE or the terminal
+rochviewer install         add it to your launcher, for this user (--prefix PATH to choose where)
+rochviewer uninstall       take it out again
 rochviewer setup           (as root) stop asking for access at each launch
 rochviewer setup --status  whether that is set up
 rochviewer setup --undo    (as root) remove it
