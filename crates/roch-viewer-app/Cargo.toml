@@ -13,7 +13,16 @@ eframe = { version = "0.37.0", default-features = false, features = ["glow"] }
 png = "0.18.1"
 rochviewer = { version = "1.1.1", path = "../rochviewer" }
 serde_json = "1.0.154"
+
+[target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_System_Com", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_SystemInformation", "Win32_System_Registry", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi"] }
+
+# On Linux the window talks to Wayland or X11 directly, and both client libraries
+# are loaded at run time, so the one binary also runs headless on a machine with
+# no desktop installed.
+[target.'cfg(target_os = "linux")'.dependencies]
+eframe = { version = "0.37.0", default-features = false, features = ["glow", "wayland", "x11", "default_fonts"] }
+libc = "0.2"
 
 [dev-dependencies]
 rochviewer = { path = "../rochviewer", features = ["testing"] }

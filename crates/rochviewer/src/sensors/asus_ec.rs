@@ -11,6 +11,10 @@
 //! project already reads carries no VRM channel at all -- the row was blank not
 //! because the board lacks the sensor but because it is on this controller.
 //!
+//! On Linux that sharing does not happen: the kernel's EC driver has a public way
+//! in, `ec_sys`, so the read goes through it and its lock, and the ports are left
+//! alone.
+//!
 //! SAFETY - this module reads and nothing else:
 //!
 //!   * The EC has two commands that matter: RD_EC (0x80) and WR_EC (0x81). Only
@@ -165,6 +169,9 @@ impl AcpiEcReader {
 
     fn read_locked(&self, register: u8) -> Result<u8, EcError> {
         let io = hw();
+        if cfg!(all(target_os = "linux", not(test))) {
+            return Ok(io.kernel_ec_byte(register)?);
+        }
         self.drain()?;
         self.wait_for(STATUS_INPUT_FULL, false)?;
         io.outb(EC_COMMAND_PORT, COMMAND_READ)?;

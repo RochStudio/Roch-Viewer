@@ -52,12 +52,27 @@
 //!
 //! The reader implements [`SmbusReader`], the contract the DDR5 device
 //! readers drive either platform's bus through.
+//!
+//! On Linux the kernel's `i2c_i801` driver owns this controller, and the `spd5118`
+//! driver is bound to the hubs. Nothing can be locked against them from user
+//! space, and two masters setting up the host registers at once is exactly how a
+//! read becomes something else, so every transfer the kernel can make goes through
+//! its adapter instead, serialised by its own lock, and past the same allowlists
+//! a second time on the far side of the privilege boundary.
+//!
+//! The one that cannot is `select_spd_page`. The kernel's Process Call is issued
+//! with the direction bit clear, so with SPD Write Disable armed it is refused:
+//! `eeprom` under the spd5118 device answers page 0 at every offset, which on the
+//! Z890 bench means the identity at 0x200 reads as the first 64 bytes again. That
+//! one transaction stays on the raw transport. It is rare -- a page select per 128
+//! bytes of an SPD read that happens once -- and it touches nothing the kernel
+//! keeps state about: the hub's temperature register does not depend on the page.
 
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::hardware::pci_mcfg::{McfgAllocation, default_allocation, ecam_address};
-use crate::hardware::{self, Hardware};
+use crate::hardware::{self, Hardware, KernelSmbus};
 use crate::memo::Memo;
 use crate::memory::ddr5_telemetry::{
     BusMutex, NamedBusMutex, SmbusError, SmbusOptions, SmbusReader, SpdBytes, monotonic, sleep_seconds,
@@ -390,6 +405,18 @@ pub fn find_smbus_base(allocation: Option<McfgAllocation>, mutex: Option<&dyn Bu
     Err(SmbusError::Unavailable(message))
 }
 
+/// The adapter number the kernel gave this controller, if it can be reached.
+#[cfg(all(target_os = "linux", not(test)))]
+fn kernel_adapter() -> Option<u32> {
+    let adapter = hardware::linux::find_i2c_adapter("SMBus I801 adapter")?;
+    hardware::linux::i2c_device_present(adapter).then_some(adapter)
+}
+
+#[cfg(not(all(target_os = "linux", not(test))))]
+fn kernel_adapter() -> Option<u32> {
+    None
+}
+
 /// The backend's reader factory: `PchSmbusReader()` with every default.
 pub fn new_reader() -> Result<Arc<dyn SmbusReader>, SmbusError> {
     Ok(Arc::new(PchSmbusReader::new()?))
@@ -410,6 +437,8 @@ fn check_controller(controller_offset: u8) -> Result<(), SmbusError> {
 /// Serialized, allowlisted, read-only SMBus word reader.
 pub struct PchSmbusReader {
     io: Arc<dyn Hardware>,
+    /// The kernel adapter to send transfers through, where it has one.
+    kernel_adapter: Option<u32>,
     mutex: Box<dyn BusMutex>,
     lock: Mutex<()>,
     monotonic: Box<dyn Fn() -> f64 + Send + Sync>,
@@ -442,8 +471,12 @@ impl PchSmbusReader {
             Some(base) => base,
             None => find_smbus_base(None, None)?,
         };
+        // An explicitly given base is a test or a caller that has decided. The
+        // real controller, found by searching, is the one the kernel may own.
+        let kernel_adapter = if options.base.is_some() { None } else { kernel_adapter() };
         Ok(PchSmbusReader {
             io,
+            kernel_adapter,
             mutex,
             lock: Mutex::new(()),
             monotonic: options.monotonic.unwrap_or_else(|| Box::new(monotonic)),
@@ -681,8 +714,17 @@ impl PchSmbusReader {
         self.write_byte_locked(address, register, value)
     }
 
+    /// One transfer through the kernel's adapter, when there is one.
+    fn through_kernel(&self, address: u8, transfer: KernelSmbus) -> Option<Result<u16, SmbusError>> {
+        let adapter = self.kernel_adapter?;
+        Some(self.io.kernel_smbus(adapter, address, transfer).map_err(hw_error))
+    }
+
     /// Write one byte. Caller must already hold the lock and the mutex.
     fn write_byte_locked(&self, address: u8, register: u8, value: u8) -> Result<(), SmbusError> {
+        if let Some(result) = self.through_kernel(address, KernelSmbus::WriteByte { register, value }) {
+            return result.map(|_| ());
+        }
         let base = self.base;
         let port_status = base + REG_HOST_STATUS;
         self.wait_not_busy(port_status)?;
@@ -736,6 +778,9 @@ impl PchSmbusReader {
             return Err(SmbusError::Refused("DDR4 SPD page must be 0 or 1".into()));
         }
         let address = DDR4_SPD_PAGE_SELECT_ADDRESSES[page as usize];
+        if let Some(result) = self.through_kernel(address, KernelSmbus::SendByte { value: 0 }) {
+            return result.map(|_| ());
+        }
         let base = self.base;
         let port_status = base + REG_HOST_STATUS;
         self.wait_not_busy(port_status)?;
@@ -769,6 +814,9 @@ impl PchSmbusReader {
 
     /// Read one byte. Caller must already hold the lock and the mutex.
     fn read_byte_locked(&self, address: u8, register: u8) -> Result<u8, SmbusError> {
+        if let Some(result) = self.through_kernel(address, KernelSmbus::ReadByte { register }) {
+            return result.map(|value| value as u8);
+        }
         let base = self.base;
         let port_status = base + REG_HOST_STATUS;
         self.wait_not_busy(port_status)?;
@@ -785,6 +833,9 @@ impl PchSmbusReader {
 
     /// Read one word. Caller must already hold the lock and the mutex.
     fn read_word_locked(&self, address: u8, register: u8) -> Result<(u8, u8), SmbusError> {
+        if let Some(result) = self.through_kernel(address, KernelSmbus::ReadWord { register }) {
+            return result.map(|word| ((word & 0xFF) as u8, (word >> 8) as u8));
+        }
         let base = self.base;
         let port_status = base + REG_HOST_STATUS;
         self.wait_not_busy(port_status)?;

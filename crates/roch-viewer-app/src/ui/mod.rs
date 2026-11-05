@@ -31,11 +31,19 @@ use rochviewer::version::{APP_NAME, VERSION};
 
 /// Open the window, elevating first if this process is not elevated.
 pub fn run() {
-    if !admin::is_admin() {
-        eprintln!("Admin privileges required. Relaunching with UAC prompt...");
-        admin::run_as_admin();
+    #[cfg(windows)]
+    {
+        if !admin::is_admin() {
+            eprintln!("Admin privileges required. Relaunching with UAC prompt...");
+            admin::run_as_admin();
+        }
+        admin::claim_taskbar_identity();
     }
-    admin::claim_taskbar_identity();
+    // The window itself stays an ordinary process. Its access comes from a helper,
+    // and asking for that now is what puts the prompt before the window, as UAC's
+    // is on Windows.
+    #[cfg(not(windows))]
+    timing::span("start the register helper", || drop(rochviewer::hardware::hw()));
 
     let settings = settings::Settings::load();
     let prefs = prefs::Prefs::from_settings(settings.map());
@@ -52,6 +60,10 @@ pub fn run() {
         .with_inner_size([width, height])
         .with_min_inner_size([app::MIN_WINDOW_WIDTH, app::MIN_WINDOW_HEIGHT])
         .with_resizable(true);
+    #[cfg(not(windows))]
+    {
+        viewport = window_tools::floating(viewport).with_app_id(admin::APP_ID);
+    }
     if let Some(icon) = asset_path::window_icon() {
         viewport = viewport.with_icon(icon);
     }

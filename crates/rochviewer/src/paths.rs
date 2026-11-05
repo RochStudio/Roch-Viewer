@@ -66,23 +66,25 @@ pub fn find_in(directories: &[PathBuf], name: &str) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
+    /// A path this platform reads as absolute, from its parts.
+    fn rooted(parts: &[&str]) -> PathBuf {
+        let root = if cfg!(windows) { "C:\\" } else { "/" };
+        parts.iter().fold(PathBuf::from(root), |path, part| path.join(part))
+    }
+
     #[test]
     fn chain_is_nearest_first_and_bounded() {
-        let chain = parent_chain(Path::new(r"C:\a\b\c\d\e"), 3);
+        let chain = parent_chain(&rooted(&["a", "b", "c", "d", "e"]), 3);
         assert_eq!(
             chain,
-            vec![
-                PathBuf::from(r"C:\a\b\c\d\e"),
-                PathBuf::from(r"C:\a\b\c\d"),
-                PathBuf::from(r"C:\a\b\c"),
-            ]
+            vec![rooted(&["a", "b", "c", "d", "e"]), rooted(&["a", "b", "c", "d"]), rooted(&["a", "b", "c"])]
         );
     }
 
     #[test]
     fn chain_stops_at_the_root() {
-        let chain = parent_chain(Path::new("C:\\"), 5);
-        assert_eq!(chain, vec![PathBuf::from("C:\\")]);
+        let chain = parent_chain(&rooted(&[]), 5);
+        assert_eq!(chain, vec![rooted(&[])]);
     }
 
     #[test]

@@ -48,7 +48,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::hardware::{self, Hardware};
+use crate::hardware::{self, Hardware, KernelSmbus};
 use crate::memory::ddr5_telemetry::{
     BusMutex, NamedBusMutex, SmbusError, SmbusOptions, SmbusReader, SpdBytes, monotonic, sleep_seconds,
 };
@@ -166,6 +166,8 @@ fn hw_error(error: hardware::HwError) -> SmbusError {
 /// Serialized, allowlisted, read-only SMBus byte reader.
 pub struct FchSmbusReader {
     io: Arc<dyn Hardware>,
+    /// The kernel adapter for each controller, where it has one: see `kernel_adapter`.
+    kernel_adapters: [Option<u32>; 2],
     mutex: Box<dyn BusMutex>,
     lock: Mutex<()>,
     monotonic: Box<dyn Fn() -> f64 + Send + Sync>,
@@ -173,6 +175,27 @@ pub struct FchSmbusReader {
     timeout: f64,
     pub base: u16,
     last_error: Mutex<String>,
+}
+
+/// The kernel's adapter for each controller, the 0x00 one and then the 0x20 one.
+///
+/// Where `i2c_piix4` is bound it owns this hardware, and on Linux two masters on
+/// these host registers is how a read turns into something else: see
+/// `intel_pch_smbus`. AMD has no SPD Write Disable to get past, so nothing here
+/// needs the raw transport at all once the kernel has an adapter. The adapters are
+/// named for the FCH ports: the DIMMs are on port 0 at 0xB00, and the second
+/// controller is port 1 at 0xB20.
+#[cfg(all(target_os = "linux", not(test)))]
+fn kernel_adapters() -> [Option<u32>; 2] {
+    let find = |prefix: &str| {
+        hardware::linux::find_i2c_adapter(prefix).filter(|adapter| hardware::linux::i2c_device_present(*adapter))
+    };
+    [find("SMBus PIIX4 adapter port 0"), find("SMBus PIIX4 adapter port 1")]
+}
+
+#[cfg(not(all(target_os = "linux", not(test))))]
+fn kernel_adapters() -> [Option<u32>; 2] {
+    [None, None]
 }
 
 impl FchSmbusReader {
@@ -193,12 +216,19 @@ impl FchSmbusReader {
         if !(0.0 < timeout && timeout <= 0.25) {
             return Err(SmbusError::Refused("SMBus timeout must be within (0, 0.25]".into()));
         }
+        // An explicitly given base is a test or a caller that has decided.
+        let kernel_adapters = if options.base.is_some() { [None, None] } else { kernel_adapters() };
         let base = match options.base {
             Some(base) => base,
+            // With the kernel's adapter in use the ports are never touched, and
+            // that includes the PMIO window, which its driver shares with others
+            // under a lock this cannot take.
+            None if kernel_adapters[0].is_some() => FALLBACK_SMBUS_BASE,
             None => read_smbus_base(io.as_ref()),
         };
         Ok(FchSmbusReader {
             io,
+            kernel_adapters,
             mutex,
             lock: Mutex::new(()),
             monotonic: options.monotonic.unwrap_or_else(|| Box::new(monotonic)),
@@ -279,7 +309,23 @@ impl FchSmbusReader {
     }
 
     /// Read one byte. Caller must already hold the lock and the mutex.
+    /// The kernel's adapter for a controller, if it is using one.
+    fn adapter_for(&self, controller_offset: u8) -> Option<u32> {
+        match controller_offset {
+            0x00 => self.kernel_adapters[0],
+            0x20 => self.kernel_adapters[1],
+            _ => None,
+        }
+    }
+
     fn read_byte_locked(&self, address: u8, register: u8, controller_offset: u8) -> Result<u8, SmbusError> {
+        if let Some(adapter) = self.adapter_for(controller_offset) {
+            return self
+                .io
+                .kernel_smbus(adapter, address, KernelSmbus::ReadByte { register })
+                .map(|value| value as u8)
+                .map_err(|error| SmbusError::Bus(error.0));
+        }
         let base = self.base.wrapping_add(controller_offset as u16);
         let port_status = base + REG_HOST_STATUS;
         self.wait_not_busy(port_status)?;
@@ -299,6 +345,13 @@ impl FchSmbusReader {
     /// The allowlist is still enforced here, so no internal caller can bypass
     /// it by taking the mutex itself.
     fn write_byte_locked(&self, address: u8, register: u8, value: u8, controller_offset: u8) -> Result<(), SmbusError> {
+        if let Some(adapter) = self.adapter_for(controller_offset) {
+            return self
+                .io
+                .kernel_smbus(adapter, address, KernelSmbus::WriteByte { register, value })
+                .map(|_| ())
+                .map_err(|error| SmbusError::Bus(error.0));
+        }
         if !WRITE_ALLOWLIST.contains(&(address, register)) {
             return Err(SmbusError::Refused(format!(
                 "SMBus write to 0x{address:02X} register 0x{register:02X} is not permitted"

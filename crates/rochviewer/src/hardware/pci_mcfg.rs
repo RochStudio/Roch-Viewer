@@ -3,11 +3,14 @@
 //! This module only reads firmware metadata and physical PCI configuration
 //! space. It deliberately contains no physical/configuration write operation.
 
+#[cfg(windows)]
 use windows::Win32::System::SystemInformation::{FIRMWARE_TABLE_PROVIDER, GetSystemFirmwareTable};
 
 use super::{HwError, HwResult, hw};
 
+#[cfg(windows)]
 const ACPI_PROVIDER: u32 = u32::from_be_bytes(*b"ACPI");
+#[cfg(windows)]
 const MCFG_TABLE_ID: u32 = u32::from_le_bytes(*b"MCFG");
 const ACPI_HEADER_SIZE: usize = 36;
 const MCFG_RESERVED_SIZE: usize = 8;
@@ -134,6 +137,17 @@ pub fn get_mcfg_table() -> Result<Vec<u8>, String> {
     if cfg!(test) {
         return Err("no firmware tables in unit tests".into());
     }
+    firmware_mcfg_table()
+}
+
+/// The kernel publishes the table, for root, as a file.
+#[cfg(not(windows))]
+fn firmware_mcfg_table() -> Result<Vec<u8>, String> {
+    hw().read_firmware_file("/sys/firmware/acpi/tables/MCFG").map_err(|error| error.0)
+}
+
+#[cfg(windows)]
+fn firmware_mcfg_table() -> Result<Vec<u8>, String> {
     let provider = FIRMWARE_TABLE_PROVIDER(ACPI_PROVIDER);
     // SAFETY: a size query with no buffer, then a read into a buffer of that
     // size.

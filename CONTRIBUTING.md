@@ -33,12 +33,20 @@ cargo test --workspace
 The tests never touch the machine they run on: hardware and WMI are faked per
 test. The handful that need a real bench are `#[ignore]`d; on an elevated
 Intel DDR5 bench with the driver present, `cargo test --workspace -- --ignored`
-runs those too.
+runs those too. On Linux that means running them as root, with no driver needed.
 
 ## Running the viewer
 
-You need `inpoutx64.dll` — see "Prerequisites" in the
+On Windows you need `inpoutx64.dll` — see "Prerequisites" in the
 README. They are not distributed with this project.
+
+On Linux there is nothing to fetch: `cargo run` opens the window and asks for
+access through your desktop's password prompt. Set `ROCHVIEWER_NO_HELPER=1` to
+work on the window without being asked. A debug build also takes
+`ROCHVIEWER_FIXTURE=dump.json`, to show the rows from `rochviewer dump` instead
+of the hardware, and `ROCHVIEWER_DEMO="tab:Timings;open:Telemetry"`, to walk the
+window where nothing can click it. See [docs/linux.md](docs/linux.md) for the rules
+the helper enforces and how it shares hardware with the kernel.
 
 ## Layout
 
@@ -49,7 +57,7 @@ to:
 
 | folder | what is in it |
 | --- | --- |
-| `hardware` | the driver, port and physical-memory access, PCIe config space |
+| `hardware` | the driver, port and physical-memory access, PCIe config space, and on Linux the helper in `hardware/linux` |
 | `intel` | MCHBAR timings, the PCH SMBus, board sensors, RAPL power |
 | `memory` | SPD identity, the DIMM thermal sensors and PMICs, the inventory |
 | `sensors` | Super I/O chips, the EC, CPU clocks, rails, Windows error log |

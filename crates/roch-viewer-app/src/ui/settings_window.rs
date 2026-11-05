@@ -343,7 +343,7 @@ impl SettingsWindow {
         ui.horizontal(|ui| {
             ui.label("Search");
             ui.add(egui::TextEdit::singleline(&mut self.font_filter).desired_width(200.0).hint_text("font name"));
-            if ui.add_enabled(!prefs.font_family.eq_ignore_ascii_case(prefs::DEFAULT_FONT), egui::Button::new("Consolas (default)")).clicked() {
+            if ui.add_enabled(!prefs.font_family.eq_ignore_ascii_case(prefs::DEFAULT_FONT), egui::Button::new(prefs::DEFAULT_FONT_LABEL)).clicked() {
                 prefs.font_family = prefs::DEFAULT_FONT.into();
             }
         });
@@ -363,7 +363,11 @@ impl SettingsWindow {
                     }
                 });
             });
-        hint(ui, &palette, "Fixed-width fonts keep the columns most even. Consolas is laid out to match the original window exactly.");
+        hint(ui, &palette, if cfg!(windows) {
+            "Fixed-width fonts keep the columns most even. Consolas is laid out to match the original window exactly."
+        } else {
+            "Fixed-width fonts keep the columns most even. The default is laid out to the original window's grid."
+        });
 
         section(ui, &palette, "Size");
         ui.horizontal(|ui| {
@@ -503,7 +507,8 @@ impl SettingsWindow {
                                     action = Some((i, Edit::Right));
                                 }
                             }
-                            if small(ui, "✕", true) {
+                            // U+2715 is not in the fonts every Linux machine can draw.
+                            if small(ui, if cfg!(windows) { "✕" } else { "×" }, true) {
                                 action = Some((i, Edit::Remove));
                             }
                             match item.kind {
@@ -603,29 +608,35 @@ impl SettingsWindow {
 
     fn window(&mut self, ui: &mut Ui, prefs: &mut Prefs) {
         let palette = self.palette;
-        section(ui, &palette, "Position");
-        ui.checkbox(&mut prefs.remember_positions, "Remember where each window was");
-        ui.horizontal(|ui| {
-            let saved = prefs.positions.len();
-            ui.label(RichText::new(format!("{saved} saved")).color(palette.disabled_text));
-            if ui.add_enabled(saved > 0, egui::Button::new("Forget saved positions")).clicked() {
-                prefs.positions.clear();
-                self.requests.forget_positions = true;
-            }
-        });
+        if super::window_tools::NATIVE_PLACEMENT {
+            section(ui, &palette, "Position");
+            ui.checkbox(&mut prefs.remember_positions, "Remember where each window was");
+            ui.horizontal(|ui| {
+                let saved = prefs.positions.len();
+                ui.label(RichText::new(format!("{saved} saved")).color(palette.disabled_text));
+                if ui.add_enabled(saved > 0, egui::Button::new("Forget saved positions")).clicked() {
+                    prefs.positions.clear();
+                    self.requests.forget_positions = true;
+                }
+            });
+        }
 
         section(ui, &palette, "On screen");
         ui.checkbox(&mut prefs.always_on_top, "Keep the windows above other programs");
-        ui.horizontal(|ui| {
-            ui.label("Opacity");
-            let mut percent = (prefs.opacity * 100.0).round();
-            if ui
-                .add(egui::Slider::new(&mut percent, OPACITY_RANGE.0 * 100.0..=OPACITY_RANGE.1 * 100.0).step_by(5.0).fixed_decimals(0).suffix("%"))
-                .changed()
-            {
-                prefs.opacity = percent / 100.0;
-            }
-        });
+        if super::window_tools::NATIVE_PLACEMENT {
+            ui.horizontal(|ui| {
+                ui.label("Opacity");
+                let mut percent = (prefs.opacity * 100.0).round();
+                if ui
+                    .add(egui::Slider::new(&mut percent, OPACITY_RANGE.0 * 100.0..=OPACITY_RANGE.1 * 100.0).step_by(5.0).fixed_decimals(0).suffix("%"))
+                    .changed()
+                {
+                    prefs.opacity = percent / 100.0;
+                }
+            });
+        } else {
+            hint(ui, &palette, "Where a window opens, and how see-through it is, are up to your compositor here.");
+        }
 
         section(ui, &palette, "Opening tab");
         ui.checkbox(&mut prefs.remember_tab, "Open on the tab I last used");

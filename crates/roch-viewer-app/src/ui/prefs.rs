@@ -28,7 +28,13 @@ impl ThemeMode {
         match self {
             ThemeMode::Light => "Light",
             ThemeMode::Dark => "Dark",
-            ThemeMode::System => "Follow Windows",
+            ThemeMode::System => {
+                if cfg!(windows) {
+                    "Follow Windows"
+                } else {
+                    "Follow the system"
+                }
+            }
         }
     }
 
@@ -322,6 +328,11 @@ pub struct Prefs {
 }
 
 pub const DEFAULT_FONT: &str = "Consolas";
+
+/// What the button that goes back to it says. Consolas is a Windows font, so
+/// elsewhere the default is the system's own fixed-width face, laid out to the
+/// same grid.
+pub const DEFAULT_FONT_LABEL: &str = if cfg!(windows) { "Consolas (default)" } else { "System monospace (default)" };
 
 impl Default for Prefs {
     fn default() -> Self {

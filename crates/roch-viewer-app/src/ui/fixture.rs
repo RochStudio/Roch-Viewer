@@ -25,6 +25,21 @@ use rochviewer::timings::Backend;
 
 pub const FIXTURE_VAR: &str = "ROCHVIEWER_FIXTURE";
 
+/// A remote control for a debug build, where nothing can click: a list of steps
+/// taken a second and a half apart, separated by semicolons. `tab:Timings` selects
+/// a tab, and `open:Advanced`, `open:Telemetry` or `open:Settings` opens a window.
+pub const DEMO_VAR: &str = "ROCHVIEWER_DEMO";
+
+/// The steps in `ROCHVIEWER_DEMO`, first to last. Release builds never look.
+pub fn demo_steps() -> Vec<String> {
+    if !cfg!(debug_assertions) {
+        return Vec::new();
+    }
+    std::env::var(DEMO_VAR)
+        .map(|steps| steps.split(';').map(str::trim).filter(|step| !step.is_empty()).rev().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
 /// The backend from `ROCHVIEWER_FIXTURE`, when it is set and reads.
 pub fn backend_from_env() -> Option<Backend> {
     if !cfg!(debug_assertions) {

@@ -28,21 +28,32 @@
 //! SAFETY - read-only, and no driver involved: performance counters any user can
 //! read, through PdhAddEnglishCounter so the paths do not depend on the display
 //! language.
+//!
+//! On Linux the same three numbers are in sysfs and `/proc/stat`, which any user
+//! can read too, and come through the same shape so everything below is shared:
+//! see `LinuxClocks`.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
+#[cfg(windows)]
 use windows::Win32::System::Performance::{
     PDH_FMT, PDH_FMT_COUNTERVALUE_ITEM_W, PDH_HCOUNTER, PDH_HQUERY, PdhAddEnglishCounterW,
     PdhCollectQueryData, PdhGetFormattedCounterArrayW, PdhOpenQueryW,
 };
+#[cfg(windows)]
 use windows::Win32::System::Threading::{ALL_PROCESSOR_GROUPS, GetActiveProcessorCount};
+#[cfg(windows)]
 use windows::core::{HSTRING, PCWSTR};
 
+#[cfg(windows)]
 pub const PDH_FMT_DOUBLE: u32 = 0x0000_0200;
+#[cfg(windows)]
 pub const PDH_MORE_DATA: u32 = 0x8000_07D2;
+#[cfg(windows)]
 pub const PDH_CSTATUS_VALID_DATA: u32 = 0x0000_0000;
+#[cfg(windows)]
 pub const PDH_CSTATUS_NEW_DATA: u32 = 0x0000_0001;
 
 // "Processor Information" rather than "Processor": the older object does not
@@ -168,6 +179,7 @@ impl<S: PdhSource> Pdh<S> {
 }
 
 /// The real PDH query.
+#[cfg(windows)]
 struct WindowsPdh {
     query: PDH_HQUERY,
     counters: Vec<(&'static str, PDH_HCOUNTER)>,
@@ -175,8 +187,10 @@ struct WindowsPdh {
 
 // SAFETY: the query and counter handles are opaque PDH handles, used only
 // while the owning `Pdh` is locked.
+#[cfg(windows)]
 unsafe impl Send for WindowsPdh {}
 
+#[cfg(windows)]
 impl WindowsPdh {
     fn new() -> Self {
         WindowsPdh { query: PDH_HQUERY::default(), counters: Vec::new() }
@@ -226,6 +240,7 @@ impl WindowsPdh {
     }
 }
 
+#[cfg(windows)]
 impl PdhSource for WindowsPdh {
     fn open(&mut self) -> bool {
         let mut query = PDH_HQUERY::default();
@@ -274,12 +289,155 @@ fn monotonic() -> f64 {
     START.get_or_init(Instant::now).elapsed().as_secs_f64()
 }
 
-static QUERY: OnceLock<Mutex<Pdh<WindowsPdh>>> = OnceLock::new();
+#[cfg(windows)]
+type RealSource = WindowsPdh;
+#[cfg(not(windows))]
+type RealSource = LinuxClocks;
+
+static QUERY: OnceLock<Mutex<Pdh<RealSource>>> = OnceLock::new();
 
 /// One collection from the process's query.
 fn collect() -> Sample {
-    let query = QUERY.get_or_init(|| Mutex::new(Pdh::new(WindowsPdh::new(), monotonic)));
+    let query = QUERY.get_or_init(|| Mutex::new(Pdh::new(RealSource::new(), monotonic)));
     query.lock().unwrap_or_else(|e| e.into_inner()).collect()
+}
+
+/// One CPU's `/proc/stat` line: total ticks, and those spent idle.
+#[cfg(not(windows))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct CpuTicks {
+    total: u64,
+    idle: u64,
+}
+
+/// The per-CPU lines of `/proc/stat`, by CPU number.
+#[cfg(not(windows))]
+fn parse_proc_stat(text: &str) -> BTreeMap<u32, CpuTicks> {
+    let mut cpus = BTreeMap::new();
+    for line in text.lines() {
+        let mut fields = line.split_ascii_whitespace();
+        let Some(number) = fields.next().and_then(|name| name.strip_prefix("cpu")) else {
+            continue;
+        };
+        // The bare "cpu" line is the whole machine.
+        let Ok(number) = number.parse::<u32>() else { continue };
+        let ticks: Vec<u64> = fields.filter_map(|field| field.parse().ok()).collect();
+        // user nice system idle iowait irq softirq steal; guest time is already
+        // counted in user, so stopping at steal does not count it twice.
+        let total = ticks.iter().take(8).sum();
+        let idle = ticks.iter().skip(3).take(2).sum();
+        cpus.insert(number, CpuTicks { total, idle });
+    }
+    cpus
+}
+
+/// How busy a CPU was between two readings, 0 to 1.
+#[cfg(not(windows))]
+fn busy_fraction(before: CpuTicks, now: CpuTicks) -> f64 {
+    let total = now.total.saturating_sub(before.total);
+    if total == 0 {
+        return 0.0;
+    }
+    let idle = now.idle.saturating_sub(before.idle).min(total);
+    (total - idle) as f64 / total as f64
+}
+
+/// PDH's three counters, assembled from what Linux publishes.
+///
+/// `cpuinfo_avg_freq` is the kernel's APERF/MPERF average: the clock a CPU ran at
+/// while it was running, which is what "% Processor Performance" states as a
+/// fraction of nominal. Where the kernel is too old to have it, `scaling_cur_freq`
+/// comes from the same counters on intel_pstate and amd-pstate. "% Processor
+/// Utility" is that with idle time counted, so it is scaled by how busy the CPU
+/// was, which is the quantity HWiNFO calls the effective clock.
+///
+/// Both are per-CPU percentages of a nominal clock the consumers multiply back
+/// out, so the nominal only has to be a consistent scale, and is the first CPU's
+/// even on a hybrid part where the two kinds of core have different ones.
+#[cfg(not(windows))]
+struct LinuxClocks {
+    nominal_mhz: f64,
+    ticks: BTreeMap<u32, CpuTicks>,
+}
+
+#[cfg(not(windows))]
+impl LinuxClocks {
+    const CPU_ROOT: &'static str = "/sys/devices/system/cpu";
+
+    fn new() -> Self {
+        LinuxClocks { nominal_mhz: 0.0, ticks: BTreeMap::new() }
+    }
+
+    fn khz(path: String) -> Option<f64> {
+        std::fs::read_to_string(path).ok()?.trim().parse::<f64>().ok().filter(|khz| *khz > 0.0)
+    }
+
+    /// One CPU's running clock in megahertz, or `None` while it reads nothing:
+    /// `cpuinfo_avg_freq` refuses with EAGAIN for a CPU idle too long to say.
+    fn running_mhz(cpu: u32) -> Option<f64> {
+        let at = |leaf: &str| format!("{}/cpu{cpu}/cpufreq/{leaf}", Self::CPU_ROOT);
+        Self::khz(at("cpuinfo_avg_freq")).or_else(|| Self::khz(at("scaling_cur_freq"))).map(|khz| khz / 1000.0)
+    }
+
+    fn read_ticks() -> BTreeMap<u32, CpuTicks> {
+        std::fs::read_to_string("/proc/stat").map(|text| parse_proc_stat(&text)).unwrap_or_default()
+    }
+}
+
+#[cfg(not(windows))]
+impl PdhSource for LinuxClocks {
+    fn open(&mut self) -> bool {
+        let at = |leaf: &str| format!("{}/cpu0/cpufreq/{leaf}", Self::CPU_ROOT);
+        let nominal = Self::khz(at("base_frequency")).or_else(|| Self::khz(at("cpuinfo_max_freq")));
+        let Some(nominal) = nominal else {
+            return false;
+        };
+        self.nominal_mhz = nominal / 1000.0;
+        self.ticks = Self::read_ticks();
+        true
+    }
+
+    fn collect_query_data(&mut self) -> u32 {
+        0
+    }
+
+    fn arrays(&mut self) -> BTreeMap<&'static str, CounterRows> {
+        let now = Self::read_ticks();
+        let nominal = self.nominal_mhz;
+        let mut performance = CounterRows::new();
+        let mut utility = CounterRows::new();
+        let (mut weighted, mut weight, mut effective) = (0.0, 0.0, 0.0);
+        for (cpu, ticks) in &now {
+            let Some(megahertz) = Self::running_mhz(*cpu) else { continue };
+            let busy = self.ticks.get(cpu).map_or(0.0, |before| busy_fraction(*before, *ticks));
+            let percent = megahertz / nominal * 100.0;
+            performance.push((format!("0,{cpu}"), percent));
+            utility.push((format!("0,{cpu}"), percent * busy));
+            weighted += percent * busy;
+            weight += busy;
+            effective += percent * busy;
+        }
+        self.ticks = now;
+        let count = performance.len() as f64;
+        if count == 0.0 {
+            return BTreeMap::new();
+        }
+        // What the busy cores averaged, by how busy each was. A plain mean would
+        // be mostly the idle cores' resting clocks. If nothing was busy at all,
+        // the plain mean is all there is to say.
+        let average = if weight > 0.0 {
+            weighted / weight
+        } else {
+            performance.iter().map(|(_, percent)| percent).sum::<f64>() / count
+        };
+        performance.push((TOTAL_INSTANCE_SUFFIX.to_string(), average));
+        utility.push((TOTAL_INSTANCE_SUFFIX.to_string(), effective / count));
+        BTreeMap::from([
+            ("performance", performance),
+            ("utility", utility),
+            ("frequency", vec![(TOTAL_INSTANCE_SUFFIX.to_string(), nominal)]),
+        ])
+    }
 }
 
 fn rows<'a>(sample: &'a BTreeMap<&'static str, CounterRows>, key: &str) -> &'a [(String, f64)] {
@@ -340,9 +498,18 @@ pub fn processor_label(position: usize) -> String {
 /// returned nothing and the breakdown was simply absent.
 ///
 /// Windows' own count is the same set PDH enumerates, and needs no sample.
+#[cfg(windows)]
 pub fn core_count() -> usize {
     // SAFETY: a plain query with no arguments to get wrong.
     unsafe { GetActiveProcessorCount(ALL_PROCESSOR_GROUPS) as usize }
+}
+
+/// The kernel's count of online CPUs, the same set `/proc/stat` lists.
+#[cfg(not(windows))]
+pub fn core_count() -> usize {
+    // SAFETY: a plain query with no pointers to get wrong.
+    let online = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
+    usize::try_from(online).unwrap_or(0)
 }
 
 /// `[(label, megahertz)]` effective clock per logical processor, or [].
@@ -439,6 +606,29 @@ pub fn clock_text(key: &str) -> Option<String> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[cfg(not(windows))]
+    #[test]
+    fn proc_stat_splits_busy_from_idle() {
+        let stat = "cpu  100 0 100 800 0 0 0 0 0 0\n\
+                    cpu0 10 0 10 70 10 0 0 0 5 0\n\
+                    cpu7 1 2 3 4 5 6 7 8 0 0\n\
+                    intr 12345\nbtime 1762300000\n";
+        let cpus = parse_proc_stat(stat);
+        assert_eq!(cpus.len(), 2, "the whole-machine line is not a CPU");
+        // Idle includes iowait; guest time is inside user already.
+        assert_eq!(cpus[&0], CpuTicks { total: 100, idle: 80 });
+        assert_eq!(cpus[&7], CpuTicks { total: 36, idle: 9 });
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn busy_is_measured_over_the_interval() {
+        let before = CpuTicks { total: 100, idle: 80 };
+        assert_eq!(busy_fraction(before, CpuTicks { total: 200, idle: 130 }), 0.5);
+        assert_eq!(busy_fraction(before, before), 0.0, "no time passed");
+        assert_eq!(busy_fraction(before, CpuTicks { total: 150, idle: 500 }), 0.0, "never above its own interval");
+    }
 
     /// One collection from the Z790-P bench, idling: sixteen logical processors
     /// around 176% of a 3187 MHz nominal, plus the two aggregate instances PDH

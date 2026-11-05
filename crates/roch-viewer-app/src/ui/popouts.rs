@@ -175,6 +175,10 @@ pub fn finish_builder(mut builder: ViewportBuilder, position: Option<(f32, f32)>
     if let Some(icon) = asset_path::window_icon() {
         builder = builder.with_icon(icon);
     }
+    #[cfg(not(windows))]
+    {
+        builder = builder.with_app_id(super::admin::APP_ID);
+    }
     if let Some((x, y)) = position {
         builder = builder.with_position([x, y]);
     }
@@ -745,7 +749,12 @@ struct Popout<T> {
     window: Arc<Mutex<T>>,
     /// The native window, once it has been found; per window, so a
     /// reopened one is looked up again.
+    #[cfg(windows)]
     hwnd: Arc<Mutex<Option<isize>>>,
+    /// Off Windows, whether this window has been shown long enough for its
+    /// compositor to have decided it floats.
+    #[cfg(not(windows))]
+    mapped: Arc<std::sync::atomic::AtomicU32>,
     /// When the window was asked for, until its first frame is drawn.
     opened: Arc<Mutex<Option<Instant>>>,
     name: String,
@@ -799,12 +808,14 @@ impl PopoutWindow for DimmTelemetryWindow {
 }
 
 /// This process's visible top-level window with exactly this title.
+#[cfg(windows)]
 pub fn own_window_titled(title: &str) -> Option<windows::Win32::Foundation::HWND> {
     own_window(title, true)
 }
 
 /// This process's top-level window with exactly this title; `visible_only`
 /// skips one not shown yet, which the main window is on its first frame.
+#[cfg(windows)]
 pub fn own_window(title: &str, visible_only: bool) -> Option<windows::Win32::Foundation::HWND> {
     use windows::Win32::Foundation::{HWND, LPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, InternalGetWindowText, IsWindowVisible};
@@ -843,8 +854,10 @@ pub fn own_window(title: &str, visible_only: bool) -> Option<windows::Win32::Fou
 }
 
 /// The window procedure each width-capped window had before ours.
+#[cfg(windows)]
 static PREVIOUS_PROCS: Mutex<Vec<(isize, isize)>> = Mutex::new(Vec::new());
 
+#[cfg(windows)]
 unsafe extern "system" fn capped_width_proc(
     hwnd: windows::Win32::Foundation::HWND,
     message: u32,
@@ -877,6 +890,7 @@ unsafe extern "system" fn capped_width_proc(
 /// `resizable(False, True)` did: the window takes the screen's full height
 /// at the left edge rather than the whole screen. winit hands Windows the
 /// width cap only as the largest size a drag can reach.
+#[cfg(windows)]
 pub fn cap_maximized_width(hwnd: windows::Win32::Foundation::HWND) {
     use windows::Win32::UI::WindowsAndMessaging::{GWLP_WNDPROC, SetWindowLongPtrW};
     let key = hwnd.0 as isize;
@@ -895,6 +909,7 @@ pub fn cap_maximized_width(hwnd: windows::Win32::Foundation::HWND) {
 /// Draw a borderless window as a native menu is drawn: square corners and
 /// no frame line of DWM's own. Windows 11 rounds and outlines every
 /// top-level window, which the Tk option menu's native menu never was.
+#[cfg(windows)]
 pub fn square_menu_window(hwnd: windows::Win32::Foundation::HWND) -> bool {
     use windows::Win32::Graphics::Dwm::{DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DwmSetWindowAttribute};
     let corner = DWMWCP_DONOTROUND.0;
@@ -910,6 +925,7 @@ pub fn square_menu_window(hwnd: windows::Win32::Foundation::HWND) -> bool {
 
 /// Make `owner` the owner of `hwnd`: an owned window stays above its owner,
 /// and when it closes Windows activates the owner again.
+#[cfg(windows)]
 pub fn set_owner(hwnd: windows::Win32::Foundation::HWND, owner: windows::Win32::Foundation::HWND) {
     use windows::Win32::UI::WindowsAndMessaging::{GWLP_HWNDPARENT, SetWindowLongPtrW};
     // SAFETY: both are live top-level windows of ours; GWLP_HWNDPARENT on a
@@ -918,6 +934,7 @@ pub fn set_owner(hwnd: windows::Win32::Foundation::HWND, owner: windows::Win32::
 }
 
 /// Whether a window's native title bar is drawn dark.
+#[cfg(windows)]
 pub fn title_bar_dark(hwnd: windows::Win32::Foundation::HWND) -> Option<bool> {
     use windows::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmGetWindowAttribute};
     let mut value: i32 = 0;
@@ -928,6 +945,7 @@ pub fn title_bar_dark(hwnd: windows::Win32::Foundation::HWND) -> Option<bool> {
 
 /// Give a native title bar the app's mode, as customtkinter did with
 /// DWMWA_USE_IMMERSIVE_DARK_MODE. True when it had to be changed.
+#[cfg(windows)]
 pub fn sync_title_bar(hwnd: windows::Win32::Foundation::HWND, dark: bool) -> bool {
     use windows::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute};
     if title_bar_dark(hwnd) == Some(dark) {
@@ -944,7 +962,10 @@ impl<T: PopoutWindow> Popout<T> {
             id: ViewportId::from_hash_of(name),
             builder,
             window: Arc::new(Mutex::new(window)),
+            #[cfg(windows)]
             hwnd: Arc::new(Mutex::new(None)),
+            #[cfg(not(windows))]
+            mapped: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             opened: Arc::new(Mutex::new(None)),
             name: name.to_string(),
             restore_to: Arc::new(Mutex::new(None)),
@@ -997,19 +1018,48 @@ impl<T: PopoutWindow> Popout<T> {
             }
         }
         let window = self.window.clone();
+        #[cfg(windows)]
         let hwnd = self.hwnd.clone();
         let opened = self.opened.clone();
         let name = self.name.clone();
+        #[cfg(windows)]
         let restore_to = self.restore_to.clone();
+        #[cfg(windows)]
         let position = self.position.clone();
+        #[cfg(windows)]
         let title = self.builder.title.clone().unwrap_or_default();
+        #[cfg(windows)]
         let capped_width = self.builder.maximize_button == Some(true)
             && self.builder.max_inner_size.is_some_and(|size| size.x.is_finite());
-        ctx.show_viewport_deferred(self.id, self.builder.clone(), move |ui, _class| {
+        #[cfg(windows)]
+        let builder = self.builder.clone();
+        // Fixed until it is on screen, which is what makes a tiling compositor
+        // float it; a few frames in, its real limits replace those.
+        #[cfg(not(windows))]
+        let builder = {
+            use std::sync::atomic::Ordering;
+            if self.mapped.load(Ordering::Relaxed) < window_tools::FRAMES_TO_MAP {
+                window_tools::floating(self.builder.clone())
+            } else {
+                let min = self.builder.min_inner_size;
+                window_tools::release_floating(self.builder.clone(), min)
+            }
+        };
+        #[cfg(not(windows))]
+        let mapped = self.mapped.clone();
+        ctx.show_viewport_deferred(self.id, builder, move |ui, _class| {
             let frame_started = Instant::now();
             let mut window = window.lock().unwrap_or_else(|e| e.into_inner());
             let palette = *window.palette_mut();
             ui.style_mut().visuals = popout_visuals(&palette);
+            #[cfg(not(windows))]
+            if mapped.load(std::sync::atomic::Ordering::Relaxed) < window_tools::FRAMES_TO_MAP {
+                mapped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                ui.ctx().request_repaint_of(ViewportId::ROOT);
+                ui.ctx().request_repaint();
+            }
+            #[cfg(windows)]
+            {
             // The native frame follows the app's mode, as customtkinter
             // darkened (or lightened) the pop-outs' title bars by setting
             // DWMWA_USE_IMMERSIVE_DARK_MODE. winit's SetTheme did not reach
@@ -1049,6 +1099,7 @@ impl<T: PopoutWindow> Popout<T> {
                 }
             }
             drop(found);
+            }
             window.draw(ui);
             if let Some(at) = opened.lock().unwrap_or_else(|e| e.into_inner()).take() {
                 super::timing::took(&format!("{name} first frame (frame {:.1} ms)", frame_started.elapsed().as_secs_f64() * 1000.0), at);
@@ -1430,6 +1481,7 @@ mod tests {
         });
     }
 
+    #[cfg(windows)]
     #[test]
     fn a_pop_out_title_bar_takes_the_apps_mode_and_keeps_it() {
         // A Light pop-out wore the system's black caption: winit's SetTheme
@@ -1454,6 +1506,7 @@ mod tests {
         let _ = unsafe { DestroyWindow(hwnd) };
     }
 
+    #[cfg(windows)]
     #[test]
     fn maximizing_the_advanced_window_keeps_its_width() {
         // Tk's resizable(False, True) left the maximize button working, and

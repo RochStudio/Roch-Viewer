@@ -15,7 +15,19 @@ pub struct Settings {
 }
 
 impl Settings {
+    /// `~/.config/RochViewer/settings.json`, wherever the desktop keeps config.
+    #[cfg(not(windows))]
+    pub fn path() -> PathBuf {
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+            .unwrap_or_default();
+        base.join("RochViewer").join("settings.json")
+    }
+
     /// `%LOCALAPPDATA%\RochViewer\settings.json`, or beside the home folder.
+    #[cfg(windows)]
     pub fn path() -> PathBuf {
         let base = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)

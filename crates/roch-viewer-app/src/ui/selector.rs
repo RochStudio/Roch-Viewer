@@ -231,6 +231,10 @@ pub fn selector(ui: &mut Ui, id: Id, rect: Rect, palette: &Palette, display: &st
     }
     let mut chosen = None;
     let (origin, screen) = ctx.input(|i| (i.viewport().inner_rect.map(|r| r.min), i.viewport().monitor_size));
+    // A window of its own needs a position it can choose, and Wayland gives it
+    // none: the menu would open wherever the compositor pleased. So everywhere but
+    // Windows it is drawn inside the window, as the fallback below does.
+    let origin = origin.filter(|_| cfg!(windows));
     if open && let Some(origin) = origin {
         let position = menu_position(origin, rect, size, screen.map_or(f32::INFINITY, |s| s.y));
         let builder = egui::ViewportBuilder::default()
@@ -243,12 +247,15 @@ pub fn selector(ui: &mut Ui, id: Id, rect: Rect, palette: &Palette, display: &st
             .with_inner_size(size);
         let menu_id = id.with("menu");
         let palette = *palette;
+        #[cfg(windows)]
         let owner_title = format!("{} {}", rochviewer::version::APP_NAME, rochviewer::version::VERSION);
         let (picked, close) = ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(menu_id), builder, |ui, _class| {
             let full = ui.max_rect();
             let picked = menu_items(ui, menu_id, Rect::from_min_size(full.min, size), &palette, &font, choices);
             let (escape, focused) = ui.input(|i| (i.key_pressed(egui::Key::Escape), i.viewport().focused));
+            #[cfg(windows)]
             let squared = menu_id.with("squared");
+            #[cfg(windows)]
             if !ui.data(|d| d.get_temp::<bool>(squared)).unwrap_or(false)
                 && let Some(hwnd) = super::popouts::own_window_titled(MENU_TITLE)
             {
@@ -282,12 +289,15 @@ pub fn selector(ui: &mut Ui, id: Id, rect: Rect, palette: &Palette, display: &st
         // No window position to place it by: fall back on a menu inside the
         // window.
         let mut close = false;
-        egui::Area::new(id.with("menu-area")).order(egui::Order::Foreground).fixed_pos(pos2(rect.left() + 1.0, rect.top() - MENU_GAP - size.y)).show(&ctx, |ui| {
+        let area = egui::Area::new(id.with("menu-area")).order(egui::Order::Foreground).fixed_pos(pos2(rect.left() + 1.0, rect.top() - MENU_GAP - size.y)).show(&ctx, |ui| {
             let (menu, _) = ui.allocate_exact_size(size, Sense::hover());
             chosen = menu_items(ui, id.with("menu"), menu, palette, &font, choices);
             close = ui.input(|i| i.key_pressed(egui::Key::Escape));
         });
-        if chosen.is_some() || close {
+        // A click anywhere else closes it, as losing focus closes the window
+        // version. Not the click that opened it, though: that is this frame's.
+        let clicked_outside = area.response.clicked_elsewhere() && !response.clicked();
+        if chosen.is_some() || close || clicked_outside {
             open = false;
         }
     }

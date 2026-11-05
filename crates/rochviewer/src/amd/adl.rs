@@ -181,7 +181,12 @@ fn load_adl() -> Option<AdlApi> {
         // Unit tests never load a vendor library.
         TEST_ADL.with(|slot| slot.get())
     }
-    #[cfg(not(test))]
+    // There is no atiadlxx off Windows. `gpu::amdgpu` answers instead.
+    #[cfg(all(not(test), not(windows)))]
+    {
+        None
+    }
+    #[cfg(all(not(test), windows))]
     {
         use libloading::os::windows::{LOAD_LIBRARY_SEARCH_DEFAULT_DIRS, Library};
 
@@ -322,6 +327,10 @@ pub struct AdlMemory {
 /// What ADL knows about the card's memory, at `location` (bus, device,
 /// function) when given; empty when ADL cannot say.
 pub fn read_memory(location: Option<PciLocation>) -> AdlMemory {
+    #[cfg(target_os = "linux")]
+    if !cfg!(test) {
+        return crate::gpu::amdgpu::read_memory(location);
+    }
     let query = |api: &AdlApi, context: Context, adapter_index: i32| {
         let memory_info = api.memory_info_x4_get?;
         let mut memory: MemoryInfoX4 = zeroed();
@@ -376,6 +385,10 @@ pub fn format_sensor(value: i32, unit: &str, scale: f64) -> String {
 /// One query serves every row: the whole sensor block comes back in a single
 /// call, so nine rows cost one trip through the driver rather than nine.
 pub fn read_sensors(location: Option<PciLocation>) -> BTreeMap<&'static str, String> {
+    #[cfg(target_os = "linux")]
+    if !cfg!(test) {
+        return crate::gpu::amdgpu::read_sensors(location);
+    }
     let query = |api: &AdlApi, context: Context, adapter_index: i32| {
         let call = api.new_query_pmlog_data_get?;
         let mut data = PMLogDataOutput { size: 0, sensors: [SensorData::default(); MAX_PMLOG_SENSORS] };

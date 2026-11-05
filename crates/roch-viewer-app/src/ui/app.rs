@@ -238,8 +238,17 @@ pub fn startup_position(platform: Platform, screen: Vec2) -> egui::Pos2 {
     pos2(((screen.x - width) / 2.0).max(0.0).floor(), ((screen.y - tallest) / 2.0).max(0.0).floor())
 }
 
+/// The notice for a register-access problem, or `None` when there is not one.
+/// The reason already says what to do about it here.
+#[cfg(not(windows))]
+pub fn driver_notice_text(problem: Option<&str>, _missing: bool) -> Option<String> {
+    let problem = problem.filter(|p| !p.is_empty())?;
+    Some(format!("{problem} The readings below come from the memory controller and are unavailable without it."))
+}
+
 /// The notice for a driver problem, or `None` when there is not one.
 /// Separate from the widget so it can be checked without a display.
+#[cfg(windows)]
 pub fn driver_notice_text(problem: Option<&str>, missing: bool) -> Option<String> {
     let problem = problem.filter(|p| !p.is_empty())?;
     // The message opens with the sentence that matters and follows it with
@@ -340,9 +349,17 @@ pub struct TimingApp {
     applied_revision: u64,
     applied_dark: bool,
     /// The main window's native handle, once found.
+    #[cfg(windows)]
     main_hwnd: Option<isize>,
+    /// Frames drawn since the window opened, until its compositor has decided
+    /// that it floats. See `window_tools::floating`.
+    #[cfg(not(windows))]
+    frames_shown: u32,
     /// Where the main window opens, in screen pixels, once it exists.
+    #[cfg(windows)]
     restore_main: Option<(i32, i32)>,
+    /// A debug build's remaining remote-control steps, and when the next is due.
+    demo: (Vec<String>, std::time::Instant),
     /// When the preferences next need writing out.
     save_due: Option<std::time::Instant>,
     saved: serde_json::Value,
@@ -403,7 +420,7 @@ impl TimingApp {
         let prefs = Prefs::from_settings(settings.map());
         theme::set_look(theme::Look::from_prefs(&prefs));
         timing::span("install fonts", || theme::install_fonts(&cc.egui_ctx, &prefs.font_family));
-        let system_dark = cc.egui_ctx.system_theme() == Some(egui::Theme::Dark);
+        let system_dark = theme::system_is_dark(&cc.egui_ctx);
         let dark = prefs.theme.is_dark(system_dark);
         let palette = Palette::from_prefs(&prefs, dark);
         theme::apply(&cc.egui_ctx, &palette);
@@ -414,6 +431,7 @@ impl TimingApp {
         if prefs.always_on_top {
             cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
         }
+        #[cfg(windows)]
         let restore_main = prefs
             .remember_positions
             .then(|| prefs.positions.get("main").copied())
@@ -427,6 +445,14 @@ impl TimingApp {
         let tab_names = tab_names_for(&backend.rows);
 
         let driver_notice = driver_notice_text(hardware::driver_error().as_deref(), hardware::driver_path::find_driver().is_none());
+        // Not a problem with access, but it blanks a whole group of rows just the
+        // same, and a page of blanks with no reason is what this strip is for.
+        #[cfg(not(windows))]
+        let driver_notice = driver_notice.or_else(|| {
+            hardware::lowlevel_io::superio_owned_by_kernel().map(|driver| {
+                format!("The kernel's {driver} driver is using the Super I/O, so the board's sensors are not read: sharing it could wedge the chip.")
+            })
+        });
 
         let logo = asset_path::logo_image(LOGO_SIZE).map(|img| cc.egui_ctx.load_texture("logo", img, egui::TextureOptions::LINEAR));
 
@@ -466,7 +492,10 @@ impl TimingApp {
             driver_notice,
             sized_for: None,
             // A remembered place replaces the opening position.
+            #[cfg(windows)]
             positioned: restore_main.is_some(),
+            #[cfg(not(windows))]
+            positioned: false,
             popouts: Popouts::new(),
             started: false,
             pending: Vec::new(),
@@ -484,8 +513,13 @@ impl TimingApp {
             applied: prefs,
             applied_revision: 0,
             applied_dark: dark,
+            #[cfg(windows)]
             main_hwnd: None,
+            #[cfg(not(windows))]
+            frames_shown: 0,
+            #[cfg(windows)]
             restore_main,
+            demo: (fixture::demo_steps(), std::time::Instant::now() + std::time::Duration::from_millis(1500)),
             save_due: None,
             saved,
             fit_summary: summary_layout.is_some(),
@@ -499,7 +533,7 @@ impl TimingApp {
     fn follow_prefs(&mut self, ctx: &egui::Context) {
         let revision = self.prefs_revision.load(Ordering::SeqCst);
         let prefs = self.prefs.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let system_dark = ctx.system_theme() == Some(egui::Theme::Dark);
+        let system_dark = theme::system_is_dark(ctx);
         let dark = prefs.theme.is_dark(system_dark);
         if revision == self.applied_revision && dark == self.applied_dark {
             // Only places or the last tab may have moved: saved, nothing to redraw.
@@ -541,9 +575,28 @@ impl TimingApp {
         ctx.request_repaint();
     }
 
+    /// The main window's native chores. Off Windows there is one: a few frames
+    /// in, once it has been floated, drop the fixed size it opened with. The tab
+    /// size waits until then too, since it would only land on the fixed limits.
+    #[cfg(not(windows))]
+    fn follow_native_window(&mut self, ctx: &egui::Context) {
+        if self.frames_shown > window_tools::FRAMES_TO_MAP {
+            return;
+        }
+        self.frames_shown += 1;
+        if self.frames_shown > window_tools::FRAMES_TO_MAP {
+            ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(Vec2::new(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)));
+            ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(Vec2::INFINITY));
+            // Whatever the tab asked for while the window could not move.
+            self.sized_for = None;
+        }
+        ctx.request_repaint();
+    }
+
     /// The main window's native chores: put it where it was, give it the
     /// chosen opacity, and note where it is now.
-    fn follow_native_window(&mut self) {
+    #[cfg(windows)]
+    fn follow_native_window(&mut self, _ctx: &egui::Context) {
         if self.main_hwnd.is_none() {
             self.main_hwnd = super::popouts::own_window(&format!("{APP_NAME} {VERSION}"), false).map(|h| h.0 as isize);
         }
@@ -568,6 +621,30 @@ impl TimingApp {
         }
     }
 
+    /// Take the next remote-control step, when one is due.
+    fn follow_demo(&mut self, ctx: &egui::Context) {
+        let Some(step) = self.demo.0.last().cloned() else { return };
+        if std::time::Instant::now() < self.demo.1 {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            return;
+        }
+        self.demo.0.pop();
+        self.demo.1 = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+        match step.split_once(':') {
+            Some(("tab", tab)) => {
+                if let Some(index) = self.tab_names.iter().position(|name| name == tab) {
+                    self.select_tab(ctx, index);
+                }
+            }
+            Some(("open", "Advanced")) => self.pending.push(Action::Advanced),
+            Some(("open", "Telemetry")) => self.pending.push(Action::Telemetry),
+            Some(("open", "Settings")) => self.pending.push(Action::Settings),
+            Some(("do", "Screenshot")) => self.pending.push(Action::Screenshot),
+            _ => eprintln!("Unknown demo step: {step}"),
+        }
+        ctx.request_repaint();
+    }
+
     /// Write the preferences out once they have settled.
     fn save_prefs_when_due(&mut self, ctx: &egui::Context) {
         let Some(due) = self.save_due else { return };
@@ -581,7 +658,7 @@ impl TimingApp {
         let json = prefs.to_json();
         if json != self.saved {
             self.settings.save("preferences", json.clone());
-            let system_dark = ctx.system_theme() == Some(egui::Theme::Dark);
+            let system_dark = theme::system_is_dark(ctx);
             self.settings.save("appearance_mode", serde_json::Value::from(prefs.legacy_appearance_mode(system_dark)));
             self.saved = json;
         }
@@ -617,6 +694,12 @@ impl TimingApp {
             h = h.min((screen.y - 120.0).max(MIN_WINDOW_HEIGHT));
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(w, h)));
+        // Not while the window still has the fixed size it opened with.
+        #[cfg(not(windows))]
+        if self.frames_shown > window_tools::FRAMES_TO_MAP {
+            let zoom = ctx.zoom_factor();
+            window_tools::resize_through_compositor(w * zoom, h * zoom);
+        }
     }
 
     /// A tab was chosen: its size, its SPD read, and a fresh read of its
@@ -693,7 +776,11 @@ impl TimingApp {
         // Settings, where the sun and moon used to be: the theme is one of
         // the things it holds.
         let (settings_rect, response) = button(ui, TITLE_THEME_WIDTH, "title-settings");
-        title_glyph(&painter, settings_rect, &response, palette.tab_unselected_hover, SETTINGS_ICON, theme::TITLE_THEME_SIZE, palette.text);
+        if cfg!(windows) {
+            title_glyph(&painter, settings_rect, &response, palette.tab_unselected_hover, SETTINGS_ICON, theme::TITLE_THEME_SIZE, palette.text);
+        } else {
+            title_gear(&painter, settings_rect, &response, palette.tab_unselected_hover, palette.text);
+        }
         let response = response.on_hover_text("Settings");
         if response.clicked() {
             self.pending.push(Action::Settings);
@@ -702,7 +789,11 @@ impl TimingApp {
         // title bar rather than beside Telemetry and Advanced because the tab
         // strip has no room to spare on the 700px presets.
         let (shot, response) = button(ui, TITLE_THEME_WIDTH, "title-screenshot");
-        title_glyph(&painter, shot, &response, palette.tab_unselected_hover, SCREENSHOT_ICON, theme::TITLE_SCREENSHOT_SIZE, palette.text);
+        if cfg!(windows) {
+            title_glyph(&painter, shot, &response, palette.tab_unselected_hover, SCREENSHOT_ICON, theme::TITLE_SCREENSHOT_SIZE, palette.text);
+        } else {
+            title_camera(&painter, shot, &response, palette.tab_unselected_hover, palette.text);
+        }
         if response.clicked() {
             self.pending.push(Action::Screenshot);
         }
@@ -885,6 +976,36 @@ fn title_glyph(painter: &egui::Painter, rect: Rect, response: &egui::Response, h
     painter.text(rect.center() + vec2(0.0, 1.0), egui::Align2::CENTER_CENTER, text, theme::symbol(size), color);
 }
 
+/// The screenshot button's camera, drawn. U+1F4F7 is in Segoe UI Symbol on Windows
+/// and in no font that can be counted on anywhere else, where a colour emoji font
+/// or nothing is what a system has for it, and neither can be drawn here.
+fn title_camera(painter: &egui::Painter, rect: Rect, response: &egui::Response, hover: Color32, color: Color32) {
+    if response.hovered() {
+        painter.rect_filled(rect, 0.0, hover);
+    }
+    let center = rect.center() + vec2(0.0, 1.0);
+    let body = Rect::from_center_size(center, vec2(14.0, 10.0));
+    painter.rect_stroke(body, 2.0, Stroke::new(1.2, color), egui::StrokeKind::Middle);
+    painter.circle_stroke(center, 2.5, Stroke::new(1.2, color));
+    let finder = Rect::from_min_size(pos2(center.x - 3.0, body.top() - 2.0), vec2(6.0, 2.0));
+    painter.rect_filled(finder, 0.5, color);
+}
+
+/// The settings button's gear, drawn for the same reason as [`title_camera`]:
+/// egui's built-in fonts, the last resort off Windows, do not have U+2699.
+fn title_gear(painter: &egui::Painter, rect: Rect, response: &egui::Response, hover: Color32, color: Color32) {
+    if response.hovered() {
+        painter.rect_filled(rect, 0.0, hover);
+    }
+    let center = rect.center() + vec2(0.0, 1.0);
+    painter.circle_stroke(center, 3.4, Stroke::new(1.4, color));
+    for tooth in 0..8 {
+        let angle = tooth as f32 * std::f32::consts::TAU / 8.0;
+        let direction = vec2(angle.cos(), angle.sin());
+        painter.line_segment([center + direction * 4.0, center + direction * 6.2], Stroke::new(1.8, color));
+    }
+}
+
 /// One of the two tools on the tab strip, laid right to left from `right`.
 fn tool_button(ui: &mut Ui, palette: &Palette, text: &str, right: &mut f32, top: f32) -> egui::Response {
     let font = theme::bold(theme::TAB_FONT_SIZE);
@@ -903,7 +1024,8 @@ impl eframe::App for TimingApp {
         let frame_started = std::time::Instant::now();
         let ctx = ui.ctx().clone();
         self.follow_prefs(&ctx);
-        self.follow_native_window();
+        self.follow_native_window(&ctx);
+        self.follow_demo(&ctx);
         if self.inventory.as_ref().is_some_and(|t| t.is_finished()) {
             if let Some(Ok((choices, labels))) = self.inventory.take().map(|t| t.join()) {
                 self.choices = choices;
@@ -1125,6 +1247,18 @@ mod tests {
         assert!(notice(&missing_message()).unwrap().contains("inpoutx64.dll"));
     }
 
+    #[cfg(not(windows))]
+    #[test]
+    fn the_reason_is_passed_on_with_what_it_affects() {
+        // Off Windows the reason already says what to do, and is written to be
+        // shown whole: there is no list of directories to leave out.
+        let text = notice("Register readings need administrator access, and the prompt was declined. Open the viewer again to be asked again.").unwrap();
+        assert!(text.contains("the prompt was declined"));
+        assert!(text.contains("to be asked again"));
+        assert!(text.contains("readings below"));
+        assert!(!text.contains('\n'));
+    }
+
     #[test]
     fn it_says_the_readings_are_the_thing_affected() {
         // A notice that names a missing DLL without connecting it to the
@@ -1132,6 +1266,7 @@ mod tests {
         assert!(notice(&missing_message()).unwrap().contains("readings below"));
     }
 
+    #[cfg(windows)]
     #[test]
     fn a_missing_driver_is_told_where_to_put_it() {
         assert!(notice(&missing_message()).unwrap().contains("beside this program"));
@@ -1153,6 +1288,7 @@ mod tests {
         assert!(text.contains("administrator"));
     }
 
+    #[cfg(windows)]
     #[test]
     fn the_directory_list_is_left_out() {
         // missing_message names every directory searched, over several
@@ -1160,12 +1296,14 @@ mod tests {
         assert!(!notice(&missing_message()).unwrap().contains('\n'));
     }
 
+    #[cfg(windows)]
     #[test]
     fn it_is_one_line_of_reasonable_length() {
         let text = notice(&missing_message()).unwrap();
         assert!(text.chars().count() < 200, "{text}");
     }
 
+    #[cfg(windows)]
     #[test]
     fn driver_notice_keeps_the_first_sentence() {
         let problem = "inpoutx64.dll not found. It is a third-party component and is not distributed";

@@ -22,9 +22,17 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(not(windows))]
+mod command_line;
+#[cfg(not(windows))]
+mod linux_setup;
 mod ui;
 
 fn main() {
+    #[cfg(not(windows))]
+    if let Some(code) = command_line::run() {
+        std::process::exit(code);
+    }
     ui::timing::start();
     ui::run();
 }

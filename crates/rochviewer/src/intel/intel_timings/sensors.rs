@@ -176,7 +176,16 @@ fn graphics_sensors(refresh: bool) -> BTreeMap<String, String> {
     let empty = cache.as_ref().is_none_or(|readings| readings.is_empty());
     if refresh || empty {
         let readings = crate::gpu::nvidia_gpu::read_gpu_sensors();
-        *cache = Some(readings.into_iter().map(|(k, v)| (k.to_string(), v)).collect());
+        let readings: BTreeMap<String, String> = readings.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+        // The kernel has a Radeon's readings as readily as NVML has a GeForce's,
+        // so where NVML has nothing to say, a card it does not drive can.
+        #[cfg(target_os = "linux")]
+        let readings = if readings.is_empty() {
+            crate::gpu::amdgpu::read_board_sensors().into_iter().map(|(k, v)| (k.to_string(), v)).collect()
+        } else {
+            readings
+        };
+        *cache = Some(readings);
     }
     cache.clone().unwrap_or_default()
 }

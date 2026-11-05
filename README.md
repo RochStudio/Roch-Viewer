@@ -1,10 +1,32 @@
 # Roch Viewer 1.1.1
 
-A read-only Windows tool for memory timings, hardware details and live telemetry on supported Intel and AMD systems. Built in Rust, with customizable themes and Summary layouts.
+A read-only tool for memory timings, hardware details and live telemetry on Intel LGA1700, Intel LGA1851 and AMD AM5, on Windows and Linux. Built in Rust, with customizable themes and Summary layouts.
 
 ![Roch Viewer 1.1.1](assets/screenshots/roch-viewer-1.1.1.png)
 
+## Supported platforms
+
+| Platform | Memory | Windows | Linux |
+| --- | --- | --- | --- |
+| Intel LGA1851 (Z890) | DDR5 | Yes | Yes, tested on hardware |
+| Intel LGA1700 (Z690/Z790) | DDR5 and DDR4 | Yes | Yes, not yet tested on hardware |
+| AMD AM5 (Ryzen 9000, with Ryzen 7000 experimental) | DDR5 | Yes | Yes, not yet tested on hardware |
+
+On Linux, every platform builds and passes its tests, but only LGA1851 has been run on real hardware so far. Reports from other boards are welcome.
+
 ## Get started
+
+### Linux
+
+No driver to fetch. With [Rust stable](https://rustup.rs):
+
+```bash
+cargo xtask install
+```
+
+Open it from your launcher, or run `rochviewer`, and accept the password prompt. See the [Linux guide](docs/linux.md) for how to stop being asked, what differs from Windows and what has been verified on hardware.
+
+### Windows
 
 Windows 10/11 x64. No Python, .NET or Rust installation needed to run.
 
@@ -16,7 +38,9 @@ Readings depend on your hardware, BIOS and driver access. See the [reference](do
 
 ## Build
 
-With stable Rust and Visual Studio C++ Build Tools installed:
+On Linux, stable Rust is all it needs: `cargo build --release --locked`, then `target/release/RochViewer`.
+
+On Windows, with stable Rust and Visual Studio C++ Build Tools installed:
 
 ```powershell
 cargo build --release --locked

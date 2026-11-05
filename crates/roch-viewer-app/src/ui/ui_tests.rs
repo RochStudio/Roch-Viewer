@@ -764,3 +764,34 @@ fn every_platforms_built_in_summary_survives_becoming_a_layout() {
         check(platform);
     }
 }
+
+/// Every character the window draws outside ASCII, bar the camera and the gear,
+/// which are drawn rather than typed off Windows. A machine with no fonts at all
+/// has only egui's built-in ones, which is what a test sees, and it must still draw
+/// these.
+#[cfg(not(windows))]
+#[test]
+fn the_built_in_fonts_have_every_character_the_window_draws() {
+    with_ui(|ui| {
+        let mut missing = Vec::new();
+        for font in [theme::font(theme::FONT_SIZE), theme::bold(theme::FONT_SIZE), theme::symbol(theme::TITLE_THEME_SIZE)] {
+            for character in "—°Ω·◀▶−▾▼▸▲›…×".chars() {
+                if !ui.ctx().fonts_mut(|fonts| fonts.has_glyph(&font, character)) {
+                    missing.push(format!("{character} (U+{:04X}) in {:?}", character as u32, font.family));
+                }
+            }
+        }
+        assert!(missing.is_empty(), "{missing:#?}");
+    });
+}
+
+/// The grid the columns are measured in holds whichever face stands in for
+/// Consolas: 7px a character at 12px.
+#[cfg(not(windows))]
+#[test]
+fn a_stand_in_face_still_lands_on_the_seven_pixel_grid() {
+    with_ui(|ui| {
+        let width = super::draw::text_width(ui.painter(), &"M".repeat(30), &theme::font(theme::FONT_SIZE));
+        assert!((width - 210.0).abs() < 0.5, "{width}");
+    });
+}

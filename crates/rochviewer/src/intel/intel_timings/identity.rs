@@ -374,6 +374,27 @@ pub const RELATION_PROCESSOR_CORE: u32 = 0;
 pub const LTP_PC_SMT: u8 = 0x1;
 
 /// (efficiency class, has SMT) for each enabled core, or [] if unread.
+///
+/// A hybrid part publishes which logical processors are which as two perf PMUs,
+/// `cpu_core` and `cpu_atom`. Off a hybrid part neither exists, and every core
+/// shares one class, which is what the Windows records say there too.
+#[cfg(target_os = "linux")]
+fn processor_cores() -> Vec<(u8, bool)> {
+    use crate::wmi_util::real::{parse_cpu_list, physical_cores};
+    let performance = std::fs::read_to_string("/sys/devices/cpu_core/cpus")
+        .map(|list| parse_cpu_list(&list))
+        .unwrap_or_default();
+    physical_cores()
+        .iter()
+        .map(|threads| {
+            let efficiency = u8::from(threads.first().is_some_and(|cpu| performance.contains(cpu)));
+            (efficiency, threads.len() > 1)
+        })
+        .collect()
+}
+
+/// (efficiency class, has SMT) for each enabled core, or [] if unread.
+#[cfg(windows)]
 fn processor_cores() -> Vec<(u8, bool)> {
     use windows::Win32::System::SystemInformation::{
         GetLogicalProcessorInformationEx, LOGICAL_PROCESSOR_RELATIONSHIP,
@@ -612,10 +633,17 @@ pub fn get_bios_version() -> String {
     if version.is_empty() { "Unknown".into() } else { version.to_string() }
 }
 
+/// The running microcode revision, as the kernel states it.
+#[cfg(not(windows))]
+pub fn get_microcode() -> String {
+    system_identity::microcode().unwrap_or_else(|| "Unknown".into())
+}
+
 /// Return the actual microcode revision, not the packed registry QWORD.
 ///
 /// Windows commonly stores the revision in the upper 32 bits of the Update
 /// Revision value. For example 0x13300000000 means revision 0x133.
+#[cfg(windows)]
 pub fn get_microcode() -> String {
     let key = match system_identity::registry::RegKey::open_local_machine(
         system_identity::MICROCODE_REGISTRY_PATH,
@@ -764,18 +792,11 @@ pub(super) fn display_version_from(
 pub fn get_os_name() -> Option<String> {
     OS_NAME.get_or_init(|| {
         let system = first("Win32_OperatingSystem")?;
-        let mut caption = stripped(&system, "Caption");
+        let caption = stripped(&system, "Caption");
         if caption.is_empty() {
             return None;
         }
-        if !caption.starts_with("Microsoft ") {
-            caption = format!("Microsoft {caption}");
-        }
-        for (short, full) in [("Pro", "Professional"), ("Ent", "Enterprise")] {
-            if caption.ends_with(&format!(" {short}")) {
-                caption = format!("{}{full}", &caption[..caption.len() - short.len()]);
-            }
-        }
+        let mut caption = system_identity::os_caption_text(&caption);
         let architecture = stripped(&system, "OSArchitecture");
         if !architecture.is_empty() {
             // WMI says "64-bit"; CPU-Z, and everyone else, says x64.
@@ -788,7 +809,7 @@ pub fn get_os_name() -> Option<String> {
         let build = stripped(&system, "BuildNumber");
         if !build.is_empty() {
             let revision = get_windows_update_revision();
-            caption += &format!(" Build {build}");
+            caption += &format!(" {} {build}", system_identity::OS_BUILD_WORD);
             if let Some(revision) = revision {
                 caption += &format!(".{revision}");
             }

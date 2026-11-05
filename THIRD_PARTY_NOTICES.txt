@@ -1,10 +1,10 @@
 Third-party components
 ======================
 
-inpoutx64.dll  (NOT distributed with this project)
+inpoutx64.dll  (NOT distributed with this project, Windows only)
 ------------------------------------------------------------------
-Roch Viewer needs a low-level access driver to read physical memory, PCI
-configuration space and I/O ports. It uses inpout32/64 by Highresolution
+On Windows, Roch Viewer needs a low-level access driver to read physical memory,
+PCI configuration space and I/O ports. It uses inpout32/64 by Highresolution
 Enterprises (www.highrez.co.uk), which reports:
 
   Copyright (c) 2008 Highresolution Enterprises.

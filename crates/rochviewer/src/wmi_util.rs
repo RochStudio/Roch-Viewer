@@ -10,6 +10,9 @@
 //! keeps one connection on a dedicated thread and every query is run there.
 //! Tests replace the source for their own thread with
 //! [`set_thread_source`], which is how the Python tests' `FakeWMI` is ported.
+//!
+//! Linux has no WMI: `wmi_linux.rs` answers the same classes from `/sys`, `/proc`
+//! and SMBIOS, in the same shapes, so nothing above this module changes.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -244,6 +247,18 @@ pub fn clear_static_cache() {
     STATIC_CLASSES.clear();
 }
 
+#[cfg(target_os = "linux")]
+#[path = "wmi_linux.rs"]
+pub mod real;
+
+#[cfg(not(any(windows, target_os = "linux")))]
+mod real {
+    pub fn query(class_name: &str) -> Result<Vec<super::WmiObject>, String> {
+        Err(format!("{class_name} has no source on this operating system"))
+    }
+}
+
+#[cfg(windows)]
 mod real {
     use super::{WmiObject, WmiValue};
     use std::collections::HashMap;

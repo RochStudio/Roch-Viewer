@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Linux: the same window and readings as on Windows, on Wayland and X11, with no driver to fetch. A small helper reads the registers as root and the window stays an ordinary process; `pkexec` asks at each launch, or `rochviewer setup` stops it asking. Verified on a Z890 AORUS TACHYON ICE with a Core Ultra 7 270K Plus and two RX 7900 XTs; other platforms have not been run on hardware yet. See [docs/linux.md](docs/linux.md).
+- Linux: `cargo xtask install` installs `rochviewer`, a launcher entry and the icon for one user, and `rochviewer dump` writes every row as JSON.
+
 ## 1.1.1 (2026-10-24)
 
 - Settings: the sun/moon toggle is replaced by a gear that opens a Settings window. Theme (Light, Dark, Follow Windows); seven colour schemes and every colour editable per mode; contrast; row shading; corner roundness; any installed font, text size and row spacing; interface scale 75-200%; always on top; window opacity; remembered window positions for the main window, Telemetry, Advanced and Settings; open on the last tab; live refresh interval; Telemetry auto-open; screenshot-to-clipboard; footer links on or off. A Summary page lays the Summary out by hand: identity strip and clocks block on or off, one to six columns, any row from any tab in any panel and order, labels renamed, headings and blank lines added; saved per platform, with the built-in layout one click away. Everything applies live and is saved in the same settings file, which keeps the old appearance key for earlier builds. The defaults are the window exactly as it was (all platforms).

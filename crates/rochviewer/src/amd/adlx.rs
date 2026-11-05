@@ -84,7 +84,12 @@ fn load_adlx() -> Option<AdlxApi> {
         // Unit tests never load a vendor library.
         TEST_ADLX.with(|slot| slot.get())
     }
-    #[cfg(not(test))]
+    // There is no amdadlx64 off Windows. `gpu::amdgpu` answers instead.
+    #[cfg(all(not(test), not(windows)))]
+    {
+        None
+    }
+    #[cfg(all(not(test), windows))]
     {
         use libloading::os::windows::{LOAD_LIBRARY_SEARCH_DEFAULT_DIRS, Library};
 
@@ -223,6 +228,10 @@ fn with_gpu<T>(work: impl FnOnce(Object) -> Option<T>) -> Option<T> {
 /// ADLX reports it as the top of the board power range, which is the same
 /// 363 W the card pins itself to under a sustained load.
 pub fn board_power_limit() -> Option<i32> {
+    #[cfg(target_os = "linux")]
+    if !cfg!(test) {
+        return crate::gpu::amdgpu::board_power_limit();
+    }
     with_gpu(|support| {
         let (mut low, mut high) = (0i32, 0i32);
         // SAFETY: `support` is the IADLXGPUMetricsSupport ADLX returned, whose

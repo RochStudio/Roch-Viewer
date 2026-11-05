@@ -119,6 +119,7 @@ pub type PciLocation = (u8, u8, u8);
 ///
 /// Keyed by value name ("UBR", "DisplayVersion", "ReleaseId"); a value the
 /// key does not hold is absent, and an unreadable key is an empty map.
+#[cfg(windows)]
 pub fn windows_version_values() -> BTreeMap<&'static str, RegValue> {
     let mut found = BTreeMap::new();
     let key = match registry::RegKey::open_local_machine(WINDOWS_VERSION_KEY) {
@@ -133,6 +134,35 @@ pub fn windows_version_values() -> BTreeMap<&'static str, RegValue> {
     found
 }
 
+/// There is no such key off Windows, which every caller reads as no values.
+#[cfg(not(windows))]
+pub fn windows_version_values() -> BTreeMap<&'static str, RegValue> {
+    BTreeMap::new()
+}
+
+/// What goes before the build number in the OS reading: Windows' own word, or
+/// on Linux, where the "build" is the kernel, what it is.
+pub const OS_BUILD_WORD: &str = if cfg!(windows) { "Build" } else { "Linux" };
+
+/// An OS caption as this project writes it. On Windows that is "Microsoft
+/// Windows 11 Professional", spelled the way the edition is; anywhere else the
+/// system's own name stands.
+pub(crate) fn os_caption_text(caption: &str) -> String {
+    let mut caption = caption.to_string();
+    if !cfg!(windows) {
+        return caption;
+    }
+    if !caption.starts_with("Microsoft ") {
+        caption = format!("Microsoft {caption}");
+    }
+    for (short, full) in [("Pro", "Professional"), ("Ent", "Enterprise")] {
+        if caption.ends_with(&format!(" {short}")) {
+            caption = format!("{}{full}", &caption[..caption.len() - short.len()]);
+        }
+    }
+    caption
+}
+
 /// Windows edition, architecture and full build, as CPU-Z states it.
 ///
 /// Its About tab reads "Microsoft Windows 11 Professional (x64) 23H2 Build
@@ -143,18 +173,11 @@ pub fn windows_version_values() -> BTreeMap<&'static str, RegValue> {
 pub fn os_name() -> Option<String> {
     let systems = wmi_util::query("Win32_OperatingSystem").ok()?;
     let system = systems.first()?;
-    let mut caption = trim_spaces(&system.str_or_empty("Caption")).to_string();
+    let caption = trim_spaces(&system.str_or_empty("Caption")).to_string();
     if caption.is_empty() {
         return None;
     }
-    if !caption.starts_with("Microsoft ") {
-        caption = format!("Microsoft {caption}");
-    }
-    for (short, full) in [("Pro", "Professional"), ("Ent", "Enterprise")] {
-        if caption.ends_with(&format!(" {short}")) {
-            caption = format!("{}{full}", &caption[..caption.len() - short.len()]);
-        }
-    }
+    let mut caption = os_caption_text(&caption);
     let architecture = system.str_or_empty("OSArchitecture");
     let architecture = trim_spaces(&architecture);
     if !architecture.is_empty() {
@@ -174,7 +197,7 @@ pub fn os_name() -> Option<String> {
     let build = system.str_or_empty("BuildNumber");
     let build = trim_spaces(&build);
     if !build.is_empty() {
-        caption += &format!(" Build {build}");
+        caption += &format!(" {OS_BUILD_WORD} {build}");
         if let Some(RegValue::Int(revision)) = values.get("UBR") {
             caption += &format!(".{revision}");
         }
@@ -526,10 +549,22 @@ pub fn decode_microcode(value: &RegValue) -> Option<String> {
 }
 
 /// The running microcode revision, or `None`.
+#[cfg(windows)]
 pub fn microcode() -> Option<String> {
     let key = registry::RegKey::open_local_machine(MICROCODE_REGISTRY_PATH).ok()?;
     let value = key.query_value("Update Revision").ok()?;
     decode_microcode(&value)
+}
+
+/// The running microcode revision, or `None`. The kernel says it directly.
+#[cfg(not(windows))]
+pub fn microcode() -> Option<String> {
+    if cfg!(test) {
+        return None;
+    }
+    let text = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/microcode/version").ok()?;
+    let revision = parse_int(trim_spaces(&text), 16)?;
+    Some(format!("0x{revision:X}"))
 }
 
 /// The Super I/O on the LPC bus, by its chip ID, or `None`.
@@ -615,13 +650,20 @@ pub(crate) fn parse_int(text: &str, radix: u32) -> Option<i64> {
 }
 
 /// The Windows registry, read-only: the parts of `winreg` this project uses.
+///
+/// The value type stays on every platform: the readings that carry one are
+/// decoded the same way wherever it came from, and Linux builds the Radeon's
+/// values from sysfs in this shape.
 pub mod registry {
+    #[cfg(windows)]
     use windows::Win32::Foundation::{ERROR_MORE_DATA, ERROR_SUCCESS, WIN32_ERROR};
+    #[cfg(windows)]
     use windows::Win32::System::Registry::{
         HKEY, HKEY_LOCAL_MACHINE, KEY_READ, REG_DWORD, REG_EXPAND_SZ, REG_MULTI_SZ, REG_QWORD,
         REG_SZ, REG_VALUE_TYPE, RegCloseKey, RegEnumKeyExW, RegEnumValueW, RegOpenKeyExW,
         RegQueryInfoKeyW, RegQueryValueExW,
     };
+    #[cfg(windows)]
     use windows::core::{PCWSTR, PWSTR};
 
     /// A registry value, converted to the shape the rows read it in.
@@ -641,6 +683,7 @@ pub mod registry {
 
     impl RegValue {
         /// `winreg`'s conversion of a value's type and raw data.
+        #[cfg(windows)]
         pub fn from_raw(kind: REG_VALUE_TYPE, data: &[u8]) -> RegValue {
             let le = |width: usize| {
                 data.iter()
@@ -740,10 +783,12 @@ pub mod registry {
         out
     }
 
+    #[cfg(windows)]
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain(std::iter::once(0)).collect()
     }
 
+    #[cfg(windows)]
     fn check(status: WIN32_ERROR, what: &str) -> Result<(), String> {
         if status == ERROR_SUCCESS {
             Ok(())
@@ -753,8 +798,10 @@ pub mod registry {
     }
 
     /// An open key, closed on drop.
+    #[cfg(windows)]
     pub struct RegKey(HKEY);
 
+    #[cfg(windows)]
     impl RegKey {
         /// `winreg.OpenKey(HKEY_LOCAL_MACHINE, path)` with read access.
         pub fn open_local_machine(path: &str) -> Result<RegKey, String> {
@@ -891,6 +938,7 @@ pub mod registry {
         }
     }
 
+    #[cfg(windows)]
     fn open(parent: HKEY, path: &str) -> Result<RegKey, String> {
         let path = wide(path);
         let mut key = HKEY::default();
@@ -901,6 +949,7 @@ pub mod registry {
         Ok(RegKey(key))
     }
 
+    #[cfg(windows)]
     impl Drop for RegKey {
         fn drop(&mut self) {
             // SAFETY: the handle was opened by RegOpenKeyExW and is closed once.
@@ -1152,6 +1201,7 @@ mod tests {
         crate::wmi_util::set_thread_source(None);
     }
 
+    #[cfg(windows)]
     #[test]
     fn registry_values_convert_as_winreg_does() {
         use windows::Win32::System::Registry::{REG_BINARY, REG_DWORD, REG_MULTI_SZ, REG_SZ};

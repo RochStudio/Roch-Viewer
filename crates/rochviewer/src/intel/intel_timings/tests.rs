@@ -2861,7 +2861,10 @@ fn ddr4_the_dfe_gain_does_not_survive_on_its_own() {
 /// under test, so the CPU-name half of the Arrow Lake check reads "Error":
 /// run these on an LGA1700 DDR5 bench, where that is the right answer.
 fn real_hardware() {
+    #[cfg(windows)]
     let hardware = crate::hardware::inpout::InpOut::load().expect("the driver loads -- run elevated beside it");
+    #[cfg(target_os = "linux")]
+    let hardware = crate::hardware::linux::direct::Direct::open().expect("register access -- run this as root");
     set_thread_hardware(Some(Arc::new(hardware)));
 }
 

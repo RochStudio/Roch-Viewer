@@ -10,10 +10,30 @@ permissions:
   contents: read
 
 jobs:
+  linux:
+    # The same decoders over a different way in: the hardware backend, the
+    # identity sources and the window all have a Linux side of their own.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run the tests
+        # No hardware here either, and the tests are written so that it makes no
+        # difference. They also must not reach for pkexec, which would hang on a
+        # prompt nobody can answer.
+        run: cargo test --workspace --locked
+
+      - name: Check the release build
+        run: cargo build --release --locked -p roch-viewer-app
+
   test:
-    # Windows because the project is: it reads MCHBAR, the PCH SMBus and the
-    # Super I/O through a Windows driver, and half the identity comes from
-    # WMI. There is nothing here that would run on another OS.
+    # Windows because the release is: it reads MCHBAR, the PCH SMBus and the
+    # Super I/O through a Windows driver, and half the identity comes from WMI.
     runs-on: windows-latest
 
     steps:

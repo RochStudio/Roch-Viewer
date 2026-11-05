@@ -175,12 +175,25 @@ impl Entry {
     }
 }
 
+/// The user's Desktop, where the desktop says it is. Many Linux setups do not have
+/// one at all, and a dump written into a folder this just made is one the user
+/// cannot find, so without one it goes in the home folder.
+#[cfg(not(windows))]
+pub fn desktop_directory() -> PathBuf {
+    let desktop = super::screenshot::user_directory("XDG_DESKTOP_DIR", "Desktop");
+    if desktop.is_dir() {
+        return desktop;
+    }
+    std::env::var_os("HOME").map(PathBuf::from).unwrap_or(desktop)
+}
+
 /// The user's Desktop, asked of Windows rather than assumed.
 ///
 /// ~/Desktop is wrong on any machine whose desktop is redirected -- OneDrive
 /// does it by default -- and a dump written there is one the user cannot
 /// find. SHGetFolderPathW answers where it actually is; the expanded home is
 /// the fallback for when that call is unavailable.
+#[cfg(windows)]
 pub fn desktop_directory() -> PathBuf {
     use windows::Win32::UI::Shell::SHGetFolderPathW;
 
@@ -233,6 +246,16 @@ pub fn format_dump(entries: &[Entry]) -> String {
 /// Windows error to, and the path as its repr. An error with no errno of
 /// its own keeps the system's message.
 pub fn python_os_error(error: &std::io::Error, path: &std::path::Path) -> String {
+    // On Linux the error already is the errno.
+    #[cfg(not(windows))]
+    let errno = match error.raw_os_error() {
+        Some(2) => Some((2, "No such file or directory")),
+        Some(13) => Some((13, "Permission denied")),
+        Some(28) => Some((28, "No space left on device")),
+        Some(22) => Some((22, "Invalid argument")),
+        _ => None,
+    };
+    #[cfg(windows)]
     let errno = match error.raw_os_error() {
         Some(2) | Some(3) => Some((2, "No such file or directory")),
         Some(5) | Some(32) | Some(33) => Some((13, "Permission denied")),
@@ -752,6 +775,17 @@ mod tests {
         assert!(format_dump(&[entry("tCL", "38")]).ends_with('\n'));
     }
 
+    #[cfg(not(windows))]
+    #[test]
+    fn a_failed_write_says_what_happened_and_where() {
+        let path = std::path::Path::new("/home/someone/RochViewer.txt");
+        let denied = std::io::Error::from_raw_os_error(13);
+        assert_eq!(python_os_error(&denied, path), "[Errno 13] Permission denied: '/home/someone/RochViewer.txt'");
+        let missing = std::io::Error::from_raw_os_error(2);
+        assert_eq!(python_os_error(&missing, path), "[Errno 2] No such file or directory: '/home/someone/RochViewer.txt'");
+    }
+
+    #[cfg(windows)]
     #[test]
     fn a_failed_write_is_reported_in_the_pythons_words() {
         let path = std::path::Path::new(r"C:\Users\arrow\Desktop\RochViewer.txt");

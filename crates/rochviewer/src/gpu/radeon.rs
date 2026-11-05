@@ -18,11 +18,15 @@
 //! unassigned so there is no VBIOS to parse, MC_SEQ_MISC0 answers all-ones on
 //! RDNA4, and the driver's registry subtree has no vendor string in it. The
 //! library has it because the driver read the VBIOS at load time.
+//!
+//! On Linux the registry key and the library are replaced by the kernel driver's
+//! own answers, in [`crate::gpu::amdgpu`], which is the same information.
 
 use std::collections::BTreeMap;
 
 use crate::amd::adl::read_memory;
 use crate::numfmt;
+#[cfg(windows)]
 use crate::system_identity::registry::RegKey;
 use crate::system_identity::{
     AdapterIdentity, PcieLink, RegValue, adapter_identity, board_vendor, find_display_path, pcie_link, parse_int,
@@ -32,6 +36,7 @@ use crate::wmi_util;
 
 pub const AMD_VENDOR_ID: u16 = 0x1002;
 
+#[cfg(windows)]
 pub const DISPLAY_CLASS_KEY: &str =
     r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
 
@@ -163,6 +168,7 @@ fn registry_adapter(identity: &AdapterIdentity) -> BTreeMap<String, RegValue> {
 /// and vendor of the stale entry beside it. Matching on the PCI identity
 /// picks the card that is; the old behaviour stays as the fallback for
 /// firmware that writes no `MatchingDeviceId`.
+#[cfg(windows)]
 fn read_registry_adapter(identity: &AdapterIdentity) -> Result<BTreeMap<String, RegValue>, String> {
     let parent = RegKey::open_local_machine(DISPLAY_CLASS_KEY)?;
     let wanted = format!("ven_{:04x}&dev_{:04x}", identity.vendor_id, identity.device_id);
@@ -192,6 +198,47 @@ fn read_registry_adapter(identity: &AdapterIdentity) -> Result<BTreeMap<String, 
         }
     }
     Ok(fallback)
+}
+
+/// The same values, from the driver. Named as the registry names them so the one
+/// reader above serves both.
+#[cfg(not(windows))]
+fn read_registry_adapter(identity: &AdapterIdentity) -> Result<BTreeMap<String, RegValue>, String> {
+    let mut values = BTreeMap::new();
+    #[cfg(target_os = "linux")]
+    {
+        let Some(device) = crate::gpu::amdgpu::device_path_for(identity.device_id, identity.revision) else {
+            return Ok(values);
+        };
+        let read = |leaf: &str| std::fs::read_to_string(device.join(leaf)).ok().map(|text| text.trim().to_string());
+        if let Some(adapter) = wmi_util::query("Win32_VideoController")?.first() {
+            values.insert("HardwareInformation.AdapterString".to_string(), RegValue::Text(adapter.str_or_empty("Name")));
+        }
+        if let Some(vbios) = read("vbios_version").filter(|text| !text.is_empty()) {
+            values.insert("HardwareInformation.BiosString".to_string(), RegValue::Text(vbios));
+        }
+        if let Some(bytes) = read("mem_info_vram_total").and_then(|text| text.parse::<u64>().ok()) {
+            values.insert("HardwareInformation.qwMemorySize".to_string(), RegValue::Int(bytes));
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = identity;
+    Ok(values)
+}
+
+/// `(shader count, bus width)` where the driver can state them rather than a table
+/// having to. Linux's can; Windows' answers through the silicon table above.
+#[cfg(all(target_os = "linux", not(test)))]
+fn driver_silicon(location: Option<crate::system_identity::PciLocation>) -> (Option<u32>, Option<String>) {
+    match crate::gpu::amdgpu::read_device_info(location) {
+        Some(info) => (info.shaders(), info.bus_width()),
+        None => (None, None),
+    }
+}
+
+#[cfg(not(all(target_os = "linux", not(test))))]
+fn driver_silicon(_location: Option<crate::system_identity::PciLocation>) -> (Option<u32>, Option<String>) {
+    (None, None)
 }
 
 /// Render the adapter's memory the way a card is sold.
@@ -374,6 +421,13 @@ pub fn read_gpu(pnp_device_ids: Option<&[String]>) -> Result<Option<RadeonGpu>, 
     }
     if memory.memory_bytes.is_some() {
         found.memory_bytes = memory.memory_bytes;
+    }
+    let (shaders, bus_width) = driver_silicon(location);
+    if shaders.is_some() {
+        found.cores = shaders;
+    }
+    if bus_width.is_some() {
+        found.bus_width = bus_width;
     }
     Ok(Some(found))
 }

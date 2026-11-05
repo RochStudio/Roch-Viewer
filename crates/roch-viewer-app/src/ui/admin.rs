@@ -1,16 +1,30 @@
 //! Elevation and the taskbar identity.
+//!
+//! On Linux neither applies to the window. It stays an ordinary user process and
+//! the privileged half is a helper it starts (see `rochviewer::hardware::linux`),
+//! and a Wayland compositor finds a window's identity from its app id.
 
+#[cfg(windows)]
 use windows::Win32::UI::Shell::{IsUserAnAdmin, SetCurrentProcessExplicitAppUserModelID, ShellExecuteW};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+#[cfg(windows)]
 use windows::core::{HSTRING, PCWSTR, w};
+
+/// The Wayland app id, and the X11 window class. Named for the launcher entry
+/// `cargo xtask install` writes, which is how a desktop finds a window's icon.
+#[cfg(not(windows))]
+pub const APP_ID: &str = "RochViewer";
 
 /// Windows groups taskbar buttons by Application User Model ID, and a
 /// process that never sets one inherits its host's. Any distinct string
 /// works; this one is the conventional dotted form, and the same one the
 /// Python build used, so pinned buttons carry over.
+#[cfg(windows)]
 pub const APP_USER_MODEL_ID: &str = "RochStudio.RochViewer";
 
 /// Whether the current process has administrative privileges.
+#[cfg(windows)]
 pub fn is_admin() -> bool {
     // SAFETY: no arguments; returns a BOOL.
     unsafe { IsUserAnAdmin().as_bool() }
@@ -20,6 +34,7 @@ pub fn is_admin() -> bool {
 ///
 /// Every register-backed reading needs the driver, and the driver needs an
 /// elevated process; a non-elevated window would be a page of blanks.
+#[cfg(windows)]
 pub fn run_as_admin() -> ! {
     let exe = std::env::current_exe().unwrap_or_default();
     let args: Vec<String> = std::env::args().skip(1).map(|a| format!("\"{a}\"")).collect();
@@ -42,6 +57,7 @@ pub fn run_as_admin() -> ! {
 
 /// Take the taskbar button away from whatever launched us. Failing is not
 /// fatal: the button then keeps the host's icon.
+#[cfg(windows)]
 pub fn claim_taskbar_identity() {
     // SAFETY: sets a process-wide string; no pointers retained.
     if let Err(error) = unsafe { SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(APP_USER_MODEL_ID)) } {
@@ -49,7 +65,36 @@ pub fn claim_taskbar_identity() {
     }
 }
 
+/// Open a URL or folder with the desktop's default handler.
+#[cfg(not(windows))]
+pub fn shell_open(target: &str) {
+    use std::process::{Command, Stdio};
+    let child = Command::new("xdg-open")
+        .arg(target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    match child {
+        // Reaped on the side: it can take a moment, and the window must not wait.
+        Ok(mut child) => {
+            std::thread::spawn(move || child.wait());
+        }
+        Err(error) => eprintln!("Could not run xdg-open: {error}"),
+    }
+}
+
+/// Show the folder a file is in. There is no portable "select this file", so
+/// the folder opening is as close as the desktop gets.
+#[cfg(not(windows))]
+pub fn reveal_in_explorer(path: &std::path::Path) {
+    if let Some(folder) = path.parent() {
+        shell_open(&folder.display().to_string());
+    }
+}
+
 /// Open a URL or folder with the shell's default handler.
+#[cfg(windows)]
 pub fn shell_open(target: &str) {
     // SAFETY: plain ShellExecuteW with owned, NUL-terminated strings.
     unsafe {
@@ -58,6 +103,7 @@ pub fn shell_open(target: &str) {
 }
 
 /// Show a file selected in Explorer.
+#[cfg(windows)]
 pub fn reveal_in_explorer(path: &std::path::Path) {
     let _ = std::process::Command::new("explorer")
         .arg(format!("/select,{}", path.display()))

@@ -30,7 +30,29 @@ pub struct LocalTime {
 }
 
 impl LocalTime {
+    /// The current local time.
+    #[cfg(not(windows))]
+    pub fn now() -> Self {
+        // SAFETY: time() takes a null pointer, an all-zero `struct tm` is valid,
+        // and localtime_r only writes it.
+        let tm = unsafe {
+            let now = libc::time(std::ptr::null_mut());
+            let mut tm: libc::tm = std::mem::zeroed();
+            libc::localtime_r(&now, &mut tm);
+            tm
+        };
+        LocalTime {
+            year: (tm.tm_year + 1900) as u16,
+            month: (tm.tm_mon + 1) as u16,
+            day: tm.tm_mday as u16,
+            hour: tm.tm_hour as u16,
+            minute: tm.tm_min as u16,
+            second: tm.tm_sec as u16,
+        }
+    }
+
     /// The current local time, as Windows keeps it.
+    #[cfg(windows)]
     pub fn now() -> Self {
         // SAFETY: no arguments; returns a SYSTEMTIME by value.
         let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
@@ -48,11 +70,42 @@ pub fn screenshot_filename(tab_name: &str, when: LocalTime) -> String {
     )
 }
 
+/// One of the user's standard folders, wherever it has been moved to, or
+/// `$HOME/fallback` when the desktop has not said. `key` is the name in
+/// `user-dirs.dirs`, like `XDG_PICTURES_DIR`.
+#[cfg(not(windows))]
+pub fn user_directory(key: &str, fallback: &str) -> PathBuf {
+    let home = home_directory();
+    let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".config"));
+    let listed = std::fs::read_to_string(config.join("user-dirs.dirs")).ok();
+    listed.and_then(|text| user_dirs_value(&text, key, &home)).unwrap_or_else(|| home.join(fallback))
+}
+
+/// `XDG_PICTURES_DIR="$HOME/Pictures"` out of `user-dirs.dirs`.
+#[cfg(not(windows))]
+pub fn user_dirs_value(text: &str, key: &str, home: &Path) -> Option<PathBuf> {
+    let line = text.lines().map(str::trim).find(|line| line.starts_with(key) && line[key.len()..].starts_with('='))?;
+    let value = line[key.len() + 1..].trim().trim_matches('"');
+    let path = match value.strip_prefix("$HOME") {
+        Some(rest) => home.join(rest.trim_start_matches('/')),
+        None => PathBuf::from(value),
+    };
+    // `$HOME/` alone means the desktop has turned this folder off.
+    (path != home && path.is_absolute()).then_some(path)
+}
+
+/// The user's Pictures folder, wherever it has been moved to.
+#[cfg(not(windows))]
+pub fn pictures_folder() -> PathBuf {
+    user_directory("XDG_PICTURES_DIR", "Pictures")
+}
+
 /// The user's Pictures folder, wherever it has been moved to.
 ///
 /// Asked of the shell rather than built from the profile path: Pictures is
 /// often redirected into OneDrive, and ~/Pictures is then an empty folder
 /// nobody looks in.
+#[cfg(windows)]
 pub fn pictures_folder() -> PathBuf {
     use windows::Win32::System::Com::CoTaskMemFree;
     use windows::Win32::UI::Shell::{FOLDERID_Pictures, KF_FLAG_DEFAULT, SHGetKnownFolderPath};
@@ -70,8 +123,14 @@ pub fn pictures_folder() -> PathBuf {
     home_directory().join("Pictures")
 }
 
+#[cfg(windows)]
 fn home_directory() -> PathBuf {
     std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_default()
+}
+
+#[cfg(not(windows))]
+fn home_directory() -> PathBuf {
+    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
 }
 
 pub fn default_folder() -> PathBuf {
@@ -133,9 +192,12 @@ pub fn image_bgra(image: &ColorImage, crop: Option<[usize; 4]>) -> (u32, u32, Ve
     (w as u32, h as u32, bgra)
 }
 
+#[cfg(windows)]
 pub const CF_DIB: u32 = 8;
+#[cfg(windows)]
 const BITMAPINFOHEADER_SIZE: u32 = 40;
 
+#[cfg(windows)]
 fn bitmap_header(width: i32, height: i32) -> Vec<u8> {
     let mut header = Vec::with_capacity(BITMAPINFOHEADER_SIZE as usize);
     header.extend_from_slice(&BITMAPINFOHEADER_SIZE.to_le_bytes()); // biSize
@@ -149,6 +211,7 @@ fn bitmap_header(width: i32, height: i32) -> Vec<u8> {
 }
 
 /// A CF_DIB clipboard payload: header, then the rows bottom to top.
+#[cfg(windows)]
 pub fn dib_bytes(width: u32, height: u32, bgra: &[u8]) -> Vec<u8> {
     let mut out = bitmap_header(width as i32, height as i32);
     let stride = width as usize * 4;
@@ -158,7 +221,48 @@ pub fn dib_bytes(width: u32, height: u32, bgra: &[u8]) -> Vec<u8> {
     out
 }
 
+/// The commands that can put a PNG on the clipboard here, likeliest first.
+#[cfg(not(windows))]
+const CLIPBOARD_TOOLS: [(&str, &[&str]); 2] =
+    [("wl-copy", &["--type", "image/png"]), ("xclip", &["-selection", "clipboard", "-target", "image/png", "-in"])];
+
 /// Put the image on the clipboard, for pasting straight into a post.
+///
+/// Through the desktop's own tool. A clipboard on Wayland is served by whoever
+/// owns it, for as long as the data is wanted, and that is a job these already do
+/// and go on doing after this window has closed.
+#[cfg(not(windows))]
+pub fn copy_to_clipboard(width: u32, height: u32, bgra: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let png = encode_png(width, height, bgra)?;
+    let on_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    for (tool, arguments) in CLIPBOARD_TOOLS {
+        if tool == "wl-copy" && !on_wayland {
+            continue;
+        }
+        let Ok(mut child) = Command::new(tool)
+            .args(arguments)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        else {
+            continue;
+        };
+        let written = child.stdin.take().map(|mut stdin| stdin.write_all(&png));
+        // Both hand the data to a background copy of themselves and exit.
+        let status = child.wait();
+        if matches!(written, Some(Ok(()))) && status.is_ok_and(|status| status.success()) {
+            return Ok(());
+        }
+    }
+    Err("no clipboard tool is installed: wl-clipboard on Wayland, xclip on X11".into())
+}
+
+/// Put the image on the clipboard, for pasting straight into a post.
+#[cfg(windows)]
 pub fn copy_to_clipboard(width: u32, height: u32, bgra: &[u8]) -> Result<(), String> {
     use windows::Win32::Foundation::{GlobalFree, HANDLE};
     use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
@@ -232,6 +336,18 @@ mod tests {
         assert!(encode_png(2, 2, &[0u8; 15]).is_err());
     }
 
+    #[cfg(not(windows))]
+    #[test]
+    fn the_folder_comes_from_the_desktops_own_list() {
+        let home = Path::new("/home/someone");
+        let text = "# comment\nXDG_DESKTOP_DIR=\"$HOME/\"\nXDG_PICTURES_DIR=\"$HOME/Pics/Mine\"\nXDG_MUSIC_DIR=\"/mnt/music\"\n";
+        assert_eq!(user_dirs_value(text, "XDG_PICTURES_DIR", home).as_deref(), Some(Path::new("/home/someone/Pics/Mine")));
+        assert_eq!(user_dirs_value(text, "XDG_MUSIC_DIR", home).as_deref(), Some(Path::new("/mnt/music")));
+        assert_eq!(user_dirs_value(text, "XDG_DESKTOP_DIR", home), None, "turned off");
+        assert_eq!(user_dirs_value(text, "XDG_VIDEOS_DIR", home), None);
+    }
+
+    #[cfg(windows)]
     #[test]
     fn the_clipboard_copy_is_bottom_up_behind_its_header() {
         let (top, bottom) = ([1u8; 4], [2u8; 4]);

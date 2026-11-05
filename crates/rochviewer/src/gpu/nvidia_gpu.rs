@@ -42,9 +42,12 @@ use std::collections::{BTreeMap, HashMap};
 use std::ffi::{c_char, c_void};
 use std::sync::{Arc, LazyLock, Mutex};
 
+#[cfg(windows)]
 use libloading::os::windows::{
     LOAD_LIBRARY_SEARCH_DEFAULT_DIRS, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, Library,
 };
+#[cfg(not(windows))]
+use libloading::os::unix::Library;
 use regex::Regex;
 
 use crate::memo::Memo;
@@ -164,6 +167,14 @@ fn load_library(name: &'static str) -> Result<&'static Library, String> {
     if let Some((_, library)) = loaded.iter().find(|(known, _)| *known == name) {
         return Ok(library);
     }
+    let library = open_library(name)?;
+    let library: &'static Library = Box::leak(Box::new(library));
+    loaded.push((name, library));
+    Ok(library)
+}
+
+#[cfg(windows)]
+fn open_library(name: &str) -> Result<Library, String> {
     let mut flags = LOAD_LIBRARY_SEARCH_DEFAULT_DIRS;
     if name.contains('\\') || name.contains('/') {
         flags |= LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR;
@@ -171,10 +182,14 @@ fn load_library(name: &'static str) -> Result<&'static Library, String> {
     // SAFETY: loading a vendor library runs its initialisation routines,
     // which is what loading it in the Python did too; nothing else is
     // assumed about it here.
-    let library = unsafe { Library::load_with_flags(name, flags) }.map_err(|error| error.to_string())?;
-    let library: &'static Library = Box::leak(Box::new(library));
-    loaded.push((name, library));
-    Ok(library)
+    unsafe { Library::load_with_flags(name, flags) }.map_err(|error| error.to_string())
+}
+
+#[cfg(not(windows))]
+fn open_library(name: &str) -> Result<Library, String> {
+    // SAFETY: loading a vendor library runs its initialisation routines; nothing
+    // else is assumed about it here.
+    unsafe { Library::new(name) }.map_err(|error| error.to_string())
 }
 
 /// One export of `library` as the function type `T`, or `None`.
@@ -403,7 +418,14 @@ fn load_nvml() -> Option<Nvml> {
         // Unit tests never load a vendor library.
         return None;
     }
-    for name in ["nvml.dll", "C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvml.dll"] {
+    // NVML is the same interface on Linux, with the driver. NVAPI is not there,
+    // so the rows only it can answer -- the code name, the core voltage -- are
+    // blank, which is what `Nvapi::open` failing already means.
+    #[cfg(windows)]
+    const NAMES: [&str; 2] = ["nvml.dll", "C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvml.dll"];
+    #[cfg(not(windows))]
+    const NAMES: [&str; 2] = ["libnvidia-ml.so.1", "libnvidia-ml.so"];
+    for name in NAMES {
         if let Ok(library) = load_library(name) {
             return Some(Nvml { library });
         }
